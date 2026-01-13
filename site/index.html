@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>Cdaprod’s Plate: Single Loop (9:19)</title>
+
+  <style>
+    :root {
+      —w: 9;
+      —h: 19;
+
+      —fit: cover;            /* cover | contain | fill */
+      —plateOpacity: 1;
+
+      —atmoOpacity: 0.22;
+      —grainOpacity: 0.08;
+      —vignetteOpacity: 0.40;
+
+      —hudOpacity: 0.92;
+      —hudBg: rgba(0,0,0,0.45);
+      —hudFg: rgba(255,255,255,0.90);
+      —hudSub: rgba(255,255,255,0.62);
+      —hudBorder: rgba(255,255,255,0.10);
+
+      —ok: rgba(80,220,140,1);
+      —warn: rgba(255,210,90,1);
+      —bad: rgba(255,110,110,1);
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #000;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
+
+    .stage {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      display: grid;
+      place-items: center;
+      background: #000;
+    }
+
+    .frame {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      aspect-ratio: var(—w) / var(—h);
+      max-width: 100%;
+      max-height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
+
+    /* This renders even if video fails: cinematic base */
+    .base {
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(120% 85% at 50% 28%, rgba(70,180,255,0.22), rgba(0,0,0,0) 55%),
+        radial-gradient(130% 90% at 25% 72%, rgba(255,130,80,0.14), rgba(0,0,0,0) 52%),
+        radial-gradient(120% 90% at 75% 78%, rgba(160,120,255,0.10), rgba(0,0,0,0) 56%),
+        linear-gradient(180deg, rgba(12,12,18,1), rgba(0,0,0,1));
+      filter: contrast(1.1) saturate(1.15);
+    }
+
+    video#plate {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: var(—fit);
+      opacity: var(—plateOpacity);
+      background: transparent;
+    }
+
+    .atmo {
+      position: absolute;
+      inset: 0;
+      opacity: var(—atmoOpacity);
+      mix-blend-mode: screen;
+      background:
+        radial-gradient(circle at 50% 38%, rgba(255,255,255,0.06), rgba(0,0,0,0) 60%),
+        radial-gradient(circle at 30% 70%, rgba(120,190,255,0.04), rgba(0,0,0,0) 55%),
+        radial-gradient(circle at 70% 76%, rgba(255,170,120,0.03), rgba(0,0,0,0) 55%);
+      pointer-events: none;
+    }
+
+    .grain {
+      position: absolute;
+      inset: 0;
+      opacity: var(—grainOpacity);
+      mix-blend-mode: overlay;
+      pointer-events: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns=‘http://www.w3.org/2000/svg’ width=‘160’ height=‘160’%3E%3Cfilter id=‘n’%3E%3CfeTurbulence type=‘fractalNoise’ baseFrequency=‘.9’ numOctaves=‘2’ stitchTiles=‘stitch’/%3E%3C/filter%3E%3Crect width=‘160’ height=‘160’ filter=‘url(%23n)’ opacity=‘.55’/%3E%3C/svg%3E");
+      background-size: 220px 220px;
+      animation: grainMove 1.6s steps(2) infinite;
+    }
+
+    @keyframes grainMove {
+      0% { transform: translate(0,0); }
+      25% { transform: translate(-8px,6px); }
+      50% { transform: translate(6px,-10px); }
+      75% { transform: translate(-4px,-6px); }
+      100% { transform: translate(0,0); }
+    }
+
+    .vignette {
+      position: absolute;
+      inset: -2%;
+      pointer-events: none;
+      background: radial-gradient(circle at 50% 45%,
+        rgba(0,0,0,0) 44%,
+        rgba(0,0,0,var(—vignetteOpacity)) 100%);
+    }
+
+    .guide {
+      position: absolute;
+      inset: 9%;
+      border: 1px dashed rgba(255,255,255,0.18);
+      border-radius: 24px;
+      display: none;
+      pointer-events: none;
+    }
+
+    /* HUD */
+    .hud {
+      position: absolute;
+      left: 18px;
+      right: 18px;
+      bottom: 18px;
+      opacity: var(—hudOpacity);
+      pointer-events: none;
+    }
+
+    .card {
+      padding: 12px 14px;
+      border-radius: 14px;
+      background: var(—hudBg);
+      border: 1px solid var(—hudBorder);
+      backdrop-filter: blur(6px);
+    }
+
+    .top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .title {
+      color: var(—hudFg);
+      font-weight: 650;
+      font-size: 14px;
+      letter-spacing: 0.3px;
+      text-transform: uppercase;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(—hudFg);
+      opacity: 0.95;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: var(—warn);
+      box-shadow: 0 0 12px rgba(255,210,90,0.45);
+    }
+
+    .sub {
+      margin-top: 8px;
+      color: var(—hudSub);
+      font-size: 12px;
+      line-height: 1.35;
+      word-break: break-all;
+    }
+
+    .hint {
+      margin-top: 6px;
+      color: rgba(255,255,255,0.45);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 11px;
+      color: rgba(255,255,255,0.70);
+    }
+  </style>
+</head>
+
+<body>
+  <div class="stage">
+    <div class="frame">
+      <div class="base"></div>
+
+      <video id="plate" autoplay loop muted playsinline preload="auto"></video>
+
+      <div class="atmo"></div>
+      <div class="grain"></div>
+      <div class="vignette"></div>
+      <div class="guide" id="guide"></div>
+
+      <div class="hud" id="hud">
+        <div class="card">
+          <div class="top">
+            <div class="title">Plate Status</div>
+            <div class="badge">
+              <span class="dot" id="dot"></span>
+              <span id="state">BOOT</span>
+            </div>
+          </div>
+          <div class="sub"><strong>src:</strong> <span id="srcText">unset</span></div>
+          <div class="hint">
+            Controls:
+            <code>?src=http://LAN/plate.mp4</code>
+            <code>&amp;hud=off</code>
+            <code>&amp;guide=on</code>
+            <code>&amp;fit=cover|contain|fill</code>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // IMPORTANT: Keep quotes plain ASCII. No smart quotes.
+    (function () {
+      var v = document.getElementById("plate");
+      var hud = document.getElementById("hud");
+      var guide = document.getElementById("guide");
+      var srcText = document.getElementById("srcText");
+      var stateEl = document.getElementById("state");
+      var dot = document.getElementById("dot");
+
+      var params = new URLSearchParams(window.location.search);
+
+      var src = params.get("src");               // preferred
+      var fit = params.get("fit");               // cover|contain|fill
+      var hudOff = params.get("hud") === "off";
+      var guideOn = params.get("guide") === "on";
+
+      // Default: try relative plate.mp4 if present
+      if (!src) src = "plate.mp4";
+
+      // Apply toggles
+      if (fit) document.documentElement.style.setProperty("—fit", fit);
+      if (hudOff && hud) hud.parentNode.removeChild(hud);
+      if (guideOn && guide) guide.style.display = "block";
+
+      if (srcText) srcText.textContent = src;
+
+      function setState(name, level) {
+        if (!stateEl || !dot) return;
+        stateEl.textContent = name;
+
+        if (level === "ok") {
+          dot.style.background = "var(—ok)";
+          dot.style.boxShadow = "0 0 12px rgba(80,220,140,0.45)";
+        } else if (level === "bad") {
+          dot.style.background = "var(—bad)";
+          dot.style.boxShadow = "0 0 12px rgba(255,110,110,0.45)";
+        } else {
+          dot.style.background = "var(—warn)";
+          dot.style.boxShadow = "0 0 12px rgba(255,210,90,0.45)";
+        }
+      }
+
+      function setVideoSource(url) {
+        // Clear any existing <source> tags
+        while (v.firstChild) v.removeChild(v.firstChild);
+
+        var s = document.createElement("source");
+        s.src = url;
+
+        // Basic type inference
+        var lower = url.toLowerCase();
+        if (lower.indexOf(".webm") !== -1) s.type = "video/webm";
+        else s.type = "video/mp4";
+
+        v.appendChild(s);
+        v.load();
+      }
+
+      function tryPlay() {
+        setState("PLAYING...", "warn");
+        var p = v.play();
+        if (p && typeof p.then === "function") {
+          p.then(function () {
+            // ok
+          }).catch(function () {
+            setState("AUTOPLAY BLOCKED", "bad");
+          });
+        }
+      }
+
+      // Media events
+      v.addEventListener("loadeddata", function () { setState("LOADED", "warn"); });
+      v.addEventListener("canplay", function () { setState("CAN PLAY", "warn"); });
+      v.addEventListener("play", function () { setState("PLAY", "ok"); });
+      v.addEventListener("playing", function () { setState("PLAYING", "ok"); });
+      v.addEventListener("waiting", function () { setState("BUFFERING", "warn"); });
+      v.addEventListener("stalled", function () { setState("STALLED", "bad"); });
+      v.addEventListener("error", function () { setState("ERROR (BAD SRC)", "bad"); });
+
+      // Click-to-play fallback for "preview" environments
+      document.body.addEventListener("click", function () { tryPlay(); });
+
+      // Boot
+      setState("BOOT", "warn");
+      setVideoSource(src);
+
+      window.addEventListener("load", function () { tryPlay(); });
+    })();
+  </script>
+</body>
+</html>
