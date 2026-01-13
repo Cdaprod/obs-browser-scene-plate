@@ -1,0 +1,418 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>Plate: Procedural (9:19)</title>
+
+  <style>
+    :root{
+      --w: 9;
+      --h: 19;
+
+      /* Look knobs */
+      --vignette: 0.46;        /* 0..1 */
+      --grain: 0.09;           /* 0..1 */
+      --hudOpacity: 0.0;       /* 0=off; enable via ?hud=on */
+
+      /* “Realism” knobs (also controllable via URL) */
+      --depth: 1.0;            /* 0.5..2.0: parallax strength */
+      --glow: 0.22;            /* 0..0.6: bloom-ish highlight strength */
+      --shafts: 0.18;          /* 0..0.6: volumetric light bands */
+      --drift: 0.55;           /* 0..1.5: lens drift + breathing */
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #000;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
+
+    .stage {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      display: grid;
+      place-items: center;
+      background: #000;
+    }
+
+    .frame {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      aspect-ratio: var(--w) / var(--h);
+      max-width: 100%;
+      max-height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
+
+    canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    /* Grain overlay */
+    .grain {
+      position: absolute;
+      inset: 0;
+      opacity: var(--grain);
+      mix-blend-mode: overlay;
+      pointer-events: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='.55'/%3E%3C/svg%3E");
+      background-size: 220px 220px;
+      animation: grainMove 1.6s steps(2) infinite;
+    }
+    @keyframes grainMove {
+      0% { transform: translate(0,0); }
+      25% { transform: translate(-8px,6px); }
+      50% { transform: translate(6px,-10px); }
+      75% { transform: translate(-4px,-6px); }
+      100% { transform: translate(0,0); }
+    }
+
+    /* Vignette */
+    .vignette {
+      position: absolute;
+      inset: -2%;
+      pointer-events: none;
+      background: radial-gradient(circle at 50% 45%,
+        rgba(0,0,0,0) 42%,
+        rgba(0,0,0,var(--vignette)) 100%);
+    }
+
+    /* HUD (contrast-safe) */
+    .hud {
+      position: absolute;
+      left: 18px;
+      right: 18px;
+      top: 18px;
+      opacity: var(--hudOpacity);
+      pointer-events: none;
+    }
+    .card {
+      padding: 12px 14px;
+      border-radius: 14px;
+      background: rgba(0,0,0,0.60);
+      border: 1px solid rgba(255,255,255,0.12);
+      backdrop-filter: blur(8px);
+    }
+    .title {
+      color: #FFFFFF;
+      font-weight: 700;
+      font-size: 14px;
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.65);
+    }
+    .sub {
+      margin-top: 6px;
+      color: rgba(255,255,255,0.70);
+      font-size: 12px;
+      line-height: 1.4;
+      word-break: break-word;
+    }
+    .sub code {
+      color: #E6F0FF;
+      background: rgba(255,255,255,0.10);
+      padding: 2px 6px;
+      border-radius: 6px;
+      margin-right: 4px;
+      font-size: 11px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="stage">
+    <div class="frame">
+      <canvas id="c"></canvas>
+      <div class="grain"></div>
+      <div class="vignette"></div>
+
+      <div class="hud" id="hud">
+        <div class="card">
+          <div class="title">Procedural Plate</div>
+          <div class="sub">
+            Controls:
+            <code>?hud=on</code>
+            <code>&amp;seed=7</code>
+            <code>&amp;speed=1.0</code>
+            <code>&amp;depth=1.2</code>
+            <code>&amp;glow=0.35</code>
+            <code>&amp;shafts=0.25</code>
+            <code>&amp;drift=0.6</code>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var params = new URLSearchParams(window.location.search);
+
+      // URL controls
+      var hudOn = params.get("hud") === "on";
+      var seed = parseInt(params.get("seed") || "7", 10);
+      var speed = Math.max(0.1, Math.min(3.0, parseFloat(params.get("speed") || "1.0")));
+
+      function clamp(n, a, b){ return Math.max(a, Math.min(b, n)); }
+      var depth = clamp(parseFloat(params.get("depth") || "1.0"), 0.5, 2.0);
+      var glow  = clamp(parseFloat(params.get("glow")  || "0.22"), 0.0, 0.6);
+      var shafts= clamp(parseFloat(params.get("shafts")|| "0.18"), 0.0, 0.6);
+      var drift = clamp(parseFloat(params.get("drift") || "0.55"), 0.0, 1.5);
+
+      // Apply knobs to CSS vars (so you can tweak without changing code later)
+      document.documentElement.style.setProperty("--depth", String(depth));
+      document.documentElement.style.setProperty("--glow", String(glow));
+      document.documentElement.style.setProperty("--shafts", String(shafts));
+      document.documentElement.style.setProperty("--drift", String(drift));
+      if (hudOn) document.documentElement.style.setProperty("--hudOpacity", "0.92");
+
+      // Seeded RNG
+      function mulberry32(a) {
+        return function () {
+          var t = a += 0x6D2B79F5;
+          t = Math.imul(t ^ (t >>> 15), t | 1);
+          t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+      }
+      var rand = mulberry32(seed);
+
+      var canvas = document.getElementById("c");
+      var ctx = canvas.getContext("2d", { alpha: false });
+
+      // DPR-safe sizing
+      function resize() {
+        var dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+        var rect = canvas.getBoundingClientRect();
+        canvas.width = Math.floor(rect.width * dpr);
+        canvas.height = Math.floor(rect.height * dpr);
+      }
+      window.addEventListener("resize", resize);
+      resize();
+
+      // --- Layered “depth” particles ---
+      function makeLayer(count, rMin, rMax, aMin, aMax, vScale) {
+        var arr = [];
+        for (var i = 0; i < count; i++) {
+          arr.push({
+            x: rand(),
+            y: rand(),
+            r: rMin + rand() * (rMax - rMin),
+            a: aMin + rand() * (aMax - aMin),
+            vx: (-0.5 + rand()) * vScale,
+            vy: (-0.5 + rand()) * vScale,
+            p: 0.3 + rand() * 0.7   // per-particle parallax multiplier
+          });
+        }
+        return arr;
+      }
+
+      // Far: tiny stars
+      var far = makeLayer(90, 0.4, 1.2, 0.02, 0.08, 0.06);
+      // Mid: dust
+      var mid = makeLayer(80, 0.8, 2.4, 0.03, 0.11, 0.12);
+      // Near: bokeh
+      var near = makeLayer(24, 10, 24, 0.006, 0.020, 0.18);
+
+      // Soft bokeh draw
+      function drawBokeh(px, py, r, alpha) {
+        var g = ctx.createRadialGradient(px, py, 0, px, py, r);
+        g.addColorStop(0.0, "rgba(255,255,255," + (alpha * 0.55).toFixed(4) + ")");
+        g.addColorStop(0.35,"rgba(255,255,255," + (alpha * 0.20).toFixed(4) + ")");
+        g.addColorStop(1.0, "rgba(255,255,255,0)");
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(px, py, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Lens drift (subtle pan/zoom like handheld breathing)
+      function lensTransform(tt) {
+        var d = drift;
+        var panX = Math.sin(tt * 0.9) * 0.004 * d;
+        var panY = Math.cos(tt * 0.8) * 0.004 * d;
+        var zoom = 1 + (Math.sin(tt * 0.7) * 0.004 * d);
+        return { panX: panX, panY: panY, zoom: zoom };
+      }
+
+      function wrap01(p) {
+        if (p < -0.08) return 1.08;
+        if (p > 1.08) return -0.08;
+        return p;
+      }
+
+      function stepLayer(layer, dt, parallax) {
+        for (var i = 0; i < layer.length; i++) {
+          var p = layer[i];
+          p.x = wrap01(p.x + p.vx * dt * parallax);
+          p.y = wrap01(p.y + p.vy * dt * parallax);
+        }
+      }
+
+      // Volumetric “shafts” (cheap: big soft gradients with screen blend)
+      function drawShafts(w, h, tt) {
+        if (shafts <= 0) return;
+        ctx.globalCompositeOperation = "screen";
+        ctx.globalAlpha = shafts * 0.22;
+
+        var angle = Math.sin(tt * 0.35) * 0.25;
+        var cx = w * (0.5 + Math.sin(tt * 0.18) * 0.12);
+        var cy = h * (0.15 + Math.cos(tt * 0.22) * 0.08);
+
+        // Three broad bands
+        for (var i = 0; i < 3; i++) {
+          var x = cx + (i - 1) * w * 0.18;
+          var g = ctx.createLinearGradient(x, cy, x + Math.cos(angle) * w, cy + Math.sin(angle) * h);
+          g.addColorStop(0.0, "rgba(255,255,255,0.0)");
+          g.addColorStop(0.5, "rgba(255,255,255,0.10)");
+          g.addColorStop(1.0, "rgba(255,255,255,0.0)");
+          ctx.fillStyle = g;
+          ctx.fillRect(0, 0, w, h);
+        }
+
+        ctx.globalAlpha = 1.0;
+        ctx.globalCompositeOperation = "source-over";
+      }
+
+      // Glow pass (cheap bloom approximation):
+      // render bright particles again with larger radius and low alpha (screen blend)
+      function drawGlow(layer, w, h, tt, sizeMul, alphaMul) {
+        if (glow <= 0) return;
+        ctx.globalCompositeOperation = "screen";
+        ctx.globalAlpha = glow * alphaMul;
+
+        for (var i = 0; i < layer.length; i++) {
+          var p = layer[i];
+          var shimmer = (0.5 + 0.5 * Math.sin(tt * 1.7 + i)) * 0.6 + 0.4;
+          var a = p.a * shimmer;
+          var px = p.x * w;
+          var py = p.y * h;
+          drawBokeh(px, py, p.r * sizeMul, a);
+        }
+
+        ctx.globalAlpha = 1.0;
+        ctx.globalCompositeOperation = "source-over";
+      }
+
+      function draw(t) {
+        var w = canvas.width;
+        var h = canvas.height;
+
+        // time
+        var tt = (t * 0.00006) * speed;
+
+        // lens motion
+        var lt = lensTransform(tt);
+
+        // apply lens transform
+        ctx.save();
+        ctx.translate(w * 0.5, h * 0.5);
+        ctx.scale(lt.zoom, lt.zoom);
+        ctx.translate(-w * 0.5 + w * lt.panX, -h * 0.5 + h * lt.panY);
+
+        // --- Base cinematic gradient ---
+        var gx = 0.5 + Math.sin(tt * 1.1) * 0.10;
+        var gy = 0.35 + Math.cos(tt * 1.0) * 0.10;
+
+        var base = ctx.createRadialGradient(w * gx, h * gy, 10, w * 0.5, h * 0.5, Math.max(w, h));
+        base.addColorStop(0.0, "rgb(18, 26, 44)");
+        base.addColorStop(0.45, "rgb(10, 10, 16)");
+        base.addColorStop(1.0, "rgb(0, 0, 0)");
+
+        ctx.fillStyle = base;
+        ctx.fillRect(0, 0, w, h);
+
+        // warm + cool washes
+        ctx.globalCompositeOperation = "screen";
+        ctx.globalAlpha = 0.10;
+        var warm = ctx.createRadialGradient(w * 0.25, h * 0.72, 10, w * 0.25, h * 0.72, Math.max(w, h));
+        warm.addColorStop(0.0, "rgb(255, 120, 70)");
+        warm.addColorStop(1.0, "rgba(0,0,0,0)");
+        ctx.fillStyle = warm;
+        ctx.fillRect(0, 0, w, h);
+
+        ctx.globalAlpha = 0.08;
+        var cool = ctx.createRadialGradient(w * 0.78, h * 0.42, 10, w * 0.78, h * 0.42, Math.max(w, h));
+        cool.addColorStop(0.0, "rgb(70, 180, 255)");
+        cool.addColorStop(1.0, "rgba(0,0,0,0)");
+        ctx.fillStyle = cool;
+        ctx.fillRect(0, 0, w, h);
+
+        ctx.globalAlpha = 1.0;
+        ctx.globalCompositeOperation = "source-over";
+
+        // shafts (under particles)
+        drawShafts(w, h, tt);
+
+        // --- Depth stepping (parallax) ---
+        var d = depth;
+        // dt is small step; scaled by layer depth
+        var dtFar  = 0.00055 * d;
+        var dtMid  = 0.00080 * d;
+        var dtNear = 0.00110 * d;
+
+        stepLayer(far,  dtFar,  0.55);
+        stepLayer(mid,  dtMid,  0.85);
+        stepLayer(near, dtNear, 1.10);
+
+        // --- Draw far (tiny stars) ---
+        ctx.globalCompositeOperation = "lighter";
+        for (var i = 0; i < far.length; i++) {
+          var p = far[i];
+          var shimmer = (0.5 + 0.5 * Math.sin(tt * 2.1 + i)) * 0.6 + 0.4;
+          var a = p.a * shimmer;
+          ctx.fillStyle = "rgba(255,255,255," + a.toFixed(4) + ")";
+          ctx.beginPath();
+          ctx.arc(p.x * w, p.y * h, p.r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // --- Draw mid dust (soft points) ---
+        for (var j = 0; j < mid.length; j++) {
+          var m = mid[j];
+          var shimmerM = (0.5 + 0.5 * Math.sin(tt * 1.9 + j)) * 0.6 + 0.4;
+          var aM = m.a * shimmerM;
+          ctx.fillStyle = "rgba(255,255,255," + aM.toFixed(4) + ")";
+          ctx.beginPath();
+          ctx.arc(m.x * w, m.y * h, m.r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // --- Draw near bokeh (soft circles) ---
+        ctx.globalCompositeOperation = "screen";
+        for (var k = 0; k < near.length; k++) {
+          var n = near[k];
+          var shimmerN = (0.5 + 0.5 * Math.sin(tt * 1.4 + k)) * 0.6 + 0.4;
+          var aN = n.a * shimmerN;
+          drawBokeh(n.x * w, n.y * h, n.r, aN);
+        }
+
+        // Glow pass (bloom-ish)
+        drawGlow(near, w, h, tt, 2.2, 0.55);
+        drawGlow(mid,  w, h, tt, 1.8, 0.35);
+
+        ctx.restore();
+
+        // reset
+        ctx.globalAlpha = 1.0;
+        ctx.globalCompositeOperation = "source-over";
+        requestAnimationFrame(draw);
+      }
+
+      requestAnimationFrame(draw);
+    })();
+  </script>
+</body>
+</html>
