@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>glitch-bars</title>
+  <style>
+    :root{
+      --fade-in-ms: 25;
+      --fade-out-ms: 140;
+      --bg-alpha: 0;      /* keep 0 for transparent */
+    }
+    html, body { height: 100%; margin: 0; background: rgba(0,0,0,var(--bg-alpha)); overflow: hidden; }
+    body { position: relative; }
+
+    #wrap{
+      position:absolute; inset:0;
+      opacity:0;
+      transition: opacity calc(var(--fade-in-ms)*1ms) linear;
+      will-change: opacity, transform, filter;
+    }
+
+    /* BIG BLOCKY BARS (vertical + horizontal) */
+    .bar{
+      position:absolute;
+      background: rgba(255,255,255,0.10);
+      mix-blend-mode: screen;
+      filter: contrast(1.2);
+      transform: translateZ(0);
+    }
+
+    /* Noise canvas */
+    #n{
+      position:absolute; inset:0;
+      width:100%; height:100%;
+      opacity:0.95;
+      mix-blend-mode: overlay;
+      filter: contrast(1.15) saturate(1.05);
+    }
+
+    /* Scanlines */
+    #scan{
+      position:absolute; inset:0;
+      pointer-events:none;
+      background:
+        repeating-linear-gradient(
+          to bottom,
+          rgba(255,255,255,0.12) 0px,
+          rgba(255,255,255,0.00) 2px,
+          rgba(0,0,0,0.00) 4px
+        );
+      mix-blend-mode: overlay;
+      opacity: 0.75;
+    }
+
+    /* Text strip (optional ARG) */
+    #ticker{
+      position:absolute;
+      left:0; right:0;
+      bottom: 6.5%;
+      padding: 10px 14px;
+      color: rgba(220,255,220,0.92);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: clamp(12px, 1.8vw, 22px);
+      letter-spacing: 0.10em;
+      text-transform: uppercase;
+      text-shadow:
+        0 0 6px rgba(150,255,170,0.45),
+        -2px 0 rgba(255,0,0,0.22),
+        2px 0 rgba(0,180,255,0.22);
+      opacity: 0.0;
+      mix-blend-mode: screen;
+      user-select:none;
+      pointer-events:none;
+      white-space: nowrap;
+    }
+
+    /* “Dropout” blackout flashes */
+    #drop{
+      position:absolute; inset:0;
+      background: rgba(0,0,0,0.92);
+      opacity:0;
+      pointer-events:none;
+    }
+
+    /* active */
+    .on #wrap { opacity:1; }
+    .off #wrap { opacity:0; transition: opacity calc(var(--fade-out-ms)*1ms) linear; }
+
+    /* micro jitter */
+    .jitter #wrap { filter: contrast(1.1) saturate(1.1); }
+
+  </style>
+</head>
+<body>
+  <div id="wrap">
+    <canvas id="n"></canvas>
+    <div id="scan"></div>
+    <div id="drop"></div>
+    <div id="ticker"></div>
+  </div>
+
+  <!-- Optional: external audio file next to this html -->
+  <!-- <audio id="sfx" src="./glitch2.wav" preload="auto"></audio> -->
+
+  <script>
+    /**
+     * glitch_bars.html — “BLOCK TEAR + DROP OUT”
+     *
+     * Query params:
+     *  mode=bust|loop (default burst)
+     *  ms=600         (burst duration)
+     *  int=0..1       (intensity)
+     *  fps=60
+     *  msg=TEXT       (optional ticker)
+     *  seed=123
+     *
+     * Examples:
+     *  glitch_bars.html?mode=burst&ms=520&int=0.95&msg=DO%20NOT%20ADJUST%20YOUR%20SET
+     *  glitch_bars.html?mode=burst&ms=720&int=1&msg=TRANSMISSION%20INTERCEPTED
+     */
+
+    const qs = new URLSearchParams(location.search);
+    const MODE = (qs.get("mode") || "burst").toLowerCase();
+    const MS   = clamp(parseFloat(qs.get("ms") || "600"), 140, 8000);
+    const INT  = clamp(parseFloat(qs.get("int") || "0.9"), 0, 1);
+    const FPS  = clamp(parseFloat(qs.get("fps") || "60"), 10, 120);
+    let seed   = (qs.get("seed") ? parseInt(qs.get("seed"), 10) : (Date.now() & 0x7fffffff)) >>> 0;
+
+    function clamp(x,a,b){ return Math.max(a, Math.min(b, x)); }
+    function lerp(a,b,t){ return a + (b-a)*t; }
+
+    // Deterministic RNG (xorshift32)
+    function rnd(){
+      seed ^= seed << 13; seed >>>= 0;
+      seed ^= seed >> 17; seed >>>= 0;
+      seed ^= seed << 5;  seed >>>= 0;
+      return (seed >>> 0) / 4294967296;
+    }
+    function rndi(a,b){ return (a + Math.floor(rnd()*(b-a+1)))|0; }
+
+    const wrap = document.getElementById("wrap");
+    const drop = document.getElementById("drop");
+    const ticker = document.getElementById("ticker");
+    const msg = (qs.get("msg") || "").slice(0, 120);
+    if (msg) ticker.textContent = msg;
+
+    const sfx = document.getElementById("sfx");
+    let audioPrimed = false;
+
+    // Canvas noise
+    const cn = document.getElementById("n");
+    const ctx = cn.getContext("2d", { alpha: true, desynchronized: true });
+
+    function fit(){
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      cn.width = Math.floor(innerWidth * dpr);
+      cn.height = Math.floor(innerHeight * dpr);
+      cn.style.width = "100%";
+      cn.style.height = "100%";
+      ctx.setTransform(dpr,0,0,dpr,0,0);
+    }
+    addEventListener("resize", fit, { passive:true });
+    fit();
+
+    // Intensity knobs
+    const I = INT;
+    const barCount = Math.floor(lerp(8, 26, I));
+    const jitterPx = lerp(2, 16, I);
+    const dropoutChance = lerp(0.03, 0.11, I);
+    const tickerChance  = lerp(0.25, 0.65, I);
+
+    // Build bars (DOM divs) so they “pop” hard
+    const bars = [];
+    for (let i=0;i<barCount;i++){
+      const d = document.createElement("div");
+      d.className = "bar";
+      wrap.appendChild(d);
+      bars.push(d);
+    }
+
+    function randomizeBars(){
+      // Mix of vertical and horizontal blocks
+      const w = innerWidth, h = innerHeight;
+      for (const b of bars){
+        const vertical = rnd() < 0.55;
+        const thick = vertical ? lerp(10, 120, rnd()) : lerp(10, 90, rnd());
+        const len   = vertical ? lerp(h*0.25, h*1.1, rnd()) : lerp(w*0.25, w*1.1, rnd());
+        const x = rndi(-40, w+40);
+        const y = rndi(-40, h+40);
+
+        b.style.left = x + "px";
+        b.style.top  = y + "px";
+        b.style.width  = (vertical ? thick : len) + "px";
+        b.style.height = (vertical ? len : thick) + "px";
+
+        // “chroma” by changing opacity + slight hue via RGB-ish shadows
+        const a = lerp(0.04, 0.22, I) * lerp(0.4, 1.1, rnd());
+        b.style.background = `rgba(255,255,255,${a})`;
+        b.style.boxShadow = `${rndi(-6,6)}px 0 rgba(255,0,0,${a*0.55}), ${rndi(-6,6)}px 0 rgba(0,180,255,${a*0.55})`;
+      }
+    }
+
+    // Cheap noise update
+    let lastNoise = 0;
+    function drawNoise(t){
+      if (t - lastNoise < 45) return;
+      lastNoise = t;
+
+      const W = cn.width, H = cn.height;
+      const img = ctx.createImageData(W, H);
+      const data = img.data;
+
+      const step = 3;
+      const alpha = lerp(40, 190, I);
+      for (let y=0; y<H; y+=step){
+        for (let x=0; x<W; x+=step){
+          const v = (rnd()*255)|0;
+          const a = (rnd()*alpha)|0;
+          for (let yy=0; yy<step; yy++){
+            for (let xx=0; xx<step; xx++){
+              const i = ((y+yy)*W + (x+xx)) * 4;
+              data[i+0]=v; data[i+1]=v; data[i+2]=v; data[i+3]=a;
+            }
+          }
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+    }
+
+    function primeAudio(){
+      if (audioPrimed) return;
+      audioPrimed = true;
+
+      if (sfx){
+        try { sfx.currentTime = 0; const p = sfx.play(); if (p?.catch) p.catch(()=>{}); } catch(_){}
+        return;
+      }
+      // WebAudio burst fallback
+      try{
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        const ac = new AC();
+        const dur = Math.min(0.18, Math.max(0.08, MS/5000));
+        const buf = ac.createBuffer(1, Math.floor(ac.sampleRate*dur), ac.sampleRate);
+        const arr = buf.getChannelData(0);
+        for (let i=0;i<arr.length;i++){
+          const t = i/arr.length;
+          const env = t < 0.06 ? (t/0.06) : Math.exp(-12*(t-0.06));
+          arr[i] = (Math.random()*2-1) * env * (0.45 + 0.55*I);
+        }
+        const src = ac.createBufferSource(); src.buffer = buf;
+
+        const hp = ac.createBiquadFilter();
+        hp.type = "highpass";
+        hp.frequency.value = 420 + 900*I;
+
+        const g = ac.createGain();
+        g.gain.value = 0.85;
+
+        src.connect(hp); hp.connect(g); g.connect(ac.destination);
+        src.start();
+        setTimeout(()=>{ try{ac.close();}catch(_){ } }, dur*1000+120);
+      }catch(_){}
+    }
+
+    function setOn(){
+      document.body.classList.add("on","jitter");
+      document.body.classList.remove("off");
+      // ticker might show
+      ticker.style.opacity = (msg && rnd() < tickerChance) ? String(lerp(0.35, 0.95, I)) : "0";
+    }
+    function setOff(){
+      document.body.classList.add("off");
+      document.body.classList.remove("on");
+    }
+
+    // Frame limiter
+    const frameInterval = 1000 / FPS;
+    let lastFrame = 0;
+    let start = performance.now();
+    let ending = false;
+
+    function jitter(){
+      const x = rndi(-Math.floor(jitterPx), Math.floor(jitterPx));
+      const y = rndi(-Math.floor(jitterPx/2), Math.floor(jitterPx/2));
+      wrap.style.transform = `translate(${x}px, ${y}px)`;
+    }
+
+    function maybeDropout(){
+      if (rnd() < dropoutChance){
+        drop.style.opacity = String(lerp(0.25, 0.85, rnd()));
+        setTimeout(()=> drop.style.opacity = "0", rndi(35, 120));
+      }
+    }
+
+    function tick(t){
+      if (t - lastFrame < frameInterval && !(ending && MODE==="loop")) {
+        requestAnimationFrame(tick);
+        return;
+      }
+      lastFrame = t;
+
+      drawNoise(t);
+      randomizeBars();
+      jitter();
+      maybeDropout();
+
+      // ticker flicker
+      if (msg){
+        const o = rnd() < 0.35 ? lerp(0.2, 0.95, rnd()) : 1;
+        ticker.style.opacity = String(o * lerp(0.35, 0.95, I));
+        ticker.style.transform = `translate(${rndi(-2,2)}px, ${rndi(-1,1)}px)`;
+      }
+
+      if (MODE === "burst"){
+        const elapsed = t - start;
+        if (!ending && elapsed >= MS){
+          ending = true;
+          setOff();
+          // stop updating after fade
+          const fadeOut = parseInt(getComputedStyle(document.documentElement).getPropertyValue("--fade-out-ms"), 10) || 140;
+          setTimeout(()=>{ /* freeze */ }, fadeOut + 10);
+          return;
+        }
+      }
+
+      requestAnimationFrame(tick);
+    }
+
+    // Start
+    setOn();
+    primeAudio();
+    requestAnimationFrame(tick);
+
+    // Click to retrigger (handy when opened in browser)
+    addEventListener("pointerdown", ()=>{
+      seed = (Date.now() & 0x7fffffff) >>> 0;
+      start = performance.now();
+      ending = false;
+      setOn();
+      primeAudio();
+      requestAnimationFrame(tick);
+    });
+  </script>
+</body>
+</html>

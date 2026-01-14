@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>glitch-redact</title>
+  <style>
+    :root{
+      --fade-in-ms: 18;
+      --fade-out-ms: 160;
+      --bg-alpha: 0;           /* transparent */
+      --safe-pad: 4.5vw;
+    }
+    html, body { height:100%; margin:0; background: rgba(0,0,0,var(--bg-alpha)); overflow:hidden; }
+    body{
+      position:relative;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+
+    #wrap{
+      position:absolute; inset:0;
+      opacity:0;
+      transition: opacity calc(var(--fade-in-ms)*1ms) linear;
+      will-change: opacity, transform, filter;
+    }
+
+    /* Black redaction shutters */
+    .shutter{
+      position:absolute;
+      background: rgba(0,0,0,0.92);
+      mix-blend-mode: multiply;
+      box-shadow:
+        0 0 0 1px rgba(255,255,255,0.04) inset,
+        0 0 30px rgba(0,0,0,0.55);
+      opacity: 0;
+      transform: translateZ(0);
+      will-change: opacity, transform;
+    }
+
+    /* White “burn” flash layer */
+    #burn{
+      position:absolute; inset:0;
+      background: rgba(255,255,255,0.0);
+      opacity:0;
+      mix-blend-mode: screen;
+      pointer-events:none;
+    }
+
+    /* Green phosphor text (ARG vibe) */
+    #hud{
+      position:absolute;
+      left: var(--safe-pad);
+      right: var(--safe-pad);
+      top: calc(var(--safe-pad) * 0.8);
+      color: rgba(210,255,210,0.92);
+      text-shadow:
+        0 0 8px rgba(140,255,170,0.35),
+        -2px 0 rgba(255,0,0,0.18),
+        2px 0 rgba(0,180,255,0.18);
+      letter-spacing: 0.12em;
+      font-size: clamp(12px, 1.8vw, 22px);
+      line-height: 1.35;
+      opacity: 0;
+      user-select:none;
+      pointer-events:none;
+      mix-blend-mode: screen;
+      white-space: pre-wrap;
+    }
+
+    /* “REDACTED” stamp */
+    #stamp{
+      position:absolute;
+      right: calc(var(--safe-pad) * 0.9);
+      bottom: calc(var(--safe-pad) * 0.7);
+      padding: 8px 12px;
+      border: 2px solid rgba(255,80,80,0.70);
+      color: rgba(255,80,80,0.82);
+      letter-spacing: 0.22em;
+      font-weight: 700;
+      font-size: clamp(12px, 2.2vw, 26px);
+      transform: rotate(-9deg);
+      opacity: 0;
+      mix-blend-mode: screen;
+      text-shadow: 0 0 10px rgba(255,80,80,0.22);
+      user-select:none;
+      pointer-events:none;
+    }
+
+    /* subtle scanlines */
+    #scan{
+      position:absolute; inset:0;
+      pointer-events:none;
+      background:
+        repeating-linear-gradient(
+          to bottom,
+          rgba(255,255,255,0.10) 0px,
+          rgba(255,255,255,0.00) 2px,
+          rgba(0,0,0,0.00) 4px
+        );
+      opacity: 0.55;
+      mix-blend-mode: overlay;
+    }
+
+    /* active / end */
+    .on #wrap{ opacity:1; }
+    .off #wrap{ opacity:0; transition: opacity calc(var(--fade-out-ms)*1ms) linear; }
+
+  </style>
+</head>
+<body>
+  <div id="wrap">
+    <div id="burn"></div>
+    <div id="scan"></div>
+    <div id="hud"></div>
+    <div id="stamp"></div>
+  </div>
+
+  <!-- Optional external audio -->
+  <!-- <audio id="sfx" src="./redact.wav" preload="auto"></audio> -->
+
+  <script>
+    /**
+     * glitch_redact.html — “REDACTION SHUTTERS + HUD”
+     *
+     * Params:
+     *  mode=burst|loop   (default burst)
+     *  ms=700            (burst duration)
+     *  int=0..1          (intensity)
+     *  fps=60
+     *  msg=TEXT          (HUD block)
+     *  stamp=TEXT        (default "REDACTED")
+     *  seed=123
+     *
+     * Examples:
+     *  glitch_redact.html?mode=burst&ms=780&int=0.95&stamp=REDACTED&msg=CASE%20ID:%20P3-019%0AACCESS:%20DENIED%0AORIGIN:%20UNKNOWN
+     *  glitch_redact.html?mode=burst&ms=520&int=1&stamp=CLASSIFIED&msg=TRANSMISSION%20SPLIT%20DETECTED
+     */
+
+    const qs = new URLSearchParams(location.search);
+    const MODE  = (qs.get("mode") || "burst").toLowerCase();
+    const MS    = clamp(parseFloat(qs.get("ms") || "700"), 140, 8000);
+    const INT   = clamp(parseFloat(qs.get("int") || "0.9"), 0, 1);
+    const FPS   = clamp(parseFloat(qs.get("fps") || "60"), 10, 120);
+    let seed    = (qs.get("seed") ? parseInt(qs.get("seed"), 10) : (Date.now() & 0x7fffffff)) >>> 0;
+
+    const hudText = (qs.get("msg") || "CASE ID: UNKNOWN\nACCESS: DENIED\nORIGIN: [REDACTED]").slice(0, 360);
+    const stampText = (qs.get("stamp") || "REDACTED").slice(0, 24);
+
+    function clamp(x,a,b){ return Math.max(a, Math.min(b, x)); }
+    function lerp(a,b,t){ return a + (b-a)*t; }
+
+    // xorshift32
+    function rnd(){
+      seed ^= seed << 13; seed >>>= 0;
+      seed ^= seed >> 17; seed >>>= 0;
+      seed ^= seed << 5;  seed >>>= 0;
+      return (seed >>> 0) / 4294967296;
+    }
+    function rndi(a,b){ return (a + Math.floor(rnd()*(b-a+1)))|0; }
+
+    const wrap  = document.getElementById("wrap");
+    const burn  = document.getElementById("burn");
+    const hud   = document.getElementById("hud");
+    const stamp = document.getElementById("stamp");
+    hud.textContent = hudText;
+    stamp.textContent = stampText;
+
+    const sfx = document.getElementById("sfx");
+    let audioPrimed = false;
+
+    // Create shutters
+    const shutters = [];
+    const shutterCount = Math.floor(lerp(6, 16, INT));
+    for (let i=0;i<shutterCount;i++){
+      const d = document.createElement("div");
+      d.className = "shutter";
+      wrap.appendChild(d);
+      shutters.push(d);
+    }
+
+    function primeAudio(){
+      if (audioPrimed) return;
+      audioPrimed = true;
+
+      if (sfx){
+        try { sfx.currentTime = 0; const p = sfx.play(); if (p?.catch) p.catch(()=>{}); } catch(_){}
+        return;
+      }
+
+      // WebAudio: low thump + static edge (feels like “censor slap”)
+      try{
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        const ac = new AC();
+
+        const now = ac.currentTime;
+        const dur = Math.min(0.22, Math.max(0.10, MS/4500));
+
+        // Noise burst
+        const buf = ac.createBuffer(1, Math.floor(ac.sampleRate*dur), ac.sampleRate);
+        const arr = buf.getChannelData(0);
+        for (let i=0;i<arr.length;i++){
+          const t = i/arr.length;
+          const env = t < 0.05 ? (t/0.05) : Math.exp(-10*(t-0.05));
+          arr[i] = (Math.random()*2-1) * env * (0.35 + 0.55*INT);
+        }
+        const src = ac.createBufferSource(); src.buffer = buf;
+
+        const bp = ac.createBiquadFilter();
+        bp.type = "bandpass";
+        bp.frequency.value = 700 + 900*INT;
+        bp.Q.value = 0.9 + 2.0*INT;
+
+        const g1 = ac.createGain();
+        g1.gain.setValueAtTime(0.9, now);
+
+        // Low thump oscillator
+        const osc = ac.createOscillator();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(90 + 40*INT, now);
+        const g2 = ac.createGain();
+        g2.gain.setValueAtTime(0.0, now);
+        g2.gain.linearRampToValueAtTime(0.7, now + 0.01);
+        g2.gain.exponentialRampToValueAtTime(0.001, now + dur);
+
+        // Highpass to keep it from being too boomy
+        const hp = ac.createBiquadFilter();
+        hp.type = "highpass";
+        hp.frequency.value = 55;
+
+        src.connect(bp);
+        bp.connect(g1);
+
+        osc.connect(g2);
+        g2.connect(hp);
+
+        const mix = ac.createGain();
+        mix.gain.value = 0.85;
+
+        g1.connect(mix);
+        hp.connect(mix);
+        mix.connect(ac.destination);
+
+        src.start();
+        osc.start();
+        osc.stop(now + dur);
+
+        setTimeout(()=>{ try{ac.close();}catch(_){ } }, dur*1000 + 220);
+      }catch(_){}
+    }
+
+    function setOn(){
+      document.body.classList.add("on");
+      document.body.classList.remove("off");
+    }
+    function setOff(){
+      document.body.classList.add("off");
+      document.body.classList.remove("on");
+    }
+
+    function placeShutters(){
+      const w = innerWidth, h = innerHeight;
+
+      // Alternate horizontal + vertical shutters
+      for (let i=0;i<shutters.length;i++){
+        const s = shutters[i];
+        const vertical = (i % 2 === 0) ? (rnd() < 0.35) : (rnd() < 0.65);
+        const thick = vertical ? lerp(40, 220, rnd()) : lerp(28, 160, rnd());
+        const len   = vertical ? lerp(h*0.25, h*1.3, rnd()) : lerp(w*0.25, w*1.3, rnd());
+
+        const x = rndi(-60, w+60);
+        const y = rndi(-60, h+60);
+
+        s.style.left = x + "px";
+        s.style.top  = y + "px";
+        s.style.width  = (vertical ? thick : len) + "px";
+        s.style.height = (vertical ? len : thick) + "px";
+
+        // “slam” movement
+        const dx = rndi(-18, 18);
+        const dy = rndi(-12, 12);
+        s.style.transform = `translate(${dx}px, ${dy}px)`;
+
+        // opacity
+        s.style.opacity = String(lerp(0.25, 0.95, rnd()) * lerp(0.55, 1.0, INT));
+      }
+    }
+
+    function flickerHud(){
+      // HUD flicker + subtle jitter
+      const o = rnd() < 0.45 ? lerp(0.2, 0.95, rnd()) : 1.0;
+      hud.style.opacity = String(o * lerp(0.35, 0.95, INT));
+      hud.style.transform = `translate(${rndi(-2,2)}px, ${rndi(-1,2)}px)`;
+      hud.style.filter = `blur(${(rnd() < 0.25 ? lerp(0.2, 1.0, rnd()) : 0).toFixed(2)}px)`;
+    }
+
+    function stampPulse(){
+      // stamp shows in “hits”
+      const show = rnd() < lerp(0.35, 0.75, INT);
+      stamp.style.opacity = show ? String(lerp(0.25, 0.95, rnd())) : "0";
+      stamp.style.transform = `rotate(${lerp(-14, -6, rnd()).toFixed(1)}deg) translate(${rndi(-3,3)}px, ${rndi(-2,2)}px)`;
+    }
+
+    function burnFlash(){
+      if (rnd() < lerp(0.12, 0.28, INT)){
+        burn.style.opacity = String(lerp(0.05, 0.20, rnd()));
+        burn.style.background = rnd() < 0.5 ? "rgba(255,255,255,0.22)" : "rgba(255,255,255,0.08)";
+        setTimeout(()=> burn.style.opacity = "0", rndi(40, 120));
+      }
+    }
+
+    function microJitter(){
+      const x = rndi(-Math.floor(lerp(1, 14, INT)), Math.floor(lerp(1, 14, INT)));
+      const y = rndi(-Math.floor(lerp(1, 8, INT)),  Math.floor(lerp(1, 8, INT)));
+      wrap.style.transform = `translate(${x}px, ${y}px)`;
+      wrap.style.filter = `contrast(${lerp(1.02, 1.16, INT).toFixed(2)}) saturate(${lerp(1.02, 1.14, INT).toFixed(2)})`;
+    }
+
+    // Frame limiter
+    const frameInterval = 1000 / FPS;
+    let lastFrame = 0;
+    let start = performance.now();
+    let ending = false;
+
+    function tick(t){
+      if (t - lastFrame < frameInterval && !ending){
+        requestAnimationFrame(tick);
+        return;
+      }
+      lastFrame = t;
+
+      placeShutters();
+      flickerHud();
+      stampPulse();
+      burnFlash();
+      microJitter();
+
+      if (MODE === "burst"){
+        const elapsed = t - start;
+        if (!ending && elapsed >= MS){
+          ending = true;
+          setOff();
+          return;
+        }
+      }
+      requestAnimationFrame(tick);
+    }
+
+    // Start
+    setOn();
+    primeAudio();
+    requestAnimationFrame(tick);
+
+    // Click to retrigger (handy in browser)
+    addEventListener("pointerdown", ()=>{
+      seed = (Date.now() & 0x7fffffff) >>> 0;
+      start = performance.now();
+      ending = false;
+      setOn();
+      primeAudio();
+      requestAnimationFrame(tick);
+    });
+  </script>
+</body>
+</html>

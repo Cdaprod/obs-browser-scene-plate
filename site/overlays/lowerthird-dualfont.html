@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>lowerthirds-dualfont</title>
+
+<style>
+:root{
+  /* Position */
+  --safe-x: 4vw;
+  --safe-y: 6vh;
+  --dock: bottom; /* bottom | top */
+  --align: left;  /* left | center | right */
+
+  /* Typography */
+  --title-size: clamp(34px, 4vw, 64px);
+  --sub-size:   clamp(15px, 1.6vw, 24px);
+  --pt-size:    clamp(14px, 1.4vw, 20px);
+
+  /* Color & effects */
+  --white: rgba(255,255,255,0.98);
+  --white-soft: rgba(255,255,255,0.90);
+  --stroke: rgba(0,0,0,0.8);
+  --shadow: rgba(0,0,0,0.75);
+  --glow: rgba(180,220,255,0.35);
+
+  /* Timing */
+  --in-ms: 220;
+  --out-ms: 180;
+  --hold-ms: 4200;
+}
+
+/* Transparent page */
+html,body{
+  margin:0;
+  height:100%;
+  background: transparent !important;
+  overflow:hidden;
+}
+
+/* Root */
+#root{
+  position:absolute;
+  pointer-events:none;
+  opacity:0;
+  transform: translateY(12px);
+  transition:
+    opacity calc(var(--in-ms)*1ms) ease,
+    transform calc(var(--in-ms)*1ms) cubic-bezier(.2,.8,.2,1);
+}
+
+/* Docking */
+body.bottom #root{ left:var(--safe-x); bottom:var(--safe-y); }
+body.top #root{ left:var(--safe-x); top:var(--safe-y); }
+
+body.center #root{ left:50%; transform:translate(-50%,12px); text-align:center; }
+body.right #root{ right:var(--safe-x); left:auto; text-align:right; }
+
+/* SECONDARY (handwritten) */
+#kicker{
+  font-family:
+    "Comic Sans MS",
+    "Bradley Hand",
+    "Marker Felt",
+    "Segoe Script",
+    cursive;
+  font-size: var(--sub-size);
+  letter-spacing: 0.08em;
+  margin-bottom: 6px;
+  color: var(--white-soft);
+  text-shadow:
+    0 2px 0 rgba(0,0,0,0.6),
+    0 0 10px rgba(255,255,255,0.15);
+}
+
+/* PRIMARY (bold clean sans) */
+#title{
+  font-family:
+    Inter,
+    system-ui,
+    -apple-system,
+    Segoe UI,
+    Roboto,
+    Helvetica,
+    Arial,
+    sans-serif;
+  font-weight: 900;
+  font-size: var(--title-size);
+  letter-spacing: 0.02em;
+  line-height: 1.05;
+  color: var(--white);
+
+  text-shadow:
+    /* faux stroke */
+    0  3px 0 var(--stroke),
+    0 -3px 0 var(--stroke),
+    3px 0  0 var(--stroke),
+   -3px 0  0 var(--stroke),
+    3px 3px 0 var(--stroke),
+   -3px 3px 0 var(--stroke),
+    3px -3px 0 var(--stroke),
+   -3px -3px 0 var(--stroke),
+
+    /* depth + glow */
+    0 14px 28px var(--shadow),
+    0 0 24px var(--glow);
+}
+
+/* Subtitle */
+#sub{
+  margin-top: 6px;
+  font-family:
+    "Comic Sans MS",
+    "Bradley Hand",
+    "Marker Felt",
+    "Segoe Script",
+    cursive;
+  font-size: var(--sub-size);
+  letter-spacing: 0.06em;
+  color: var(--white-soft);
+  text-shadow:
+    0 2px 0 rgba(0,0,0,0.6),
+    0 0 12px rgba(255,255,255,0.12);
+}
+
+/* Bullet points */
+#points{
+  margin-top: 10px;
+  list-style:none;
+  padding:0;
+  display:grid;
+  gap:6px;
+}
+
+.pt{
+  display:flex;
+  gap:10px;
+  font-family:
+    Inter,
+    system-ui,
+    sans-serif;
+  font-weight:700;
+  font-size: var(--pt-size);
+  color: var(--white-soft);
+  opacity:0;
+  transform: translateY(8px);
+  transition: all 180ms ease;
+  text-shadow:
+    0 2px 0 rgba(0,0,0,0.6),
+    0 10px 16px rgba(0,0,0,0.6);
+}
+
+.bullet{
+  width:9px;
+  height:9px;
+  margin-top:0.55em;
+  border-radius:999px;
+  background:white;
+  box-shadow:
+    0 0 0 2px rgba(0,0,0,0.6),
+    0 0 14px var(--glow);
+}
+
+/* Active states */
+body.on #root{
+  opacity:1;
+  transform: translateY(0);
+}
+body.center.on #root{
+  transform: translate(-50%,0);
+}
+body.on .pt.show{
+  opacity:1;
+  transform: translateY(0);
+}
+body.off #root{
+  opacity:0;
+  transform: translateY(12px);
+}
+</style>
+</head>
+
+<body class="bottom left">
+<div id="root">
+  <div id="kicker">how to make</div>
+  <div id="title">ADDICTIVE VIDEOS</div>
+  <div id="sub">step-by-step</div>
+  <ul id="points"></ul>
+</div>
+
+<script>
+const qs = new URLSearchParams(location.search);
+
+const title = qs.get("title") || "ADDICTIVE VIDEOS";
+const kicker = qs.get("kicker") || "how to make";
+const sub = qs.get("sub") || "step-by-step";
+const pts = (qs.get("pts")||"").split("|").filter(Boolean);
+const hold = parseInt(qs.get("hold")||"4200",10);
+const dock = qs.get("dock")||"bottom";
+const align = qs.get("align")||"left";
+
+document.getElementById("title").textContent = decodeURIComponent(title);
+document.getElementById("kicker").textContent = decodeURIComponent(kicker);
+document.getElementById("sub").textContent = decodeURIComponent(sub);
+
+document.body.classList.add(dock);
+document.body.classList.add(align);
+
+const ul = document.getElementById("points");
+pts.forEach((p,i)=>{
+  const li=document.createElement("li");
+  li.className="pt";
+  li.innerHTML=`<span class="bullet"></span><span>${decodeURIComponent(p)}</span>`;
+  li.style.transitionDelay = (120 + i*80)+"ms";
+  ul.appendChild(li);
+});
+
+function show(){
+  document.body.classList.add("on");
+  ul.querySelectorAll(".pt").forEach(p=>p.classList.add("show"));
+  if(hold>0) setTimeout(hide, hold);
+}
+function hide(){
+  document.body.classList.remove("on");
+  document.body.classList.add("off");
+  ul.querySelectorAll(".pt").forEach(p=>p.classList.remove("show"));
+}
+
+show();
+</script>
+</body>
+</html>

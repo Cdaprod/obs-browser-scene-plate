@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>center-title-card</title>
+
+<style>
+:root{
+  /* Layout */
+  --maxw: min(92vw, 1500px);
+  --gap: 14px;
+
+  /* Type sizes */
+  --title: clamp(44px, 6.2vw, 110px);
+  --line:  clamp(16px, 2.2vw, 30px);
+
+  /* Primary/Secondary font distinction */
+  --primary-weight: 950;
+  --secondary-weight: 700;
+  --secondary-letter: 0.10em;
+
+  /* Depth + separation from transparent background */
+  --stroke: rgba(0,0,0,0.88);          /* strong for readability */
+  --shadow: rgba(0,0,0,0.78);
+  --glowA: rgba(255,255,255,0.18);
+  --glowB: rgba(155,220,255,0.34);     /* subtle cyan */
+  --glowC: rgba(0,0,0,0.55);
+
+  /* Optional soft “spotlight” behind text (still transparent overall) */
+  --spot-alpha: 0.18;                  /* 0..0.35 */
+  --spot-blur:  34px;
+
+  /* Anim */
+  --in-ms: 240;
+  --out-ms: 190;
+  --hold-ms: 3800;                      /* burst mode */
+  --stagger: 90;
+  --rise: 10px;
+}
+
+/* Transparent page (OBS alpha) */
+html, body{
+  height:100%;
+  margin:0;
+  background: transparent !important;
+  overflow:hidden;
+}
+
+/* Center stage */
+#stage{
+  position:absolute;
+  inset:0;
+  display:grid;
+  place-items:center;
+  pointer-events:none;
+}
+
+/* Optional soft spotlight so white text has “presence” without a box */
+#spot{
+  position:absolute;
+  width: min(90vw, 1200px);
+  height: min(46vh, 520px);
+  border-radius: 999px;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(0,0,0,var(--spot-alpha)) 0%,
+    rgba(0,0,0,calc(var(--spot-alpha) * 0.55)) 35%,
+    rgba(0,0,0,0.0) 70%
+  );
+  filter: blur(var(--spot-blur));
+  opacity: 0;
+  transition: opacity calc(var(--in-ms)*1ms) ease;
+  will-change: opacity;
+}
+
+/* Content wrapper */
+#wrap{
+  width: var(--maxw);
+  text-align:center;
+  opacity:0;
+  transform: translate3d(0, var(--rise), 0);
+  transition:
+    opacity calc(var(--in-ms)*1ms) ease,
+    transform calc(var(--in-ms)*1ms) cubic-bezier(.2,.8,.2,1);
+  will-change: opacity, transform;
+}
+
+/* PRIMARY headline */
+#title{
+  font-family:
+    Inter,
+    system-ui,
+    -apple-system,
+    Segoe UI,
+    Roboto,
+    Helvetica,
+    Arial,
+    sans-serif;
+  font-weight: var(--primary-weight);
+  font-size: var(--title);
+  line-height: 0.98;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.985);
+
+  /* Strong faux-stroke + depth + glow */
+  text-shadow:
+    /* faux stroke (thick) */
+    0  4px 0 var(--stroke),
+    0 -4px 0 var(--stroke),
+    4px 0  0 var(--stroke),
+   -4px 0  0 var(--stroke),
+    4px 4px 0 var(--stroke),
+   -4px 4px 0 var(--stroke),
+    4px -4px 0 var(--stroke),
+   -4px -4px 0 var(--stroke),
+
+    /* deep shadow */
+    0 22px 46px var(--shadow),
+
+    /* glow stack */
+    0 0 16px var(--glowA),
+    0 0 34px var(--glowB),
+    0 0 60px var(--glowC);
+}
+
+/* SECONDARY list */
+#list{
+  margin: calc(var(--gap) + 2px) 0 0 0;
+  padding: 0;
+  list-style:none;
+  display:grid;
+  gap: 10px;
+  justify-items:center;
+}
+
+.line{
+  font-family:
+    "Comic Sans MS",
+    "Bradley Hand",
+    "Marker Felt",
+    "Segoe Script",
+    cursive;
+  font-weight: var(--secondary-weight);
+  font-size: var(--line);
+  letter-spacing: var(--secondary-letter);
+  text-transform: lowercase;
+  color: rgba(255,255,255,0.93);
+
+  /* make secondary feel “etched” but lighter than primary */
+  text-shadow:
+    0 2px 0 rgba(0,0,0,0.70),
+    0 10px 18px rgba(0,0,0,0.55),
+    0 0 16px rgba(255,255,255,0.10);
+
+  opacity:0;
+  transform: translate3d(0, 10px, 0);
+  transition:
+    opacity 220ms ease,
+    transform 220ms cubic-bezier(.2,.8,.2,1);
+  will-change: opacity, transform;
+}
+
+/* Thin divider option */
+#divider{
+  margin: 14px auto 0 auto;
+  width: min(62vw, 760px);
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg,
+    rgba(255,255,255,0.00),
+    rgba(255,255,255,0.55),
+    rgba(255,255,255,0.00)
+  );
+  box-shadow:
+    0 0 18px rgba(180,220,255,0.18),
+    0 12px 30px rgba(0,0,0,0.55);
+  opacity:0;
+  transform: translate3d(0, 6px, 0);
+  transition:
+    opacity 220ms ease,
+    transform 220ms ease;
+}
+
+/* Active states */
+body.on #wrap{
+  opacity:1;
+  transform: translate3d(0,0,0);
+}
+body.on #spot{ opacity:1; }
+body.on #divider{ opacity:1; transform: translate3d(0,0,0); }
+body.on .line.show{
+  opacity:1;
+  transform: translate3d(0,0,0);
+}
+
+/* Out */
+body.off #wrap{
+  opacity:0;
+  transform: translate3d(0, var(--rise), 0);
+  transition:
+    opacity calc(var(--out-ms)*1ms) ease,
+    transform calc(var(--out-ms)*1ms) ease;
+}
+body.off #spot{ opacity:0; transition: opacity calc(var(--out-ms)*1ms) ease; }
+body.off #divider{ opacity:0; }
+
+/* Micro “ARG nudge” option */
+body.glitch #wrap{
+  animation: nudge 150ms steps(2,end) 1;
+}
+@keyframes nudge{
+  0%{ transform: translate3d(0,0,0); }
+  30%{ transform: translate3d(2px,-1px,0); }
+  60%{ transform: translate3d(-2px,1px,0); }
+  100%{ transform: translate3d(0,0,0); }
+}
+
+/* Respect reduced motion */
+@media (prefers-reduced-motion: reduce){
+  *{ animation:none !important; transition:none !important; }
+}
+</style>
+</head>
+
+<body>
+  <div id="stage">
+    <div id="spot"></div>
+    <div id="wrap">
+      <div id="title">ADDICTIVE VIDEOS</div>
+      <div id="divider"></div>
+      <ul id="list"></ul>
+    </div>
+  </div>
+
+<script>
+/**
+ * center_title_card.html
+ *
+ * Centered title card overlay for OBS Browser Source (transparent).
+ * Primary: big bold sans.
+ * Secondary: handwritten lines.
+ * Adds depth via stroke/shadow/glow + optional spotlight (no hard box).
+ *
+ * Params:
+ *  mode=burst|loop           default burst
+ *  hold=3800                 auto-hide ms (burst only)
+ *  title=...                 primary headline
+ *  lines=a|b|c               secondary lines (pipe-separated)
+ *  spot=0..0.35              spotlight alpha (default 0.18)
+ *  glitch=1                  tiny nudge on show
+ *  divider=1|0               show divider line (default 1)
+ *
+ * Examples:
+ *  center_title_card.html?mode=burst&hold=3200&title=ADDICTIVE%20VIDEOS&lines=how%20to%20make|step-by-step|no%20fluff&spot=0.22&glitch=1
+ */
+
+const qs = new URLSearchParams(location.search);
+
+const MODE  = (qs.get("mode") || "burst").toLowerCase();
+const HOLD  = clampInt(parseInt(qs.get("hold") || "3800", 10), 0, 600000);
+
+const TITLE = decodeSafe(qs.get("title") || "ADDICTIVE VIDEOS").slice(0, 80);
+const linesRaw = qs.get("lines") || "how to make|step-by-step";
+const LINES = linesRaw.split("|").map(s => decodeSafe(s).trim()).filter(Boolean).slice(0, 6);
+
+const spot = clampFloat(parseFloat(qs.get("spot") || "0.18"), 0, 0.35);
+document.documentElement.style.setProperty("--spot-alpha", String(spot));
+
+const glitch = (qs.get("glitch") || "0") === "1";
+if (glitch) document.body.classList.add("glitch");
+
+const divider = (qs.get("divider") || "1") !== "0";
+document.getElementById("divider").style.display = divider ? "block" : "none";
+
+document.getElementById("title").textContent = TITLE;
+
+const ul = document.getElementById("list");
+ul.innerHTML = "";
+LINES.forEach((txt, i) => {
+  const li = document.createElement("li");
+  li.className = "line";
+  li.textContent = txt;
+  li.style.transitionDelay = (120 + i * parseInt(getComputedStyle(document.documentElement).getPropertyValue("--stagger") || "90", 10)) + "ms";
+  ul.appendChild(li);
+});
+
+function show(){
+  document.body.classList.add("on");
+  document.body.classList.remove("off");
+  ul.querySelectorAll(".line").forEach(el => el.classList.add("show"));
+
+  if (MODE === "burst" && HOLD > 0){
+    setTimeout(hide, HOLD);
+  }
+}
+function hide(){
+  document.body.classList.remove("on");
+  document.body.classList.add("off");
+  ul.querySelectorAll(".line").forEach(el => el.classList.remove("show"));
+}
+
+function clampInt(x,a,b){ x = isFinite(x)?x:a; return Math.max(a, Math.min(b, x)); }
+function clampFloat(x,a,b){ x = isFinite(x)?x:a; return Math.max(a, Math.min(b, x)); }
+function decodeSafe(s){ try{ return decodeURIComponent(s); }catch{ return s; } }
+
+show();
+
+// Tap retrigger (useful in browser preview)
+addEventListener("pointerdown", () => { hide(); setTimeout(show, 60); });
+</script>
+</body>
+</html>

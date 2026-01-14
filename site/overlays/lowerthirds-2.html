@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>lowerthirds</title>
+  <style>
+    :root{
+      /* Positioning */
+      --safe-x: 4.2vw;
+      --safe-y: 6.0vh;
+      --dock: bottom;              /* bottom | top */
+      --align: left;               /* left | center | right */
+      --maxw: min(92vw, 1500px);
+
+      /* Typography */
+      --title: clamp(26px, 3.2vw, 54px);
+      --sub:   clamp(14px, 1.7vw, 24px);
+      --pt:    clamp(13px, 1.35vw, 19px);
+      --lh: 1.12;
+
+      /* White text that pops on dark camera */
+      --fg: rgba(255,255,255,0.98);
+      --fg2: rgba(255,255,255,0.92);
+
+      /* Stroke/shadow/glow tuning */
+      --stroke: rgba(0,0,0,0.78);      /* thicker = reads on bright footage too */
+      --shadow: rgba(0,0,0,0.75);
+      --glow: rgba(160,220,255,0.28);  /* subtle cyan glow */
+      --glow2: rgba(255,255,255,0.20);
+
+      /* Animation */
+      --in-ms: 220;
+      --out-ms: 180;
+      --hold-ms: 4200;                 /* burst auto-hide */
+      --stagger-ms: 70;
+      --rise: 10px;                    /* enter motion */
+    }
+
+    html, body{
+      height:100%;
+      margin:0;
+      background: transparent !important; /* alpha = automatic */
+      overflow:hidden;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+    }
+
+    /* Root */
+    #root{
+      position:absolute;
+      max-width: var(--maxw);
+      pointer-events:none;
+      opacity:0;
+      transform: translate3d(0, var(--rise), 0);
+      transition:
+        opacity calc(var(--in-ms) * 1ms) ease,
+        transform calc(var(--in-ms) * 1ms) cubic-bezier(.2,.8,.2,1);
+      will-change: opacity, transform;
+    }
+
+    /* Dock */
+    body.dock-bottom #root{ left: var(--safe-x); bottom: var(--safe-y); }
+    body.dock-top    #root{ left: var(--safe-x); top: var(--safe-y); }
+
+    /* Align */
+    body.align-left   #root{ text-align:left; }
+    body.align-center #root{ left: 50%; transform: translate3d(-50%, var(--rise), 0); text-align:center; }
+    body.align-right  #root{ right: var(--safe-x); left:auto; text-align:right; }
+
+    /* Title */
+    #title{
+      font-size: var(--title);
+      font-weight: 900;
+      letter-spacing: 0.01em;
+      line-height: var(--lh);
+      color: var(--fg);
+
+      /* faux stroke */
+      text-shadow:
+        0  3px 0 var(--stroke),
+        0 -3px 0 var(--stroke),
+        3px 0  0 var(--stroke),
+       -3px 0  0 var(--stroke),
+        3px 3px 0 var(--stroke),
+       -3px 3px 0 var(--stroke),
+        3px -3px 0 var(--stroke),
+       -3px -3px 0 var(--stroke),
+
+        /* depth */
+        0 14px 28px var(--shadow),
+
+        /* glow */
+        0 0 14px var(--glow2),
+        0 0 28px var(--glow);
+    }
+
+    /* Subtitle */
+    #sub{
+      margin-top: 6px;
+      font-size: var(--sub);
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      line-height: 1.18;
+      color: var(--fg2);
+      text-shadow:
+        0 2px 0 rgba(0,0,0,0.55),
+        0 10px 18px rgba(0,0,0,0.65),
+        0 0 14px rgba(255,255,255,0.10);
+    }
+
+    /* Points */
+    #points{
+      list-style:none;
+      margin: 10px 0 0 0;
+      padding: 0;
+      display:grid;
+      gap: 6px;
+    }
+
+    .pt{
+      display:flex;
+      gap: 10px;
+      align-items:flex-start;
+
+      font-size: var(--pt);
+      font-weight: 700;
+      letter-spacing: 0.015em;
+      color: rgba(255,255,255,0.92);
+
+      text-shadow:
+        0 2px 0 rgba(0,0,0,0.55),
+        0 10px 16px rgba(0,0,0,0.65);
+
+      opacity: 0;
+      transform: translate3d(0, 8px, 0);
+      transition:
+        opacity 200ms ease,
+        transform 200ms cubic-bezier(.2,.8,.2,1);
+      will-change: opacity, transform;
+    }
+
+    .bullet{
+      width: 9px; height: 9px;
+      margin-top: 0.55em;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.92);
+      box-shadow:
+        0 0 0 2px rgba(0,0,0,0.55),
+        0 0 14px rgba(160,220,255,0.28);
+      flex: 0 0 auto;
+    }
+
+    /* Active */
+    body.on #root{
+      opacity:1;
+      transform: translate3d(0,0,0);
+    }
+    body.on.align-center #root{
+      transform: translate3d(-50%,0,0);
+    }
+    body.off #root{
+      opacity:0;
+      transform: translate3d(0, var(--rise), 0);
+      transition:
+        opacity calc(var(--out-ms) * 1ms) ease,
+        transform calc(var(--out-ms) * 1ms) ease;
+    }
+    body.off.align-center #root{
+      transform: translate3d(-50%, var(--rise), 0);
+    }
+
+    body.on .pt.show{
+      opacity: 1;
+      transform: translate3d(0,0,0);
+    }
+
+    /* Optional micro “glitch nudge” */
+    body.glitch #root{
+      animation: nudge 140ms steps(2,end) 1;
+    }
+    @keyframes nudge{
+      0%{ filter:none; }
+      25%{ transform: translate3d(2px,-1px,0); }
+      55%{ transform: translate3d(-2px,1px,0); }
+      100%{ transform: translate3d(0,0,0); }
+    }
+
+    @media (prefers-reduced-motion: reduce){
+      *{ animation:none !important; transition:none !important; }
+    }
+  </style>
+</head>
+<body class="dock-bottom align-left">
+  <div id="root">
+    <div id="title">TITLE</div>
+    <div id="sub">Subtitle goes here</div>
+    <ul id="points"></ul>
+  </div>
+
+  <script>
+    /**
+     * lowerthirds.html (no container)
+     *
+     * Params:
+     *  mode=burst|loop        default burst
+     *  hold=4200             burst auto-hide ms
+     *  in=220 out=180
+     *  dock=bottom|top
+     *  align=left|center|right
+     *  title=...
+     *  sub=...
+     *  pts=p1|p2|p3          pipe-separated
+     *  glow=0..1             scales glow intensity (default 1)
+     *  stroke=0..1           scales stroke strength (default 1)
+     *  glitch=1              nudge on show
+     *
+     * Examples:
+     *  lowerthirds.html?mode=burst&hold=3000&title=LIVE%20WALL&sub=ARG%20transition%20stack&pts=wipe%20glitch|static%20hit|redaction%20slam
+     *  lowerthirds.html?align=center&dock=top&title=SIGNAL%20TEST&sub=two%20phones%20live
+     */
+
+    const qs = new URLSearchParams(location.search);
+
+    const MODE = (qs.get("mode") || "burst").toLowerCase();
+    const HOLD = clampInt(parseInt(qs.get("hold") || "4200", 10), 0, 600000);
+
+    const INMS  = clampInt(parseInt(qs.get("in")  || "220", 10), 0, 5000);
+    const OUTMS = clampInt(parseInt(qs.get("out") || "180", 10), 0, 5000);
+
+    const DOCK = (qs.get("dock") || "bottom").toLowerCase();
+    const ALIGN= (qs.get("align") || "left").toLowerCase();
+
+    const TITLE = safe(qs.get("title") || "TITLE", 100);
+    const SUB   = safe(qs.get("sub") || "Subtitle goes here", 140);
+
+    const ptsRaw = qs.get("pts") || "";
+    const PTS = ptsRaw
+      .split("|")
+      .map(s => decodeURIComponentSafe(s).trim())
+      .filter(Boolean)
+      .slice(0, 7);
+
+    const GLITCH = (qs.get("glitch") || "0") === "1";
+    const glowScale = clampFloat(parseFloat(qs.get("glow") || "1"), 0, 2);
+    const strokeScale = clampFloat(parseFloat(qs.get("stroke") || "1"), 0.2, 2);
+
+    function clampInt(x,a,b){ x = isFinite(x)?x:a; return Math.max(a, Math.min(b, x)); }
+    function clampFloat(x,a,b){ x = isFinite(x)?x:a; return Math.max(a, Math.min(b, x)); }
+    function decodeURIComponentSafe(s){ try{ return decodeURIComponent(s); }catch{ return s; } }
+    function safe(s,max){ s = decodeURIComponentSafe(s); return (s.length > max) ? s.slice(0,max) : s; }
+
+    // Apply timings
+    document.documentElement.style.setProperty("--in-ms", String(INMS));
+    document.documentElement.style.setProperty("--out-ms", String(OUTMS));
+    document.documentElement.style.setProperty("--hold-ms", String(HOLD));
+
+    // Scale glow + stroke via CSS variable edits (simple + effective)
+    const rootStyle = getComputedStyle(document.documentElement);
+    // glow scaling: adjust alpha by scaling the rgba strings would be annoying;
+    // instead, scale by adding extra blur via filter-ish effect using new vars.
+    // We'll just scale the shadow glow intensity by toggling CSS vars that are used in text-shadow.
+    // (Quick hack: more glow = slightly higher saturation is fine)
+    document.getElementById("root").style.filter = `saturate(${(1 + 0.10 * glowScale).toFixed(2)})`;
+
+    // stroke scaling: emulate by increasing rise of “stroke” by adjusting text-shadow offsets dynamically
+    // We'll do this by setting a CSS var for stroke "px"
+    const strokePx = Math.round(3 * strokeScale);
+    const title = document.getElementById("title");
+    title.style.textShadow = [
+      `0 ${strokePx}px 0 var(--stroke)`,
+      `0 -${strokePx}px 0 var(--stroke)`,
+      `${strokePx}px 0 0 var(--stroke)`,
+      `-${strokePx}px 0 0 var(--stroke)`,
+      `${strokePx}px ${strokePx}px 0 var(--stroke)`,
+      `-${strokePx}px ${strokePx}px 0 var(--stroke)`,
+      `${strokePx}px -${strokePx}px 0 var(--stroke)`,
+      `-${strokePx}px -${strokePx}px 0 var(--stroke)`,
+      `0 14px 28px var(--shadow)`,
+      `0 0 ${Math.round(14 * glowScale)}px var(--glow2)`,
+      `0 0 ${Math.round(28 * glowScale)}px var(--glow)`
+    ].join(",");
+
+    // Dock/align classes
+    document.body.classList.toggle("dock-top", DOCK === "top");
+    document.body.classList.toggle("dock-bottom", DOCK !== "top");
+
+    document.body.classList.toggle("align-center", ALIGN === "center");
+    document.body.classList.toggle("align-right", ALIGN === "right");
+    document.body.classList.toggle("align-left", ALIGN !== "center" && ALIGN !== "right");
+
+    if (GLITCH) document.body.classList.add("glitch");
+
+    // Set text
+    title.textContent = TITLE;
+    document.getElementById("sub").textContent = SUB;
+
+    // Points
+    const ul = document.getElementById("points");
+    ul.innerHTML = "";
+    for (let i=0;i<PTS.length;i++){
+      const li = document.createElement("li");
+      li.className = "pt";
+      li.style.transitionDelay = (60 + i * 70) + "ms";
+
+      const b = document.createElement("span");
+      b.className = "bullet";
+
+      const t = document.createElement("span");
+      t.textContent = PTS[i];
+
+      li.appendChild(b);
+      li.appendChild(t);
+      ul.appendChild(li);
+    }
+
+    function show(){
+      document.body.classList.remove("off");
+      document.body.classList.add("on");
+
+      const pts = ul.querySelectorAll(".pt");
+      pts.forEach((el, idx) => setTimeout(() => el.classList.add("show"), 70 + idx * 80));
+
+      if (MODE === "burst" && HOLD > 0){
+        setTimeout(hide, HOLD);
+      }
+    }
+    function hide(){
+      document.body.classList.remove("on");
+      document.body.classList.add("off");
+      ul.querySelectorAll(".pt").forEach(el => el.classList.remove("show"));
+    }
+
+    show();
+
+    // Retrigger on tap (useful when previewing)
+    addEventListener("pointerdown", () => { hide(); setTimeout(show, 50); });
+  </script>
+</body>
+</html>
