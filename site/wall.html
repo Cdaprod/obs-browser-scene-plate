@@ -1,0 +1,451 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>Plate: Wall HUD (9:19)</title>
+
+  <style>
+    :root {
+        --gap: clamp(10px, 2.2vw, 18px);
+        --wallHeight: 0.34;
+
+        --glass: rgba(0, 0, 0, 0.48);
+        --glass2: rgba(0, 0, 0, 0.22);
+        --border: rgba(255, 255, 255, 0.10);
+        --fg: rgba(255, 255, 255, 0.92);
+        --muted: rgba(255, 255, 255, 0.65);
+        --accent: rgba(120, 190, 255, 0.95);
+
+        --shadow: rgba(0, 0, 0, 0.55);
+        --blur: 12px;
+
+        --cardBg: rgba(0, 0, 0, 0.32);
+        --cardBorder: rgba(255, 255, 255, 0.12);
+
+        --titleSize: 13px;
+        --labelSize: 12px;
+        --valueSize: 22px;
+
+        --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+        --ui: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
+
+    html,
+    body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: transparent;
+        font-family: var(--ui);
+    }
+
+    .stage {
+        position: relative;
+        width: 100%;
+        height: 100%;
+    }
+
+    .frame {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+    }
+
+    .edge {
+        position: absolute;
+        inset: -2%;
+        pointer-events: none;
+        background: radial-gradient(
+            circle at 50% 45%,
+            rgba(0, 0, 0, 0) 45%,
+            rgba(0, 0, 0, 0.35) 100%
+        );
+        mix-blend-mode: multiply;
+        opacity: 0.8;
+    }
+
+    /* ===============================
+       WALL CONTAINER (FIXED LOGIC)
+       =============================== */
+
+    .wall {
+        position: absolute;
+        left: var(--gap);
+        right: var(--gap);
+        bottom: var(--gap);
+
+        max-width: 1200px;
+        margin-inline: auto;
+
+        height: auto
+        display: grid;
+        grid-template-rows: auto auto auto;
+        gap: 12px;
+
+        padding: 14px;
+        box-sizing: border-box;
+
+        background: linear-gradient(180deg, var(--glass), var(--glass2));
+        border: 1px solid var(--border);
+        border-radius: 18px;
+
+        backdrop-filter: blur(var(--blur));
+        box-shadow: 0 16px 60px var(--shadow);
+    }
+
+    .dock-top {
+        top: var(--gap);
+        bottom: auto;
+    }
+
+    .wallHeader {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+    }
+
+    .wallTitle {
+        margin: 0;
+        font-size: var(--titleSize);
+        font-weight: 800;
+        letter-spacing: 0.6px;
+        text-transform: uppercase;
+        color: var(--fg);
+    }
+
+    .wallMeta {
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--muted);
+        white-space: nowrap;
+    }
+
+    /* ===============================
+       CONTENT COLUMNS
+       =============================== */
+
+    .cols {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+
+        overflow-y: auto;
+        min-height: 0;
+
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .col {
+        background: var(--cardBg);
+        border: 1px solid var(--cardBorder);
+        border-radius: 16px;
+        padding: 12px;
+        box-sizing: border-box;
+        min-width: 0;
+    }
+
+    .colTop {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 8px;
+    }
+
+    .colName {
+        font-size: 13px;
+        font-weight: 750;
+        color: var(--fg);
+    }
+
+    .pill {
+        font-family: var(--mono);
+        font-size: 11px;
+        padding: 3px 8px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        background: rgba(0, 0, 0, 0.25);
+        color: rgba(255, 255, 255, 0.78);
+        white-space: nowrap;
+    }
+
+    .stats {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+    }
+
+    .stat {
+        background: rgba(0, 0, 0, 0.22);
+        border: 1px solid rgba(255, 255, 255, 0.10);
+        border-radius: 14px;
+        padding: 10px;
+        box-sizing: border-box;
+        min-width: 0;
+    }
+
+    .label {
+        font-size: var(--labelSize);
+        color: var(--muted);
+        margin-bottom: 4px;
+    }
+
+    .value {
+        font-size: var(--valueSize);
+        font-weight: 800;
+        color: var(--fg);
+        line-height: 1.05;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .hint {
+        margin-top: 6px;
+        font-family: var(--mono);
+        font-size: 11px;
+        color: rgba(255, 255, 255, 0.55);
+    }
+
+    .spark {
+        margin-top: 8px;
+        height: 3px;
+        border-radius: 999px;
+        background: linear-gradient(
+            90deg,
+            transparent,
+            var(--accent),
+            transparent
+        );
+        opacity: 0.55;
+        animation: sweep 2.4s linear infinite;
+    }
+
+    @keyframes sweep {
+        from { transform: translateX(-60%); }
+        to { transform: translateX(60%); }
+    }
+
+    .wallFooter {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-family: var(--mono);
+        font-size: 11px;
+        color: rgba(255, 255, 255, 0.55);
+    }
+
+    .dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: rgba(255, 210, 90, 1);
+        box-shadow: 0 0 12px rgba(255, 210, 90, 0.40);
+        margin-right: 8px;
+        display: inline-block;
+    }
+
+    .ok {
+        background: rgba(80, 220, 140, 1);
+        box-shadow: 0 0 12px rgba(80, 220, 140, 0.40);
+    }
+
+    /* ===============================
+       NARROW DEVICES
+       =============================== */
+
+    @media (max-width: 420px) {
+        .stats {
+            grid-template-columns: 1fr;
+        }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="stage">
+    <div class="frame">
+      <section class="wall dock-bottom" id="wall">
+        <header class="wallHeader">
+          <h1 class="wallTitle">Live Wall</h1>
+          <div class="wallMeta" id="meta">local • polling</div>
+        </header>
+
+        <div class="cols" id="cols"></div>
+
+        <footer class="wallFooter">
+          <div><span class="dot" id="dot"></span><span id="status">BOOT</span></div>
+          <div id="updated">—</div>
+        </footer>
+      </section>
+
+      <div class="edge"></div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var params = new URLSearchParams(window.location.search);
+
+      // Controls
+      var dock = (params.get("dock") || "bottom").toLowerCase(); // bottom|top
+      var height = parseFloat(params.get("height") || "0.34");   // 0.18..0.60
+      var pollMs = parseInt(params.get("poll") || "15000", 10);
+      var dataUrl = params.get("data");
+
+      function clamp(n, a, b){ return Math.max(a, Math.min(b, n)); }
+      height = clamp(height, 0.18, 0.60);
+      pollMs = clamp(pollMs, 1000, 600000);
+
+      // Apply dock/height
+      var wall = document.getElementById("wall");
+      wall.classList.remove("dock-bottom", "dock-top");
+      wall.classList.add(dock === "top" ? "dock-top" : "dock-bottom");
+      document.documentElement.style.setProperty("--wallHeight", String(height));
+
+      // HUD status
+      var dot = document.getElementById("dot");
+      var statusEl = document.getElementById("status");
+      var updatedEl = document.getElementById("updated");
+      var metaEl = document.getElementById("meta");
+
+      function setStatus(text, ok) {
+        statusEl.textContent = text;
+        if (ok) dot.classList.add("ok");
+        else dot.classList.remove("ok");
+      }
+
+      function nowStamp() {
+        var d = new Date();
+        return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      }
+
+      // Default mock data (VALID JS NUMBERS)
+      var mock = {
+        source: "mock",
+        github: {
+          handle: "@Cdaprod",
+          public_repos: 864,
+          followers: 53,
+          following: 225,
+          stars_estimate: 234
+        },
+        youtube: {
+          handle: "@Cdaprod",
+          subscribers: 184,
+          views: 189597,
+          videos: 300,
+          live: false
+        }
+      };
+
+      function stat(label, value) {
+        return (
+          '<div class="stat">' +
+            '<div class="label">' + label + '</div>' +
+            '<div class="value">' + value + '</div>' +
+          '</div>'
+        );
+      }
+
+      function formatNumber(num) {
+        var n = Number(num);
+        if (!isFinite(n)) return "0";
+        if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
+        if (n >= 1000) return (n / 1000).toFixed(1) + "K";
+        return String(n);
+      }
+
+      function render(data) {
+        var cols = document.getElementById("cols");
+
+        var gh = data.github || {};
+        var yt = data.youtube || {};
+
+        var ghHandle = gh.handle || "@Cdaprod";
+        var ytHandle = yt.handle || "@Cdaprod";
+
+        function n(v){ return (v === undefined || v === null) ? 0 : v; }
+
+        var html = "";
+
+        // GitHub column
+        html +=
+          '<section class="col">' +
+            '<div class="colTop">' +
+              '<div class="colName">GitHub</div>' +
+              '<div class="pill">' + ghHandle + '</div>' +
+            '</div>' +
+            '<div class="stats">' +
+              stat("Repos", formatNumber(n(gh.public_repos))) +
+              stat("Followers", formatNumber(n(gh.followers))) +
+              stat("Following", formatNumber(n(gh.following))) +
+              stat("Stars", formatNumber(n(gh.stars_estimate))) +
+            '</div>' +
+            '<div class="spark"></div>' +
+            '<div class="hint">Stars = sum of stargazers_count across repos (proxy endpoint recommended).</div>' +
+          '</section>';
+
+        // YouTube column
+        html +=
+          '<section class="col">' +
+            '<div class="colTop">' +
+              '<div class="colName">YouTube</div>' +
+              '<div class="pill">' + ytHandle + '</div>' +
+            '</div>' +
+            '<div class="stats">' +
+              stat("Subs", formatNumber(n(yt.subscribers))) +
+              stat("Views", formatNumber(n(yt.views))) +
+              stat("Videos", formatNumber(n(yt.videos))) +
+              stat("Live", yt.live ? "YES" : "NO") +
+            '</div>' +
+            '<div class="spark"></div>' +
+            '<div class="hint">YouTube counts usually require an API/proxy (local JSON is best).</div>' +
+          '</section>';
+
+        cols.innerHTML = html;
+        updatedEl.textContent = "updated " + nowStamp();
+      }
+
+      async function tick() {
+        if (!dataUrl) {
+          metaEl.textContent = "local • mock";
+          setStatus("MOCK", true);
+          render(mock);
+          return;
+        }
+
+        metaEl.textContent = "local • " + pollMs + "ms";
+        setStatus("FETCH", false);
+
+        try {
+          var res = await fetch(dataUrl, { cache: "no-store" });
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          var data = await res.json();
+          setStatus("LIVE", true);
+          render(data);
+        } catch (err) {
+          console.error("Fetch error:", err);
+          setStatus("ERROR", false);
+          metaEl.textContent = "local • error";
+        }
+      }
+
+      tick();
+
+      if (dataUrl) {
+        setInterval(tick, pollMs);
+      } else {
+        setInterval(function() {
+          mock.github.followers += Math.floor(Math.random() * 2);
+          mock.youtube.views += Math.floor(Math.random() * 75);
+          render(mock);
+        }, 8000);
+      }
+    })();
+  </script>
+</body>
+</html>

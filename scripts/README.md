@@ -1,0 +1,1 @@
+# `/scripts/`: a collection of scripted capabilities are stored here.

@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>OBS iPhone Remote (Bridge)</title>
+  <style>
+    :root{
+      --bg:#0b0e14; --card:rgba(255,255,255,.05); --border:rgba(255,255,255,.10);
+      --fg:#e6edf3; --muted:rgba(230,237,243,.7);
+      --tap:#121a2b;
+      --r:14px;
+      font-family: -apple-system, system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    }
+    html,body{ height:100%; }
+    body{
+      margin:0; background:var(--bg); color:var(--fg);
+      padding: 14px;
+    }
+    header{
+      display:flex; align-items:center; justify-content:space-between;
+      gap: 12px; margin-bottom: 12px;
+    }
+    h1{ font-size: 18px; margin:0; letter-spacing:.2px; }
+    #status{
+      font-size:12px; color:var(--muted);
+      border: 1px solid var(--border);
+      padding: 6px 10px; border-radius:999px;
+      white-space:nowrap;
+    }
+    .card{
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    .card h2{
+      margin: 0 0 10px;
+      font-size: 14px;
+      color: var(--muted);
+      font-weight: 600;
+      letter-spacing:.3px;
+      text-transform: uppercase;
+    }
+    .row{ display:flex; gap:10px; align-items:center; }
+    input, select{
+      flex:1;
+      background: rgba(15,21,34,.85);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      color: var(--fg);
+      font-size: 16px;
+      outline: none;
+    }
+    button{
+      background: var(--tap);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+      color: var(--fg);
+      font-size: 16px;
+      touch-action: manipulation;
+      user-select: none;
+    }
+    button:active{ transform: scale(.98); }
+    .grid{
+      display:grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .tiny{ font-size:12px; color:var(--muted); margin-top:8px; }
+    .pill{
+      display:inline-flex; gap:8px; align-items:center;
+      padding: 6px 10px; border-radius: 999px;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .ok{ color:#9ff7c9; }
+    .bad{ color:#ff9aa2; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>OBS Remote</h1>
+    <div id="status">booting…</div>
+  </header>
+
+  <div class="card">
+    <h2>Connection</h2>
+    <div class="row" style="margin-bottom:10px;">
+      <input id="bridgeUrl" placeholder="Bridge URL" />
+      <button id="saveBridge">Save</button>
+    </div>
+    <div class="row">
+      <span class="pill" id="bridgePill">bridge: ?</span>
+      <span class="pill" id="obsPill">obs: ?</span>
+      <button id="refresh" style="width:120px;">Refresh</button>
+    </div>
+    <div class="tiny">
+      If you're opening this page on the iPhone, keep it as <b>http://127.0.0.1:8788</b>.
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Scenes</h2>
+    <div class="row" style="margin-bottom:10px;">
+      <select id="sceneSelect">
+        <option>Loading…</option>
+      </select>
+      <button id="goScene">Go</button>
+    </div>
+    <div class="grid" id="sceneGrid"></div>
+    <div class="tiny">Tip: edit scenes in OBS; hit Refresh to reload the list.</div>
+  </div>
+
+  <div class="card">
+    <h2>Record</h2>
+    <div class="grid">
+      <button id="recStart">Start Rec</button>
+      <button id="recStop">Stop Rec</button>
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <span class="pill" id="recPill">record: ?</span>
+      <button id="recStatusBtn" style="width:160px;">Get Status</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Mic Mute</h2>
+    <div class="row" style="margin-bottom:10px;">
+      <input id="micSource" placeholder='Input name (ex: "Mic/Aux")' />
+    </div>
+    <div class="grid">
+      <button id="muteOn">Mute</button>
+      <button id="muteOff">Unmute</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Text Overlay</h2>
+    <div class="row" style="margin-bottom:10px;">
+      <input id="textSource" placeholder='Text source name (ex: "LowerThird")' />
+    </div>
+    <div class="row" style="margin-bottom:10px;">
+      <input id="textValue" placeholder="Text to set…" />
+      <button id="setText">Set</button>
+    </div>
+    <div class="tiny">This uses OBS SetInputSettings({text: ...}). Works with common text sources.</div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    const defaultBridge = "http://127.0.0.1:8788";
+    const storeKey = "obs_bridge_url";
+
+    function bridgeUrl() {
+      return (localStorage.getItem(storeKey) || defaultBridge).replace(/\/+$/, "");
+    }
+
+    function setBridgeUrl(url) {
+      localStorage.setItem(storeKey, url.replace(/\/+$/, ""));
+      $("bridgeUrl").value = bridgeUrl();
+    }
+
+    async function jget(path) {
+      const r = await fetch(`${bridgeUrl()}${path}`, { cache: "no-store" });
+      return r.json();
+    }
+
+    async function jpost(path, body) {
+      const r = await fetch(`${bridgeUrl()}${path}`, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(body || {}),
+        cache: "no-store",
+      });
+      return r.json();
+    }
+
+    function pill(el, ok, text) {
+      el.textContent = text;
+      el.classList.remove("ok", "bad");
+      el.classList.add(ok ? "ok" : "bad");
+    }
+
+    async function refreshHealth() {
+      try {
+        const h = await jget("/health");
+        $("status").textContent = "online";
+        pill($("bridgePill"), true, `bridge: ok`);
+        const obs = (h.obs || {});
+        pill($("obsPill"), !!obs.connected, `obs: ${obs.connected ? "connected" : "disconnected"}`);
+        if (!obs.connected && obs.last_error) {
+          $("status").textContent = `obs error: ${obs.last_error}`;
+        }
+      } catch (e) {
+        $("status").textContent = "bridge offline";
+        pill($("bridgePill"), false, "bridge: offline");
+        pill($("obsPill"), false, "obs: ?");
+      }
+    }
+
+    function renderScenes(sceneNames) {
+      const sel = $("sceneSelect");
+      sel.innerHTML = "";
+      for (const name of sceneNames) {
+        const opt = document.createElement("option");
+        opt.value = name;
+        opt.textContent = name;
+        sel.appendChild(opt);
+      }
+
+      const grid = $("sceneGrid");
+      grid.innerHTML = "";
+      // show up to 8 quick buttons
+      for (const name of sceneNames.slice(0, 8)) {
+        const b = document.createElement("button");
+        b.textContent = name;
+        b.onclick = () => setScene(name);
+        grid.appendChild(b);
+      }
+    }
+
+    async function refreshScenes() {
+      try {
+        const r = await jget("/api/scenes");
+        if (!r.ok) throw new Error("scenes failed");
+        renderScenes(r.scenes || []);
+      } catch (e) {
+        $("sceneSelect").innerHTML = `<option>Failed to load</option>`;
+        $("sceneGrid").innerHTML = "";
+      }
+    }
+
+    async function setScene(name) {
+      $("status").textContent = `scene → ${name}`;
+      const r = await jpost("/api/scene", { name });
+      $("status").textContent = r.ok ? `scene set: ${name}` : `scene failed`;
+    }
+
+    async function recordStart() {
+      $("status").textContent = "record → start";
+      const r = await jpost("/api/record/start", {});
+      $("status").textContent = r.ok ? "recording started" : "record start failed";
+    }
+
+    async function recordStop() {
+      $("status").textContent = "record → stop";
+      const r = await jpost("/api/record/stop", {});
+      $("status").textContent = r.ok ? "recording stopped" : "record stop failed";
+    }
+
+    async function recordStatus() {
+      $("status").textContent = "record → status";
+      const r = await jget("/api/record/status");
+      if (r.ok) {
+        const active = !!r.outputActive;
+        pill($("recPill"), true, `record: ${active ? "ACTIVE" : "idle"} ${r.outputTimecode ? "• " + r.outputTimecode : ""}`);
+        $("status").textContent = "status ok";
+      } else {
+        pill($("recPill"), false, "record: error");
+        $("status").textContent = "status failed";
+      }
+    }
+
+    async function setMute(mute) {
+      const src = ($("micSource").value || "Mic/Aux").trim();
+      $("status").textContent = `${mute ? "mute" : "unmute"} → ${src}`;
+      const r = await jpost("/api/mute", { source: src, mute });
+      $("status").textContent = r.ok ? `mic ${mute ? "muted" : "unmuted"}` : "mute failed";
+    }
+
+    async function setText() {
+      const source = ($("textSource").value || "").trim();
+      const text = $("textValue").value ?? "";
+      if (!source) {
+        $("status").textContent = "set text: missing source name";
+        return;
+      }
+      $("status").textContent = `text → ${source}`;
+      const r = await jpost("/api/text", { source, text });
+      $("status").textContent = r.ok ? "text set" : "text failed";
+    }
+
+    // Wire up
+    $("bridgeUrl").value = bridgeUrl();
+    $("saveBridge").onclick = () => setBridgeUrl($("bridgeUrl").value || defaultBridge);
+
+    $("refresh").onclick = async () => {
+      await refreshHealth();
+      await refreshScenes();
+    };
+
+    $("goScene").onclick = () => {
+      const name = $("sceneSelect").value;
+      if (name) setScene(name);
+    };
+
+    $("recStart").onclick = recordStart;
+    $("recStop").onclick = recordStop;
+    $("recStatusBtn").onclick = recordStatus;
+
+    $("muteOn").onclick = () => setMute(true);
+    $("muteOff").onclick = () => setMute(false);
+
+    $("setText").onclick = setText;
+
+    // Boot
+    (async () => {
+      await refreshHealth();
+      await refreshScenes();
+      await recordStatus();
+      setInterval(refreshHealth, 4000);
+    })();
+  </script>
+</body>
+</html>
