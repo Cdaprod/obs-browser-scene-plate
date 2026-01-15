@@ -26,8 +26,8 @@ function runTests() {
 
     assert.strictEqual(
         withQuery,
-        "http://example.com:8789/overlays/test.html?bar=9&baz=3&foo=1#demo",
-        "should preserve existing params and add missing base params"
+        "http://example.com:8789/overlays/test.html?bar=9&baz=3&foo=1&bar=2#demo",
+        "should preserve existing params and append base params"
     );
 
     const withHash = buildFullUrl({

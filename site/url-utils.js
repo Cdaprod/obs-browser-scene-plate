@@ -41,9 +41,7 @@ function buildFullUrl({ path, baseLocation }) {
     const baseParams = new URLSearchParams(baseInfo.search || "");
 
     for (const [key, value] of baseParams.entries()) {
-        if (!baseUrl.searchParams.has(key)) {
-            baseUrl.searchParams.append(key, value);
-        }
+        baseUrl.searchParams.append(key, value);
     }
 
     if (baseInfo.hash && !baseUrl.hash) {
