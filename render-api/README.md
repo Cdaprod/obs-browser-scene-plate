@@ -24,10 +24,22 @@ curl -X POST http://localhost:8791/api/render \
   -d '{"url":"http://nginx/plate-default.html","name":"plate","seconds":4,"fps":60,"width":1080,"height":1920}'
 ```
 
-The response includes a `/renders/<file>.mov` path that Nginx can serve for download.
+The response includes a job ID and status URL:
+
+```json
+{"ok":true,"job_id":"...","status_url":"/api/render/<job_id>"}
+```
+
+Check job status:
+
+```shell
+curl http://localhost:8791/api/render/<job_id>
+```
+
+When ready, the response includes a `/renders/<file>.mov` path that Nginx can serve for download.
 
 ## Tests
 
 ```shell
-node --test render-api/server.test.js
+node --test render-api/server.test.js render-api/render.test.js
 ```

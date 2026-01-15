@@ -26,3 +26,20 @@ test('buildFilename formats a deterministic render filename', () => {
     'My_Plate_1080x1920_60fps_4000ms_2024-01-02T03-04-05-678Z.mov'
   );
 });
+
+test('buildFilename uses auto when seconds are omitted', () => {
+  const now = new Date('2024-01-02T03:04:05.678Z');
+  const filename = buildFilename({
+    name: 'My Plate',
+    width: 1080,
+    height: 1920,
+    fps: 60,
+    seconds: null,
+    now
+  });
+
+  assert.equal(
+    filename,
+    'My_Plate_1080x1920_60fps_auto_2024-01-02T03-04-05-678Z.mov'
+  );
+});

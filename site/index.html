@@ -266,6 +266,21 @@
             cursor: not-allowed;
         }
 
+        .input {
+            font-family: var(--mono);
+            font-size: 11px;
+            border-radius: 10px;
+            padding: 8px 10px;
+            border: 1px solid rgba(255,255,255,0.12);
+            background: rgba(0,0,0,0.35);
+            color: var(--fg);
+            min-width: 90px;
+        }
+
+        .input::placeholder {
+            color: rgba(255,255,255,0.35);
+        }
+
         .url {
             flex: 1;
             min-width: 0;
@@ -275,6 +290,16 @@
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
+        }
+
+        .status {
+            font-family: var(--mono);
+            font-size: 11px;
+            color: var(--muted);
+        }
+
+        .hidden {
+            display: none;
         }
 
         iframe {
@@ -346,6 +371,9 @@
                 <button class="btn" id="openBtn">Open Tab</button>
                 <button class="btn" id="reloadBtn">Reload</button>
                 <button class="btn" id="exportBtn">Export MOV</button>
+                <input class="input" id="secondsInput" type="number" min="0" step="0.1" placeholder="auto sec" />
+                <span class="status" id="exportStatus">Idle</span>
+                <a class="btn hidden" id="downloadBtn" download>Download MOV</a>
                 <div class="url" id="urlText2"></div>
             </div>
 
@@ -373,6 +401,9 @@
         const openBtn = document.getElementById("openBtn");
         const reloadBtn = document.getElementById("reloadBtn");
         const exportBtn = document.getElementById("exportBtn");
+        const secondsInput = document.getElementById("secondsInput");
+        const exportStatus = document.getElementById("exportStatus");
+        const downloadBtn = document.getElementById("downloadBtn");
         const toast = document.getElementById("toast");
 
         const openBrowse = document.getElementById("openBrowse");
@@ -393,6 +424,7 @@
 
         let items = [];
         let activePath = "";
+        let pollTimer = null;
 
         function showToast(text) {
             toast.textContent = text;
@@ -496,6 +528,44 @@
             showToast("Reloaded");
         };
 
+        function setExportStatus(state, detail) {
+            const label = detail ? `${state}: ${detail}` : state;
+            exportStatus.textContent = label;
+        }
+
+        async function pollJobStatus(statusUrl) {
+            const res = await fetch(statusUrl, { cache: "no-store" });
+            const data = await res.json();
+            if (!res.ok || !data.ok) {
+                throw new Error(data.error || "status_failed");
+            }
+
+            setExportStatus(data.state || "rendering");
+
+            if (data.state === "ready" && data.download_url) {
+                const downloadUrl = `${downloadBase}${data.download_url}`;
+                downloadBtn.href = downloadUrl;
+                if (data.filename) {
+                    downloadBtn.download = data.filename;
+                }
+                downloadBtn.classList.remove("hidden");
+                exportBtn.disabled = false;
+                exportBtn.textContent = "Export MOV";
+                showToast("Export ready");
+                return true;
+            }
+
+            if (data.state === "error") {
+                exportBtn.disabled = false;
+                exportBtn.textContent = "Export MOV";
+                setExportStatus("Error", data.error || "render_failed");
+                showToast("Export failed");
+                return true;
+            }
+
+            return false;
+        }
+
         exportBtn.onclick = async () => {
             const text = urlText2.textContent || "";
             if (!text || text.startsWith("Select")) {
@@ -503,18 +573,29 @@
                 return;
             }
 
-            exportBtn.textContent = "Rendering…";
+            if (pollTimer) {
+                clearInterval(pollTimer);
+                pollTimer = null;
+            }
+
+            exportBtn.textContent = "Queued…";
             exportBtn.disabled = true;
+            downloadBtn.classList.add("hidden");
+            setExportStatus("Queued");
 
             try {
+                const secondsOverride = secondsInput.value.trim();
                 const payload = {
                     url: text,
                     name: inferNameFromPath(activePath),
-                    seconds: 4,
                     fps: 60,
                     width: 1080,
                     height: 1920
                 };
+
+                if (secondsOverride) {
+                    payload.seconds = Number(secondsOverride);
+                }
 
                 const res = await fetch(`${renderApiBase}/api/render`, {
                     method: "POST",
@@ -527,17 +608,42 @@
                     throw new Error(data.error || "render_failed");
                 }
 
-                const downloadUrl = `${downloadBase}${data.download}`;
-                window.open(downloadUrl, "_blank");
-                showToast("Export ready");
+                if (!data.status_url) {
+                    throw new Error("missing_status_url");
+                }
+
+                const statusUrl = `${renderApiBase}${data.status_url}`;
+                setExportStatus("Rendering");
+
+                pollTimer = setInterval(async () => {
+                    try {
+                        const done = await pollJobStatus(statusUrl);
+                        if (done && pollTimer) {
+                            clearInterval(pollTimer);
+                            pollTimer = null;
+                        }
+                    } catch (err) {
+                        console.error(err);
+                        setExportStatus("Error", "status_failed");
+                        exportBtn.disabled = false;
+                        exportBtn.textContent = "Export MOV";
+                        showToast("Export failed");
+                        if (pollTimer) {
+                            clearInterval(pollTimer);
+                            pollTimer = null;
+                        }
+                    }
+                }, 900);
             } catch (err) {
                 console.error(err);
                 const msg = (err && err.message) ? err.message : String(err);
                 showToast("Export failed");
                 alert(`Export failed: ${msg}`);
             } finally {
-                exportBtn.textContent = "Export MOV";
-                exportBtn.disabled = false;
+                if (!pollTimer) {
+                    exportBtn.textContent = "Export MOV";
+                    exportBtn.disabled = false;
+                }
             }
         };
 
