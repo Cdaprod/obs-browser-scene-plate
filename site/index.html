@@ -1,29 +1,29 @@
 <!doctype html>
-<html lang="en">
+<html lang=“en”>
 <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta charset=“utf-8” />
+    <meta name=“viewport” content=“width=device-width,initial-scale=1” />
     <title>OBS Browser Scene Plate • Browser</title>
     <style>
         :root {
-            --bg: #0b0d12;
-            --panel: rgba(255,255,255,0.06);
-            --panel2: rgba(255,255,255,0.04);
-            --border: rgba(255,255,255,0.10);
-            --fg: rgba(255,255,255,0.92);
-            --muted: rgba(255,255,255,0.62);
-            --accent: rgba(120,190,255,0.95);
+            —bg: #0b0d12;
+            —panel: rgba(255,255,255,0.06);
+            —panel2: rgba(255,255,255,0.04);
+            —border: rgba(255,255,255,0.10);
+            —fg: rgba(255,255,255,0.92);
+            —muted: rgba(255,255,255,0.62);
+            —accent: rgba(120,190,255,0.95);
 
-            --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-            --ui: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+            —mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, “Liberation Mono”, monospace;
+            —ui: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
         }
 
         html, body {
             height: 100%;
             margin: 0;
-            background: var(--bg);
-            color: var(--fg);
-            font-family: var(--ui);
+            background: var(—bg);
+            color: var(—fg);
+            font-family: var(—ui);
             overflow: hidden;
         }
 
@@ -33,7 +33,7 @@
             align-items: center;
             justify-content: space-between;
             padding: 0 14px;
-            border-bottom: 1px solid var(--border);
+            border-bottom: 1px solid var(—border);
             background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
             box-sizing: border-box;
             gap: 12px;
@@ -57,9 +57,9 @@
         }
 
         header .title .sub {
-            font-family: var(--mono);
+            font-family: var(—mono);
             font-size: 11px;
-            color: var(--muted);
+            color: var(—muted);
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -74,7 +74,7 @@
         }
 
         .chip {
-            font-family: var(--mono);
+            font-family: var(—mono);
             font-size: 11px;
             color: rgba(255,255,255,0.70);
             border: 1px solid rgba(255,255,255,0.10);
@@ -109,9 +109,9 @@
         }
 
         .pane {
-            border: 1px solid var(--border);
+            border: 1px solid var(—border);
             border-radius: 14px;
-            background: var(--panel);
+            background: var(—panel);
             overflow: hidden;
             display: grid;
             grid-template-rows: auto 1fr;
@@ -121,8 +121,8 @@
 
         .pane .bar {
             padding: 10px 12px;
-            border-bottom: 1px solid var(--border);
-            background: var(--panel2);
+            border-bottom: 1px solid var(—border);
+            background: var(—panel2);
             display: flex;
             align-items: center;
             justify-content: space-between;
@@ -133,7 +133,7 @@
         .pane .bar .label {
             font-size: 12px;
             font-weight: 800;
-            color: var(--fg);
+            color: var(—fg);
             white-space: nowrap;
         }
 
@@ -144,9 +144,9 @@
             border: 1px solid rgba(255,255,255,0.10);
             border-radius: 10px;
             padding: 8px 10px;
-            color: var(--fg);
+            color: var(—fg);
             outline: none;
-            font-family: var(--mono);
+            font-family: var(—mono);
             font-size: 11px;
         }
 
@@ -169,7 +169,7 @@
         }
 
         .group .gname {
-            font-family: var(--mono);
+            font-family: var(—mono);
             font-size: 11px;
             color: rgba(255,255,255,0.65);
             text-transform: uppercase;
@@ -177,7 +177,7 @@
         }
 
         .group .gcount {
-            font-family: var(--mono);
+            font-family: var(—mono);
             font-size: 10px;
             color: rgba(255,255,255,0.40);
             border: 1px solid rgba(255,255,255,0.08);
@@ -208,9 +208,9 @@
         }
 
         .item .path {
-            font-family: var(--mono);
+            font-family: var(—mono);
             font-size: 11px;
-            color: var(--fg);
+            color: var(—fg);
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
@@ -218,7 +218,7 @@
         }
 
         .item .tag {
-            font-family: var(--mono);
+            font-family: var(—mono);
             font-size: 10px;
             color: rgba(255,255,255,0.60);
             border: 1px solid rgba(255,255,255,0.10);
@@ -245,13 +245,13 @@
         }
 
         .btn {
-            font-family: var(--mono);
+            font-family: var(—mono);
             font-size: 11px;
             border-radius: 10px;
             padding: 8px 10px;
             border: 1px solid rgba(255,255,255,0.12);
             background: rgba(0,0,0,0.25);
-            color: var(--fg);
+            color: var(—fg);
             cursor: pointer;
             white-space: nowrap;
         }
@@ -261,12 +261,17 @@
             background: rgba(120,190,255,0.10);
         }
 
+        .btn:disabled {
+            opacity: 0.55;
+            cursor: not-allowed;
+        }
+
         .url {
             flex: 1;
             min-width: 0;
-            font-family: var(--mono);
+            font-family: var(—mono);
             font-size: 11px;
-            color: var(--muted);
+            color: var(—muted);
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
@@ -280,9 +285,9 @@
         }
 
         .hint {
-            font-family: var(--mono);
+            font-family: var(—mono);
             font-size: 11px;
-            color: var(--muted);
+            color: var(—muted);
             padding: 10px 12px;
             border-top: 1px solid rgba(255,255,255,0.06);
         }
@@ -295,7 +300,7 @@
             background: rgba(0,0,0,0.65);
             border: 1px solid rgba(255,255,255,0.12);
             color: rgba(255,255,255,0.90);
-            font-family: var(--mono);
+            font-family: var(—mono);
             font-size: 11px;
             padding: 10px 12px;
             border-radius: 12px;
@@ -311,108 +316,116 @@
 </head>
 <body>
     <header>
-        <div class="title">
-            <div class="name">OBS Browser Scene Plate</div>
-            <div class="sub" id="baseInfo">Select an item to preview • Copy URL into OBS Browser Source</div>
+        <div class=“title”>
+            <div class=“name”>OBS Browser Scene Plate</div>
+            <div class=“sub” id=“baseInfo”>Select an item to preview • Copy URL into OBS Browser Source</div>
         </div>
-        <div class="right">
-            <div class="chip" id="openBrowse">/browse/</div>
-            <div class="chip" id="openDefault">Open Default Plate</div>
+        <div class=“right”>
+            <div class=“chip” id=“openBrowse”>/browse/</div>
+            <div class=“chip” id=“openDefault”>Open Default Plate</div>
         </div>
     </header>
 
-    <div class="wrap">
-        <section class="pane">
-            <div class="bar">
-                <div class="label">Files</div>
-                <input id="filter" placeholder="filter (e.g. overlays, glitch, plate-)" />
+    <div class=“wrap”>
+        <section class=“pane”>
+            <div class=“bar”>
+                <div class=“label”>Files</div>
+                <input id=“filter” placeholder=“filter (e.g. overlays, glitch, plate-)” />
             </div>
-            <div class="tree" id="tree"></div>
+            <div class=“tree” id=“tree”></div>
         </section>
 
-        <section class="pane previewWrap">
-            <div class="bar">
-                <div class="label">Preview</div>
-                <div class="url" id="urlText">Select a file…</div>
+        <section class=“pane previewWrap”>
+            <div class=“bar”>
+                <div class=“label”>Preview</div>
+                <div class=“url” id=“urlText”>Select a file…</div>
             </div>
 
-            <div class="actions">
-                <button class="btn" id="copyBtn">Copy URL</button>
-                <button class="btn" id="openBtn">Open Tab</button>
-                <button class="btn" id="reloadBtn">Reload</button>
-                <button class="btn" id="exportBtn">Export MOV</button>
-                <div class="url" id="urlText2"></div>
+            <div class=“actions”>
+                <button class=“btn” id=“copyBtn”>Copy URL</button>
+                <button class=“btn” id=“openBtn”>Open Tab</button>
+                <button class=“btn” id=“reloadBtn”>Reload</button>
+                <button class=“btn” id=“exportBtn”>Export MOV</button>
+                <div class=“url” id=“urlText2”></div>
             </div>
 
-            <iframe id="frame" src="about:blank"></iframe>
-            <div class="hint">
-                Tip: overlays/transitions often accept query params. Copy the URL, then append <span style="color:rgba(120,190,255,0.95);">?key=value</span> in OBS.
+            <iframe id=“frame” src=“about:blank”></iframe>
+            <div class=“hint”>
+                Tip: overlays/transitions often accept query params. Copy the URL, then append <span style=“color:rgba(120,190,255,0.95);”>?key=value</span> in OBS.
             </div>
         </section>
     </div>
 
-    <div class="toast" id="toast">Copied</div>
+    <div class=“toast” id=“toast”>Copied</div>
 
     <script>
-        const TREE_URL = "/tree.json";
+        const TREE_URL = “/tree.json”;
 
         // Your renamed plates
-        const PREFERRED_DEFAULT = "/plate-default.html";
+        const PREFERRED_DEFAULT = “/plate-default.html”;
 
-        const treeEl = document.getElementById("tree");
-        const filterEl = document.getElementById("filter");
-        const frame = document.getElementById("frame");
-        const urlText = document.getElementById("urlText");
-        const urlText2 = document.getElementById("urlText2");
-        const copyBtn = document.getElementById("copyBtn");
-        const openBtn = document.getElementById("openBtn");
-        const reloadBtn = document.getElementById("reloadBtn");
-        const exportBtn = document.getElementById("exportBtn");
-        const toast = document.getElementById("toast");
+        const treeEl = document.getElementById(“tree”);
+        const filterEl = document.getElementById(“filter”);
+        const frame = document.getElementById(“frame”);
+        const urlText = document.getElementById(“urlText”);
+        const urlText2 = document.getElementById(“urlText2”);
+        const copyBtn = document.getElementById(“copyBtn”);
+        const openBtn = document.getElementById(“openBtn”);
+        const reloadBtn = document.getElementById(“reloadBtn”);
+        const exportBtn = document.getElementById(“exportBtn”);
+        const toast = document.getElementById(“toast”);
 
-        const openBrowse = document.getElementById("openBrowse");
-        const openDefault = document.getElementById("openDefault");
-        const baseInfo = document.getElementById("baseInfo");
+        const openBrowse = document.getElementById(“openBrowse”);
+        const openDefault = document.getElementById(“openDefault”);
+        const baseInfo = document.getElementById(“baseInfo”);
 
-        const RENDER_API_PORT = 8791;
-        const renderApiBase = `${location.protocol}//${location.hostname}:${RENDER_API_PORT}`;
-        const downloadBase = location.origin;
+        // ———————————————————————
+        // Export endpoints (LAN-first)
+        // - render-api is mapped on the host to 8793 (container listens on 8791)
+        // - nginx serves /renders via 8789
+        // ———————————————————————
+        const host = window.location.hostname;   // e.g. 192.168.0.25
+        const renderApiPort = 8793;
+        const webPort = window.location.port || 8789;
+
+        const renderApiBase = `http://${host}:${renderApiPort}`;
+        const downloadBase = `http://${host}:${webPort}`;
 
         let items = [];
-        let activePath = "";
+        let activePath = “”;
 
         function showToast(text) {
             toast.textContent = text;
-            toast.classList.add("show");
-            setTimeout(() => toast.classList.remove("show"), 900);
+            toast.classList.add(“show”);
+            setTimeout(() => toast.classList.remove(“show”), 900);
         }
 
         function tagFor(path) {
-            if (path.includes("/overlays/")) return "overlay";
-            if (path.includes("/transitions/")) return "transition";
-            if (path.endsWith(".mp4") || path.endsWith(".webm")) return "media";
-            if (path.startsWith("/plate-")) return "plate";
-            return "page";
+            if (path.includes(“/overlays/“)) return “overlay”;
+            if (path.includes(“/transitions/“)) return “transition”;
+            if (path.endsWith(“.mp4”) || path.endsWith(“.webm”)) return “media”;
+            if (path.startsWith(“/plate-“)) return “plate”;
+            return “page”;
         }
 
         function groupFor(path) {
-            if (path.startsWith("/plate-")) return "Plates";
-            if (path.includes("/overlays/")) return "Overlays";
-            if (path.includes("/transitions/")) return "Transitions";
-            if (path.endsWith(".mp4") || path.endsWith(".webm")) return "Media";
-            return "Other";
+            if (path.startsWith(“/plate-“)) return “Plates”;
+            if (path.includes(“/overlays/“)) return “Overlays”;
+            if (path.includes(“/transitions/“)) return “Transitions”;
+            if (path.endsWith(“.mp4”) || path.endsWith(“.webm”)) return “Media”;
+            return “Other”;
         }
 
         function inferNameFromPath(path) {
-            return (path || "export")
-                .replace(/^\/+/, "")
-                .replace(/\.[a-z0-9]+$/i, "")
-                .replace(/[\/]+/g, "_");
+            return (path || “export”)
+                .replace(/^\/+/, “”)
+                .replace(/\.[a-z0-9]+$/i, “”)
+                .replace(/[\/]+/g, “_”);
         }
 
         function render() {
-            const q = (filterEl.value || "").toLowerCase().trim();
-            treeEl.innerHTML = "";
+            const q = (filterEl.value || “”).toLowerCase().trim();
+            treeEl.innerHTML = “”;
 
             const filtered = items.filter(p => p.toLowerCase().includes(q));
 
@@ -424,22 +437,22 @@
                 groups[g].push(p);
             });
 
-            const order = ["Plates", "Overlays", "Transitions", "Media", "Other"];
+            const order = [“Plates”, “Overlays”, “Transitions”, “Media”, “Other”];
             order.forEach(g => {
                 const arr = groups[g] || [];
                 if (!arr.length) return;
 
-                const gh = document.createElement("div");
-                gh.className = "group";
-                gh.innerHTML = `<div class="gname">${g}</div><div class="gcount">${arr.length}</div>`;
+                const gh = document.createElement(“div”);
+                gh.className = “group”;
+                gh.innerHTML = `<div class=“gname”>${g}</div><div class=“gcount”>${arr.length}</div>`;
                 treeEl.appendChild(gh);
 
                 arr.forEach(path => {
-                    const div = document.createElement("div");
-                    div.className = "item" + (path === activePath ? " active" : "");
+                    const div = document.createElement(“div”);
+                    div.className = “item” + (path === activePath ? “ active” : “”);
                     div.innerHTML = `
-                        <div class="path">${path}</div>
-                        <div class="tag">${tagFor(path)}</div>
+                        <div class=“path”>${path}</div>
+                        <div class=“tag”>${tagFor(path)}</div>
                     `;
                     div.onclick = () => select(path);
                     treeEl.appendChild(div);
@@ -461,36 +474,36 @@
         }
 
         copyBtn.onclick = async () => {
-            const text = urlText2.textContent || "";
-            if (!text || text.startsWith("Select")) return;
+            const text = urlText2.textContent || “”;
+            if (!text || text.startsWith(“Select”)) return;
 
             try {
                 await navigator.clipboard.writeText(text);
-                showToast("Copied URL");
+                showToast(“Copied URL”);
             } catch (_) {
-                window.prompt("Copy URL:", text);
+                window.prompt(“Copy URL:”, text);
             }
         };
 
         openBtn.onclick = () => {
-            const text = urlText2.textContent || "";
-            if (!text || text.startsWith("Select")) return;
-            window.open(text, "_blank");
+            const text = urlText2.textContent || “”;
+            if (!text || text.startsWith(“Select”)) return;
+            window.open(text, “_blank”);
         };
 
         reloadBtn.onclick = () => {
             frame.src = frame.src;
-            showToast("Reloaded");
+            showToast(“Reloaded”);
         };
 
         exportBtn.onclick = async () => {
-            const text = urlText2.textContent || "";
-            if (!text || text.startsWith("Select")) {
-                showToast("Select a plate first");
+            const text = urlText2.textContent || “”;
+            if (!text || text.startsWith(“Select”)) {
+                showToast(“Select a plate first”);
                 return;
             }
 
-            exportBtn.textContent = "Rendering…";
+            exportBtn.textContent = “Rendering…”;
             exportBtn.disabled = true;
 
             try {
@@ -504,60 +517,61 @@
                 };
 
                 const res = await fetch(`${renderApiBase}/api/render`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
+                    method: “POST”,
+                    headers: { “Content-Type”: “application/json” },
                     body: JSON.stringify(payload)
                 });
 
                 const data = await res.json();
                 if (!res.ok || !data.ok) {
-                    throw new Error(data.error || "render_failed");
+                    throw new Error(data.error || “render_failed”);
                 }
 
                 const downloadUrl = `${downloadBase}${data.download}`;
-                window.open(downloadUrl, "_blank");
-                showToast("Export ready");
+                window.open(downloadUrl, “_blank”);
+                showToast(“Export ready”);
             } catch (err) {
                 console.error(err);
-                showToast("Export failed");
-                alert("Export failed. Check render-api logs.");
+                const msg = (err && err.message) ? err.message : String(err);
+                showToast(“Export failed”);
+                alert(`Export failed: ${msg}`);
             } finally {
-                exportBtn.textContent = "Export MOV";
+                exportBtn.textContent = “Export MOV”;
                 exportBtn.disabled = false;
             }
         };
 
         openBrowse.onclick = () => {
-            window.open("/browse/", "_blank");
+            window.open(“/browse/“, “_blank”);
         };
 
         openDefault.onclick = () => {
             select(PREFERRED_DEFAULT);
         };
 
-        filterEl.addEventListener("input", render);
+        filterEl.addEventListener(“input”, render);
 
         function pickPreferred() {
             const preferred =
                 items.find(p => p === PREFERRED_DEFAULT) ||
-                items.find(p => p === "/plate-wall.html") ||
-                items.find(p => p === "/plate-procedural.html") ||
-                items.find(p => p === "/plate-procedural-enhanced.html") ||
-                items.find(p => p.endsWith(".html")) ||
+                items.find(p => p === “/plate-wall.html”) ||
+                items.find(p => p === “/plate-procedural.html”) ||
+                items.find(p => p === “/plate-procedural-enhanced.html”) ||
+                items.find(p => p.endsWith(“.html”)) ||
                 items[0];
 
             if (preferred) select(preferred);
         }
 
         async function boot() {
-            const res = await fetch(TREE_URL, { cache: "no-store" });
+            const res = await fetch(TREE_URL, { cache: “no-store” });
             const data = await res.json();
 
             items = (data.files || [])
                 .filter(f =>
-                    f.endsWith(".html") ||
-                    f.endsWith(".mp4") ||
-                    f.endsWith(".webm")
+                    f.endsWith(“.html”) ||
+                    f.endsWith(“.mp4”) ||
+                    f.endsWith(“.webm”)
                 )
                 .sort((a, b) => a.localeCompare(b));
 
@@ -566,7 +580,7 @@
         }
 
         boot().catch(err => {
-            treeEl.innerHTML = "<div style='padding:12px;color:rgba(255,255,255,0.65);font-family:var(--mono);font-size:12px;'>Failed to load /tree.json. Ensure the generator script is running in the container.</div>";
+            treeEl.innerHTML = “<div style=‘padding:12px;color:rgba(255,255,255,0.65);font-family:var(—mono);font-size:12px;’>Failed to load /tree.json. Ensure the generator script is running in the container.</div>”;
             console.error(err);
         });
     </script>
