@@ -190,6 +190,21 @@ body.off #root{
 </div>
 
 <script>
+/**
+ * lowerthird_dualfont.html
+ *
+ * Default URL (full params):
+ *  http://<HOST_IP>:8789/overlays/lowerthird_dualfont.html?title=ADDICTIVE%20VIDEOS&kicker=how%20to%20make&sub=step-by-step&pts=&hold=4200&dock=bottom&align=left
+ *
+ * Params:
+ *  title=...              main headline
+ *  kicker=...             top line
+ *  sub=...                subline
+ *  pts=p1|p2|p3           pipe-separated bullets
+ *  hold=4200              auto-hide ms (0 disables)
+ *  dock=bottom|top
+ *  align=left|center|right
+ */
 const qs = new URLSearchParams(location.search);
 
 const title = qs.get("title") || "ADDICTIVE VIDEOS";
