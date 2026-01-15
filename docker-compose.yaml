@@ -28,7 +28,7 @@ services:
       dockerfile: render-api/Dockerfile
     container_name: overlay-render-api
     ports:
-      - "8790:8791"
+      - "8793:8791"
     volumes:
       - ./renders:/renders:rw
     restart: unless-stopped
