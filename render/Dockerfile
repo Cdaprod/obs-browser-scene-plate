@@ -3,7 +3,7 @@ FROM mcr.microsoft.com/playwright:v1.42.1-jammy
 WORKDIR /app
 
 # Copy renderer script
-COPY render/render.js /app/render.js
+COPY render.js /app/render.js
 
 # Playwright image already includes:
 # - Node
