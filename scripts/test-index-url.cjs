@@ -4,7 +4,7 @@
  * Example: node scripts/test-index-url.cjs
  */
 const assert = require("assert");
-const { buildFullUrl } = require("../site/url-utils.js");
+const { buildFullUrl, normalizeBaseLocation } = require("../site/url-utils.js");
 
 function runTests() {
     const baseLocation = new URL("http://example.com:8789/index.html?foo=1&bar=2#demo");
@@ -39,6 +39,32 @@ function runTests() {
         withHash,
         "http://example.com:8789/overlays/test.html?foo=1&bar=2#custom",
         "should preserve explicit hash when provided"
+    );
+
+    const locationLike = {
+        protocol: "http:",
+        host: "example.com:8789",
+        pathname: "/index.html",
+        search: "?alpha=1",
+        hash: "#hashy"
+    };
+
+    const normalized = normalizeBaseLocation(locationLike);
+    assert.strictEqual(
+        normalized.href,
+        "http://example.com:8789/index.html?alpha=1#hashy",
+        "should normalize a Location-like object"
+    );
+
+    const fromString = buildFullUrl({
+        path: "/overlays/extra.html",
+        baseLocation: "http://example.com:8789/index.html?beta=2"
+    });
+
+    assert.strictEqual(
+        fromString,
+        "http://example.com:8789/overlays/extra.html?beta=2",
+        "should accept string base locations"
     );
 }
 

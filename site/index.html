@@ -449,6 +449,7 @@
 
         let items = [];
         let activePath = "";
+        let currentFullUrl = "";
         let pollTimer = null;
 
         function showToast(text) {
@@ -523,6 +524,7 @@
                 path,
                 baseLocation: window.location
             });
+            currentFullUrl = full;
 
             urlText.textContent = full;
             urlText2.textContent = full;
@@ -534,7 +536,7 @@
         }
 
         copyBtn.onclick = async () => {
-            const text = urlText2.textContent || "";
+            const text = currentFullUrl || urlText2.textContent || "";
             if (!text || text.startsWith("Select")) return;
 
             try {
@@ -546,7 +548,7 @@
         };
 
         openBtn.onclick = () => {
-            const text = urlText2.textContent || "";
+            const text = currentFullUrl || urlText2.textContent || "";
             if (!text || text.startsWith("Select")) return;
             window.open(text, "_blank");
         };
@@ -595,7 +597,7 @@
         }
 
         exportBtn.onclick = async () => {
-            const text = urlText2.textContent || "";
+            const text = currentFullUrl || urlText2.textContent || "";
             if (!text || text.startsWith("Select")) {
                 showToast("Select a plate first");
                 return;
