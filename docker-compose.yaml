@@ -5,12 +5,18 @@ services:
       dockerfile: Dockerfile
     container_name: obs-plate
     restart: unless-stopped
-
-    # Expose on host IP:8789
     ports:
       - "8789:80"
-
-    # Optional: live-edit your HTML without rebuilding
-    # Keep it enabled while iterating; remove later if you prefer baked images.
     volumes:
-      - ./site:/usr/share/nginx/html:ro
+      - ./site:/usr/share/nginx/html:rw
+
+  renderer:
+    build:
+      context: ./render
+      dockerfile: Dockerfile
+    container_name: overlay-renderer
+    depends_on:
+      - obs_plate
+    volumes:
+      - ./renders:/renders
+    restart: "no"
