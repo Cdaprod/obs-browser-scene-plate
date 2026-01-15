@@ -9,6 +9,7 @@ services:
       - "8789:80"
     volumes:
       - ./site:/usr/share/nginx/html:rw
+      - ./renders:/renders:rw
 
   renderer:
     build:
@@ -20,3 +21,14 @@ services:
     volumes:
       - ./renders:/renders
     restart: "no"
+
+  render_api:
+    build:
+      context: .
+      dockerfile: render-api/Dockerfile
+    container_name: overlay-render-api
+    ports:
+      - "8791:8791"
+    volumes:
+      - ./renders:/renders:rw
+    restart: unless-stopped

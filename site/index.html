@@ -340,6 +340,7 @@
                 <button class="btn" id="copyBtn">Copy URL</button>
                 <button class="btn" id="openBtn">Open Tab</button>
                 <button class="btn" id="reloadBtn">Reload</button>
+                <button class="btn" id="exportBtn">Export MOV</button>
                 <div class="url" id="urlText2"></div>
             </div>
 
@@ -366,11 +367,16 @@
         const copyBtn = document.getElementById("copyBtn");
         const openBtn = document.getElementById("openBtn");
         const reloadBtn = document.getElementById("reloadBtn");
+        const exportBtn = document.getElementById("exportBtn");
         const toast = document.getElementById("toast");
 
         const openBrowse = document.getElementById("openBrowse");
         const openDefault = document.getElementById("openDefault");
         const baseInfo = document.getElementById("baseInfo");
+
+        const RENDER_API_PORT = 8791;
+        const renderApiBase = `${location.protocol}//${location.hostname}:${RENDER_API_PORT}`;
+        const downloadBase = location.origin;
 
         let items = [];
         let activePath = "";
@@ -395,6 +401,13 @@
             if (path.includes("/transitions/")) return "Transitions";
             if (path.endsWith(".mp4") || path.endsWith(".webm")) return "Media";
             return "Other";
+        }
+
+        function inferNameFromPath(path) {
+            return (path || "export")
+                .replace(/^\/+/, "")
+                .replace(/\.[a-z0-9]+$/i, "")
+                .replace(/[\/]+/g, "_");
         }
 
         function render() {
@@ -468,6 +481,50 @@
         reloadBtn.onclick = () => {
             frame.src = frame.src;
             showToast("Reloaded");
+        };
+
+        exportBtn.onclick = async () => {
+            const text = urlText2.textContent || "";
+            if (!text || text.startsWith("Select")) {
+                showToast("Select a plate first");
+                return;
+            }
+
+            exportBtn.textContent = "Rendering…";
+            exportBtn.disabled = true;
+
+            try {
+                const payload = {
+                    url: text,
+                    name: inferNameFromPath(activePath),
+                    seconds: 4,
+                    fps: 60,
+                    width: 1080,
+                    height: 1920
+                };
+
+                const res = await fetch(`${renderApiBase}/api/render`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await res.json();
+                if (!res.ok || !data.ok) {
+                    throw new Error(data.error || "render_failed");
+                }
+
+                const downloadUrl = `${downloadBase}${data.download}`;
+                window.open(downloadUrl, "_blank");
+                showToast("Export ready");
+            } catch (err) {
+                console.error(err);
+                showToast("Export failed");
+                alert("Export failed. Check render-api logs.");
+            } finally {
+                exportBtn.textContent = "Export MOV";
+                exportBtn.disabled = false;
+            }
         };
 
         openBrowse.onclick = () => {
