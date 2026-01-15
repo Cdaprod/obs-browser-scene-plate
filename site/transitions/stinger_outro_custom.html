@@ -163,6 +163,8 @@ body.off .line{ opacity:0; transition: opacity 160ms ease; }
   </div>
 
 <script>
+// Default URL (full params):
+// http://<HOST_IP>:8789/transitions/stinger_outro_custom.html?hold=4200&lines=resilience%20in%20code%20%26%20life|camera%20rig%20paas%20evolving|see%20you%20in%20the%20next%20build
 (function(){
   const qs = new URLSearchParams(location.search);
   const hold = parseInt(qs.get("hold") || getComputedStyle(document.documentElement).getPropertyValue("--hold-ms") || "4200", 10);
