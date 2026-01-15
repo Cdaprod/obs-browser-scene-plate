@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>stinger-outro-custom</title>
+
+<style>
+:root{
+  /* Outro stinger emphasises that the build continues and invites the viewer
+     back. The outro holds slightly longer to let the sense of closure
+     linger. */
+  --maxw: min(92vw, 1400px);
+  --title-size: clamp(42px, 5.8vw, 104px);
+  --line-size: clamp(15px, 2vw, 26px);
+  --stroke: rgba(0,0,0,0.90);
+  --shadow: rgba(0,0,0,0.80);
+  --glow: rgba(180,240,255,0.36);
+  --in-ms: 260;
+  --line-in-ms: 220;
+  --hold-ms: 4200;
+  --title-delay: 40;
+  --lines-delay: 220;
+  --stagger: 120;
+  --rise: 14px;
+}
+
+html,body{
+  margin:0;
+  height:100%;
+  background: transparent !important;
+  overflow:hidden;
+}
+
+#stage{
+  position:absolute;
+  inset:0;
+  display:grid;
+  place-items:center;
+  pointer-events:none;
+}
+
+#wrap{
+  width: var(--maxw);
+  display:inline-block;
+  text-align:left;
+  transform: translate3d(0,var(--rise),0);
+  opacity:0;
+  will-change: transform, opacity;
+}
+
+#title{
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  font-weight: 950;
+  font-size: var(--title-size);
+  line-height: 0.98;
+  letter-spacing: 0.035em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.99);
+  text-shadow:
+    0 4px 0 var(--stroke),
+    0 -4px 0 var(--stroke),
+    4px 0 0 var(--stroke),
+    -4px 0 0 var(--stroke),
+    4px 4px 0 var(--stroke),
+    -4px 4px 0 var(--stroke),
+    4px -4px 0 var(--stroke),
+    -4px -4px 0 var(--stroke),
+    0 24px 52px var(--shadow),
+    0 0 34px var(--glow);
+  opacity:0;
+  transform: translate3d(0,10px,0);
+}
+
+#list{
+  margin: 10px 0 0 0;
+  padding:0;
+  list-style:none;
+  display:grid;
+  gap:6px;
+  justify-items:start;
+}
+
+.line{
+  font-family:
+    "Bradley Hand",
+    "Marker Felt",
+    "Segoe Script",
+    cursive;
+  font-weight: 700;
+  font-size: var(--line-size);
+  letter-spacing: 0.12em;
+  color: rgba(255,255,255,0.94);
+  text-transform: lowercase;
+  text-shadow:
+    0 2px 0 rgba(0,0,0,0.74),
+    0 14px 26px rgba(0,0,0,0.65);
+  opacity:0;
+  transform: translate3d(0,12px,0);
+  will-change: transform, opacity;
+}
+
+#spot{
+  position:absolute;
+  width: min(88vw, 1200px);
+  height: min(44vh, 500px);
+  border-radius: 999px;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(0,0,0,0.24) 0%,
+    rgba(0,0,0,0.14) 36%,
+    rgba(0,0,0,0.00) 72%
+  );
+  filter: blur(36px);
+  opacity:0;
+  transition: opacity calc(var(--in-ms)*1ms) ease;
+}
+
+body.on #spot{ opacity:1; }
+body.on #wrap{
+  opacity:1;
+  transform: translate3d(0,0,0);
+  transition:
+    opacity calc(var(--in-ms)*1ms) ease,
+    transform calc(var(--in-ms)*1ms) cubic-bezier(.2,.8,.2,1);
+}
+body.on #title{
+  opacity:1;
+  transform: translate3d(0,0,0);
+  transition:
+    opacity calc(var(--in-ms)*1ms) ease,
+    transform calc(var(--in-ms)*1ms) cubic-bezier(.2,.8,.2,1);
+  transition-delay: calc(var(--title-delay) * 1ms);
+}
+body.on .line.show{
+  opacity:1;
+  transform: translate3d(0,0,0);
+  transition:
+    opacity calc(var(--line-in-ms)*1ms) ease,
+    transform calc(var(--line-in-ms)*1ms) cubic-bezier(.2,.8,.2,1);
+}
+
+body.off #spot{ opacity:0; transition: opacity 200ms ease; }
+body.off #wrap{ opacity:0; transition: opacity 200ms ease; }
+body.off #title{ opacity:0; transition: opacity 180ms ease; }
+body.off .line{ opacity:0; transition: opacity 160ms ease; }
+
+@media (prefers-reduced-motion: reduce){
+  *{ transition:none !important; animation:none !important; }
+}
+</style>
+</head>
+
+<body>
+  <div id="stage">
+    <div id="spot"></div>
+    <div id="wrap">
+      <!-- Primary outro headline -->
+      <div id="title">BUILD CONTINUES</div>
+      <!-- Secondary outro lines -->
+      <ul id="list"></ul>
+    </div>
+  </div>
+
+<script>
+(function(){
+  const qs = new URLSearchParams(location.search);
+  const hold = parseInt(qs.get("hold") || getComputedStyle(document.documentElement).getPropertyValue("--hold-ms") || "4200", 10);
+  const linesRaw = qs.get("lines") || "resilience in code & life|camera rig paas evolving|see you in the next build";
+  const lines = linesRaw.split("|").map(s => decodeURIComponent(s).trim()).filter(Boolean).slice(0, 8);
+  const listEl = document.getElementById("list");
+  listEl.innerHTML = "";
+  lines.forEach((t,i) => {
+    const li = document.createElement("li");
+    li.className = "line";
+    li.textContent = t;
+    listEl.appendChild(li);
+    setTimeout(() => li.classList.add("show"), (parseInt(getComputedStyle(document.documentElement).getPropertyValue("--lines-delay")) || 220) + i * (parseInt(getComputedStyle(document.documentElement).getPropertyValue("--stagger")) || 120));
+  });
+  function show(){
+    document.body.classList.remove("off");
+    document.body.classList.add("on");
+  }
+  function hide(){
+    document.body.classList.remove("on");
+    document.body.classList.add("off");
+    listEl.querySelectorAll(".line").forEach(el => el.classList.remove("show"));
+  }
+  show();
+  if(hold > 0){
+    setTimeout(hide, hold);
+  }
+  // click to reload preview
+  document.addEventListener("pointerdown", () => { hide(); setTimeout(() => location.reload(), 80); });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>stinger-intro-custom</title>
+
+<style>
+:root{
+  /* The intro stinger uses a bold headline followed by three short tag lines.
+     It is centred on screen with no container so it can sit directly over
+     your camera feed. Timing variables control how long the overlay stays
+     visible. Adjust --hold-ms to change the duration. */
+  --maxw: min(92vw, 1400px);
+  --title-size: clamp(46px, 6vw, 110px);
+  --line-size: clamp(15px, 2vw, 28px);
+  --stroke: rgba(0,0,0,0.90);
+  --shadow: rgba(0,0,0,0.78);
+  --glow: rgba(180,220,255,0.34);
+  --in-ms: 250;
+  --line-in-ms: 200;
+  --hold-ms: 3300;
+  --title-delay: 40;
+  --lines-delay: 200;
+  --stagger: 110;
+  --rise: 12px;
+}
+
+html,body{
+  margin:0;
+  height:100%;
+  background: transparent !important;
+  overflow:hidden;
+}
+
+#stage{
+  position:absolute;
+  inset:0;
+  display:grid;
+  place-items:center;
+  pointer-events:none;
+}
+
+/* The wrapper is centred as a block but text inside is left aligned. */
+#wrap{
+  width: var(--maxw);
+  display:inline-block;
+  text-align:left;
+  transform: translate3d(0,var(--rise),0);
+  opacity:0;
+  will-change: transform, opacity;
+}
+
+/* Primary headline styling. The stroke and shadows give it depth. */
+#title{
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  font-weight: 950;
+  font-size: var(--title-size);
+  line-height: 0.96;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.985);
+  text-shadow:
+    0 4px 0 var(--stroke),
+    0 -4px 0 var(--stroke),
+    4px 0 0 var(--stroke),
+    -4px 0 0 var(--stroke),
+    4px 4px 0 var(--stroke),
+    -4px 4px 0 var(--stroke),
+    4px -4px 0 var(--stroke),
+    -4px -4px 0 var(--stroke),
+    0 22px 46px var(--shadow),
+    0 0 28px var(--glow);
+  opacity:0;
+  transform: translate3d(0,10px,0);
+}
+
+/* Secondary tag lines. Slightly smaller and handwritten style. */
+#list{
+  margin: 8px 0 0 0;
+  padding:0;
+  list-style:none;
+  display:grid;
+  gap:6px;
+  justify-items:start;
+}
+
+.line{
+  font-family:
+    "Bradley Hand",
+    "Marker Felt",
+    "Segoe Script",
+    cursive;
+  font-weight: 700;
+  font-size: var(--line-size);
+  letter-spacing: 0.12em;
+  color: rgba(255,255,255,0.92);
+  text-transform: lowercase;
+  text-shadow:
+    0 2px 0 rgba(0,0,0,0.72),
+    0 12px 22px rgba(0,0,0,0.58);
+  opacity:0;
+  transform: translate3d(0,10px,0);
+  will-change: transform, opacity;
+}
+
+/* Optional spotlight to subtly lift the text off the background. */
+#spot{
+  position:absolute;
+  width: min(88vw, 1200px);
+  height: min(40vh, 480px);
+  border-radius: 999px;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(0,0,0,0.22) 0%,
+    rgba(0,0,0,0.12) 36%,
+    rgba(0,0,0,0.00) 72%
+  );
+  filter: blur(34px);
+  opacity:0;
+  transition: opacity calc(var(--in-ms)*1ms) ease;
+}
+
+/* Animations for showing and hiding. */
+body.on #spot{ opacity:1; }
+body.on #wrap{
+  opacity:1;
+  transform: translate3d(0,0,0);
+  transition:
+    opacity calc(var(--in-ms)*1ms) ease,
+    transform calc(var(--in-ms)*1ms) cubic-bezier(.2,.8,.2,1);
+}
+body.on #title{
+  opacity:1;
+  transform: translate3d(0,0,0);
+  transition:
+    opacity calc(var(--in-ms)*1ms) ease,
+    transform calc(var(--in-ms)*1ms) cubic-bezier(.2,.8,.2,1);
+  transition-delay: calc(var(--title-delay) * 1ms);
+}
+body.on .line.show{
+  opacity:1;
+  transform: translate3d(0,0,0);
+  transition:
+    opacity calc(var(--line-in-ms)*1ms) ease,
+    transform calc(var(--line-in-ms)*1ms) cubic-bezier(.2,.8,.2,1);
+}
+
+body.off #spot{ opacity:0; transition: opacity 180ms ease; }
+body.off #wrap{ opacity:0; transition: opacity 180ms ease; }
+body.off #title{ opacity:0; transition: opacity 160ms ease; }
+body.off .line{ opacity:0; transition: opacity 140ms ease; }
+
+@media (prefers-reduced-motion: reduce){
+  *{ transition:none !important; animation:none !important; }
+}
+</style>
+</head>
+
+<body>
+  <div id="stage">
+    <div id="spot"></div>
+    <div id="wrap">
+      <!-- Primary intro headline -->
+      <div id="title">LEARN. BUILD. REPEAT.</div>
+      <!-- Secondary tag lines flush with the title -->
+      <ul id="list"></ul>
+    </div>
+  </div>
+
+<script>
+// Intro stinger script. Lines define your tag lines. Adjust hold time via query.
+(function(){
+  const qs = new URLSearchParams(location.search);
+  const hold = parseInt(qs.get("hold") || getComputedStyle(document.documentElement).getPropertyValue("--hold-ms") || "3300", 10);
+  const linesRaw = qs.get("lines") || "autodidact on a mission|triplet dad’s rig rebuild|ai + storage meets camera";
+  const lines = linesRaw.split("|").map(s => decodeURIComponent(s).trim()).filter(Boolean).slice(0, 8);
+  const listEl = document.getElementById("list");
+  listEl.innerHTML = "";
+  lines.forEach((t,i) => {
+    const li = document.createElement("li");
+    li.className = "line";
+    li.textContent = t;
+    listEl.appendChild(li);
+    // Stagger each line after the title
+    setTimeout(() => li.classList.add("show"), (parseInt(getComputedStyle(document.documentElement).getPropertyValue("--lines-delay")) || 200) + i * (parseInt(getComputedStyle(document.documentElement).getPropertyValue("--stagger")) || 110));
+  });
+  function show(){
+    document.body.classList.remove("off");
+    document.body.classList.add("on");
+  }
+  function hide(){
+    document.body.classList.remove("on");
+    document.body.classList.add("off");
+    listEl.querySelectorAll(".line").forEach(el => el.classList.remove("show"));
+  }
+  show();
+  if(hold > 0){
+    setTimeout(hide, hold);
+  }
+  // allow click to retrigger when previewing in a browser
+  document.addEventListener("pointerdown", () => { hide(); setTimeout(() => location.reload(), 80); });
+})();
+</script>
+</body>
+</html>

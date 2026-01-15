@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>scene-overlay-stack-v1</title>
+
+<style>
+:root{
+  /* Layout */
+  --maxw: min(92vw, 1400px);
+
+  /* Type */
+  --title: clamp(44px, 6.0vw, 110px);
+  --line:  clamp(15px, 2.0vw, 26px);
+
+  /* Effects */
+  --stroke: rgba(0,0,0,0.90);
+  --shadow: rgba(0,0,0,0.78);
+  --glow: rgba(170,220,255,0.34);
+
+  /* Animation */
+  --in-ms: 260;
+  --line-in-ms: 210;
+  --hold-ms: 3600;          /* burst auto-hide; set 0 to keep */
+  --title-delay: 40;
+  --lines-delay: 220;       /* when the first line starts after title */
+  --stagger: 120;           /* delay between lines */
+  --rise: 12px;
+
+  /* Tightness */
+  --line-gap: 6px;          /* compact list */
+  --line-letter: 0.10em;
+}
+
+/* Transparent for OBS */
+html,body{
+  margin:0;
+  height:100%;
+  background: transparent !important;
+  overflow:hidden;
+}
+
+/* Center stage container */
+#stage{
+  position:absolute;
+  inset:0;
+  display:grid;
+  place-items:center;
+  pointer-events:none;
+}
+
+/*
+  #wrap is centered as a block, BUT the contents are left-aligned.
+  This gives you: “center of page” presence while the list lines up with the title start.
+*/
+#wrap{
+  width: var(--maxw);
+  display:inline-block;
+  text-align:left;
+  transform: translate3d(0, var(--rise), 0);
+  opacity:0;
+  will-change: transform, opacity;
+}
+
+/* Title row */
+#title{
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  font-weight: 950;
+  font-size: var(--title);
+  line-height: 0.98;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.985);
+
+  /* Strong stroke + depth */
+  text-shadow:
+    0  4px 0 var(--stroke),
+    0 -4px 0 var(--stroke),
+    4px 0  0 var(--stroke),
+   -4px 0  0 var(--stroke),
+    4px 4px 0 var(--stroke),
+   -4px 4px 0 var(--stroke),
+    4px -4px 0 var(--stroke),
+   -4px -4px 0 var(--stroke),
+    0 24px 54px var(--shadow),
+    0 0 34px var(--glow);
+
+  opacity:0;
+  transform: translate3d(0, 10px, 0);
+}
+
+/* Secondary list */
+#list{
+  margin: 10px 0 0 0;
+  padding: 0;
+  list-style: none;
+  display:grid;
+  gap: var(--line-gap);
+  justify-items:start; /* keeps lines flush-left */
+}
+
+/* Secondary items: compact, streamlined */
+.line{
+  font-family:
+    "Bradley Hand",
+    "Marker Felt",
+    "Segoe Script",
+    cursive;
+  font-weight: 700;
+  font-size: var(--line);
+  letter-spacing: var(--line-letter);
+  color: rgba(255,255,255,0.92);
+  text-transform: lowercase;
+
+  /* crisp but readable */
+  text-shadow:
+    0 2px 0 rgba(0,0,0,0.72),
+    0 12px 22px rgba(0,0,0,0.58);
+
+  opacity:0;
+  transform: translate3d(0, 10px, 0);
+  will-change: transform, opacity;
+}
+
+/* Optional soft spotlight behind text for more separation (no “container”) */
+#spot{
+  position:absolute;
+  width: min(88vw, 1200px);
+  height: min(42vh, 460px);
+  border-radius: 999px;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(0,0,0,0.22) 0%,
+    rgba(0,0,0,0.12) 36%,
+    rgba(0,0,0,0.00) 72%
+  );
+  filter: blur(34px);
+  opacity:0;
+  transition: opacity calc(var(--in-ms)*1ms) ease;
+}
+
+/* Animate in */
+body.on #spot{ opacity:1; }
+
+body.on #wrap{
+  opacity:1;
+  transform: translate3d(0,0,0);
+  transition:
+    opacity calc(var(--in-ms)*1ms) ease,
+    transform calc(var(--in-ms)*1ms) cubic-bezier(.2,.8,.2,1);
+}
+
+body.on #title{
+  opacity:1;
+  transform: translate3d(0,0,0);
+  transition:
+    opacity calc(var(--in-ms)*1ms) ease,
+    transform calc(var(--in-ms)*1ms) cubic-bezier(.2,.8,.2,1);
+  transition-delay: calc(var(--title-delay) * 1ms);
+}
+
+body.on .line.show{
+  opacity:1;
+  transform: translate3d(0,0,0);
+  transition:
+    opacity calc(var(--line-in-ms)*1ms) ease,
+    transform calc(var(--line-in-ms)*1ms) cubic-bezier(.2,.8,.2,1);
+}
+
+/* Animate out */
+body.off #spot{ opacity:0; transition: opacity 180ms ease; }
+body.off #wrap{ opacity:0; transition: opacity 180ms ease; }
+body.off #title{ opacity:0; transition: opacity 160ms ease; }
+body.off .line{ opacity:0; transition: opacity 140ms ease; }
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce){
+  *{ transition:none !important; animation:none !important; }
+}
+</style>
+</head>
+
+<body>
+  <div id="stage">
+    <div id="spot"></div>
+    <div id="wrap">
+      <div id="title">UPGRADING THE RIG</div>
+      <ul id="list"></ul>
+    </div>
+  </div>
+
+<script>
+/**
+ * scene_overlay_stack_v1.html
+ *
+ * Center-screen overlay:
+ *  - Title animates first
+ *  - Secondary lines animate one-by-one after (staggered)
+ *  - Secondary lines are flush-left aligned with the title start
+ *  - Compact copy (you speak the details)
+ *
+ * Query params:
+ *  title=UPGRADING%20THE%20RIG
+ *  lines=m.2%20hat|capture%20hat|rebuild|camera%20rig%20paas
+ *  hold=3600          (0 disables auto-hide)
+ *  stagger=120        (ms between secondary lines)
+ *  start=220          (ms delay before the first line appears)
+ *
+ * Example:
+ *  scene_overlay_stack_v1.html?title=UPGRADING%20THE%20RIG&lines=m.2%20hat|capture%20hat|rebuild|camera%20rig%20paas&hold=3400&stagger=120&start=240
+ */
+
+const qs = new URLSearchParams(location.search);
+
+const title = decodeSafe(qs.get("title") || "UPGRADING THE RIG").slice(0, 80);
+const raw = qs.get("lines") || "m.2 hat|capture hat|rebuild|camera rig paas";
+const lines = raw.split("|").map(s => decodeSafe(s).trim()).filter(Boolean).slice(0, 8);
+
+const hold = clampInt(parseInt(qs.get("hold") || getCSS("--hold-ms") || "3600", 10), 0, 600000);
+const stagger = clampInt(parseInt(qs.get("stagger") || getCSS("--stagger") || "120", 10), 0, 2000);
+const start = clampInt(parseInt(qs.get("start") || getCSS("--lines-delay") || "220", 10), 0, 5000);
+
+document.getElementById("title").textContent = title;
+
+const ul = document.getElementById("list");
+ul.innerHTML = "";
+lines.forEach((t, i) => {
+  const li = document.createElement("li");
+  li.className = "line";
+  li.textContent = t;
+  ul.appendChild(li);
+
+  // Line reveal scheduling (after title)
+  setTimeout(() => li.classList.add("show"), start + i * stagger);
+});
+
+function show(){
+  document.body.classList.remove("off");
+  document.body.classList.add("on");
+}
+function hide(){
+  document.body.classList.remove("on");
+  document.body.classList.add("off");
+  ul.querySelectorAll(".line").forEach(el => el.classList.remove("show"));
+}
+
+function decodeSafe(s){ try { return decodeURIComponent(s); } catch { return s; } }
+function clampInt(x,a,b){ x = isFinite(x)?x:a; return Math.max(a, Math.min(b, x)); }
+function getCSS(name){
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name);
+  return (v || "").trim();
+}
+
+show();
+if (hold > 0) setTimeout(hide, hold);
+
+// Tap retrigger (useful when previewing)
+addEventListener("pointerdown", () => { hide(); setTimeout(() => location.reload(), 60); });
+</script>
+</body>
+</html>
