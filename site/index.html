@@ -71,6 +71,7 @@
             align-items: center;
             justify-content: flex-end;
             min-width: 0;
+            flex-wrap: wrap;
         }
 
         .chip {
@@ -242,6 +243,7 @@
             padding: 10px 12px;
             box-sizing: border-box;
             border-bottom: 1px solid rgba(255,255,255,0.06);
+            flex-wrap: wrap;
         }
 
         .btn {
@@ -337,6 +339,28 @@
         .toast.show {
             opacity: 1;
         }
+
+        @media (max-width: 720px) {
+            header {
+                height: auto;
+                flex-wrap: wrap;
+                padding: 10px 12px;
+            }
+
+            .wrap {
+                grid-template-rows: 300px 1fr;
+            }
+
+            .actions {
+                align-items: flex-start;
+            }
+
+            .url {
+                flex-basis: 100%;
+                white-space: normal;
+                overflow-wrap: anywhere;
+            }
+        }
     </style>
 </head>
 <body>
@@ -386,6 +410,7 @@
 
     <div class="toast" id="toast">Copied</div>
 
+    <script src="url-utils.js"></script>
     <script>
         const TREE_URL = "/tree.json";
 
@@ -494,14 +519,17 @@
 
         function select(path) {
             activePath = path;
-            const full = location.origin + path;
+            const full = window.buildFullUrl({
+                path,
+                baseLocation: window.location
+            });
 
             urlText.textContent = full;
             urlText2.textContent = full;
             baseInfo.textContent = `Selected: ${path}`;
 
             // Load in preview
-            frame.src = path;
+            frame.src = full;
             render();
         }
 
