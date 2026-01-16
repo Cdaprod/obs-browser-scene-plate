@@ -95,10 +95,10 @@ You can also point to **any LAN-accessible video URL**.
 ### Layout & Debug
 
 `&hud=off`
-`&guide=on  
+`&guide=on`
 `&fit=cover`
 
-Values for fit: `cover | contain | fill`
+Values for fit: `cover` | `contain` | `fill`
 
 ---
 
