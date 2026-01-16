@@ -1,0 +1,26 @@
+{
+  "files": [
+    "/index.html",
+    "/overlays/center_title_card.html",
+    "/overlays/center_title_list_card.html",
+    "/overlays/lowerthird_dualfont.html",
+    "/overlays/lowerthirds.html",
+    "/overlays/lowerthirds_2.html",
+    "/overlays/scene_breakdown_teardown.html",
+    "/overlays/scene_overlay_stack_v1.html",
+    "/overlays/scene_upgrade_vision.html",
+    "/plate-default.html",
+    "/plate-procedural-enhanced.html",
+    "/plate-procedural.html",
+    "/plate-wall.html",
+    "/plate.mp4",
+    "/transitions/glitch.html",
+    "/transitions/glitch_bars.html",
+    "/transitions/glitch_redact.html",
+    "/transitions/glitch_wipe.html",
+    "/transitions/glitch_wipe_lastframe.html",
+    "/transitions/stinger_intro_custom.html",
+    "/transitions/stinger_outro_custom.html",
+    "/url-utils.js"
+  ]
+}
