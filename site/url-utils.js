@@ -51,10 +51,73 @@ function buildFullUrl({ path, baseLocation }) {
     return baseUrl.toString();
 }
 
+function extractDefaultUrlFromSource(sourceText) {
+    if (!sourceText) {
+        return "";
+    }
+
+    const lines = sourceText.split(/\r?\n/);
+    const urlPattern = /(https?:\/\/\S+|\/\S+)/i;
+
+    for (let i = 0; i < lines.length; i += 1) {
+        const line = lines[i];
+        if (!/Default URL/i.test(line)) {
+            continue;
+        }
+
+        const inlineMatch = line.match(/Default URL[^:]*:\s*(\S+)/i);
+        if (inlineMatch) {
+            return inlineMatch[1];
+        }
+
+        for (let j = i + 1; j < Math.min(lines.length, i + 7); j += 1) {
+            const cleaned = lines[j]
+                .replace(/^\s*(?:\/\/|\/\*+|<!--|\*+)?\s*/g, "")
+                .replace(/\s*(?:\*\/|-->).*$/g, "")
+                .trim();
+            const match = cleaned.match(urlPattern);
+            if (match) {
+                return match[1];
+            }
+        }
+    }
+
+    return "";
+}
+
+function mergeBaseParams({ url, baseLocation }) {
+    if (!url || !baseLocation) {
+        throw new Error("mergeBaseParams requires a url and baseLocation");
+    }
+
+    const baseInfo = normalizeBaseLocation(baseLocation);
+    const targetUrl = url instanceof URL ? new URL(url.toString()) : new URL(url, baseInfo.origin);
+
+    for (const [key, value] of baseInfo.searchParams.entries()) {
+        if (!targetUrl.searchParams.has(key)) {
+            targetUrl.searchParams.append(key, value);
+        }
+    }
+
+    if (baseInfo.hash && !targetUrl.hash) {
+        targetUrl.hash = baseInfo.hash;
+    }
+
+    return targetUrl;
+}
+
 if (typeof window !== "undefined") {
     window.buildFullUrl = buildFullUrl;
+    window.normalizeBaseLocation = normalizeBaseLocation;
+    window.extractDefaultUrlFromSource = extractDefaultUrlFromSource;
+    window.mergeBaseParams = mergeBaseParams;
 }
 
 if (typeof module !== "undefined" && module.exports) {
-    module.exports = { buildFullUrl, normalizeBaseLocation };
+    module.exports = {
+        buildFullUrl,
+        normalizeBaseLocation,
+        extractDefaultUrlFromSource,
+        mergeBaseParams
+    };
 }

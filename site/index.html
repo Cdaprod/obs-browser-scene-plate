@@ -451,6 +451,7 @@
         let activePath = "";
         let currentFullUrl = "";
         let pollTimer = null;
+        let selectionToken = 0;
 
         function showToast(text) {
             toast.textContent = text;
@@ -518,21 +519,76 @@
             });
         }
 
+        function setCurrentUrl(url) {
+            currentFullUrl = url;
+            urlText.textContent = url;
+            urlText2.textContent = url;
+        }
+
+        async function resolveDefaultUrl(path) {
+            const baseLocation = window.normalizeBaseLocation(window.location);
+            const fallback = window.buildFullUrl({
+                path,
+                baseLocation
+            });
+
+            try {
+                const res = await fetch(path, { cache: "no-store" });
+                if (!res.ok) {
+                    return fallback;
+                }
+
+                const sourceText = await res.text();
+                const defaultUrl = window.extractDefaultUrlFromSource(sourceText);
+                if (!defaultUrl) {
+                    return fallback;
+                }
+
+                const replaced = defaultUrl.replace(/<HOST_IP>/g, baseLocation.hostname);
+                let resolvedUrl = null;
+
+                if (replaced.startsWith("http://") || replaced.startsWith("https://")) {
+                    resolvedUrl = new URL(replaced);
+                    resolvedUrl.protocol = baseLocation.protocol;
+                    resolvedUrl.hostname = baseLocation.hostname;
+                    if (baseLocation.port) {
+                        resolvedUrl.port = baseLocation.port;
+                    }
+                } else {
+                    resolvedUrl = new URL(replaced, baseLocation.origin);
+                }
+
+                const merged = window.mergeBaseParams({
+                    url: resolvedUrl,
+                    baseLocation
+                });
+
+                return merged.toString();
+            } catch (_) {
+                return fallback;
+            }
+        }
+
         function select(path) {
             activePath = path;
             const full = window.buildFullUrl({
                 path,
                 baseLocation: window.location
             });
-            currentFullUrl = full;
-
-            urlText.textContent = full;
-            urlText2.textContent = full;
+            const token = ++selectionToken;
+            setCurrentUrl(full);
             baseInfo.textContent = `Selected: ${path}`;
 
             // Load in preview
             frame.src = full;
             render();
+
+            resolveDefaultUrl(path).then((resolved) => {
+                if (token !== selectionToken) return;
+                if (!resolved || resolved === currentFullUrl) return;
+                setCurrentUrl(resolved);
+                frame.src = resolved;
+            });
         }
 
         copyBtn.onclick = async () => {
