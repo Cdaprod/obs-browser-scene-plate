@@ -525,6 +525,10 @@
             urlText2.textContent = url;
         }
 
+        function isTextAsset(path) {
+            return /\.(html?|js|json)$/i.test(path || "");
+        }
+
         async function resolveDefaultUrl(path) {
             const baseLocation = window.normalizeBaseLocation(window.location);
             const fallback = window.buildFullUrl({
@@ -533,8 +537,22 @@
             });
 
             try {
+                if (!isTextAsset(path)) {
+                    return fallback;
+                }
+
                 const res = await fetch(path, { cache: "no-store" });
                 if (!res.ok) {
+                    return fallback;
+                }
+
+                const contentType = res.headers.get("content-type") || "";
+                if (
+                    contentType
+                    && !contentType.startsWith("text/")
+                    && !contentType.includes("javascript")
+                    && !contentType.includes("json")
+                ) {
                     return fallback;
                 }
 
@@ -545,18 +563,10 @@
                 }
 
                 const replaced = defaultUrl.replace(/<HOST_IP>/g, baseLocation.hostname);
-                let resolvedUrl = null;
-
-                if (replaced.startsWith("http://") || replaced.startsWith("https://")) {
-                    resolvedUrl = new URL(replaced);
-                    resolvedUrl.protocol = baseLocation.protocol;
-                    resolvedUrl.hostname = baseLocation.hostname;
-                    if (baseLocation.port) {
-                        resolvedUrl.port = baseLocation.port;
-                    }
-                } else {
-                    resolvedUrl = new URL(replaced, baseLocation.origin);
-                }
+                const resolvedUrl = window.applyBaseToUrl({
+                    url: replaced,
+                    baseLocation
+                });
 
                 const merged = window.mergeBaseParams({
                     url: resolvedUrl,

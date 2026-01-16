@@ -7,6 +7,7 @@ const assert = require("assert");
 const {
     buildFullUrl,
     normalizeBaseLocation,
+    applyBaseToUrl,
     extractDefaultUrlFromSource,
     mergeBaseParams
 } = require("../site/url-utils.js");
@@ -99,6 +100,16 @@ function runTests() {
         merged.toString(),
         "http://example.com:8789/overlays/demo.html?mode=loop&alpha=1#keep",
         "should append base params and hash without overriding existing params"
+    );
+
+    const appliedBase = applyBaseToUrl({
+        url: "http://example.com:8789/overlays/demo.html?mode=loop",
+        baseLocation: "https://example.com/index.html"
+    });
+    assert.strictEqual(
+        appliedBase.toString(),
+        "https://example.com/overlays/demo.html?mode=loop",
+        "should apply base protocol/host and clear non-matching ports"
     );
 }
 

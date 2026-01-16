@@ -51,6 +51,21 @@ function buildFullUrl({ path, baseLocation }) {
     return baseUrl.toString();
 }
 
+function applyBaseToUrl({ url, baseLocation }) {
+    if (!url || !baseLocation) {
+        throw new Error("applyBaseToUrl requires a url and baseLocation");
+    }
+
+    const baseInfo = normalizeBaseLocation(baseLocation);
+    const targetUrl = url instanceof URL ? new URL(url.toString()) : new URL(url, baseInfo.origin);
+
+    targetUrl.protocol = baseInfo.protocol;
+    targetUrl.hostname = baseInfo.hostname;
+    targetUrl.port = baseInfo.port || "";
+
+    return targetUrl;
+}
+
 function extractDefaultUrlFromSource(sourceText) {
     if (!sourceText) {
         return "";
@@ -109,6 +124,7 @@ function mergeBaseParams({ url, baseLocation }) {
 if (typeof window !== "undefined") {
     window.buildFullUrl = buildFullUrl;
     window.normalizeBaseLocation = normalizeBaseLocation;
+    window.applyBaseToUrl = applyBaseToUrl;
     window.extractDefaultUrlFromSource = extractDefaultUrlFromSource;
     window.mergeBaseParams = mergeBaseParams;
 }
@@ -117,6 +133,7 @@ if (typeof module !== "undefined" && module.exports) {
     module.exports = {
         buildFullUrl,
         normalizeBaseLocation,
+        applyBaseToUrl,
         extractDefaultUrlFromSource,
         mergeBaseParams
     };
