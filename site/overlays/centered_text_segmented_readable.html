@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>centered-text-segmented-readable</title>
+
+<style>
+:root{
+  /* Layout */
+  --maxw: min(88vw, 1100px);
+  --pad: 28px;
+
+  /* Type — neutral, readable */
+  --size: clamp(22px, 2.8vw, 44px);
+  --lh: 1.35;
+  --weight: 500;
+  --letter: 0.04em;
+
+  /* Color + depth (subtle, not title-y) */
+  --fg: rgba(255,255,255,0.92);
+  --shadow: rgba(0,0,0,0.65);
+
+  /* Anim */
+  --in-ms: 420;
+  --out-ms: 360;
+  --rise: 6px;
+
+  /* Soft readability plate (very faint) */
+  --spot-alpha: 0.20;
+  --spot-blur: 42px;
+}
+
+/* Transparent canvas */
+html, body{
+  height:100%;
+  margin:0;
+  background: transparent !important;
+  overflow:hidden;
+}
+
+#stage{
+  position:absolute;
+  inset:0;
+  display:grid;
+  place-items:center;
+  pointer-events:none;
+}
+
+/* Very soft spotlight for legibility */
+#spot{
+  position:absolute;
+  width: min(86vw, 900px);
+  height: min(40vh, 420px);
+  border-radius: 999px;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(0,0,0,var(--spot-alpha)) 0%,
+    rgba(0,0,0,calc(var(--spot-alpha) * 0.6)) 40%,
+    rgba(0,0,0,0.0) 72%
+  );
+  filter: blur(var(--spot-blur));
+  opacity:0;
+  transition: opacity calc(var(--in-ms)*1ms) ease;
+}
+
+#wrap{
+  width: var(--maxw);
+  padding: var(--pad);
+  text-align:center;
+
+  opacity:0;
+  transform: translate3d(0, var(--rise), 0);
+  transition:
+    opacity calc(var(--in-ms)*1ms) ease,
+    transform calc(var(--in-ms)*1ms) ease;
+}
+
+/* Sentence text */
+#text{
+  font-family:
+    Inter,
+    system-ui,
+    -apple-system,
+    Segoe UI,
+    Roboto,
+    Helvetica,
+    Arial,
+    sans-serif;
+
+  font-size: var(--size);
+  line-height: var(--lh);
+  font-weight: var(--weight);
+  letter-spacing: var(--letter);
+  color: var(--fg);
+
+  text-shadow:
+    0 8px 22px var(--shadow);
+
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+/* Visible */
+body.on #wrap{
+  opacity:1;
+  transform: translate3d(0,0,0);
+}
+body.on #spot{ opacity:1; }
+
+/* Fade out */
+body.off #wrap{
+  opacity:0;
+  transform: translate3d(0, var(--rise), 0);
+  transition:
+    opacity calc(var(--out-ms)*1ms) ease,
+    transform calc(var(--out-ms)*1ms) ease;
+}
+body.off #spot{
+  opacity:0;
+  transition: opacity calc(var(--out-ms)*1ms) ease;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce){
+  *{ transition:none !important; animation:none !important; }
+}
+</style>
+</head>
+
+<body>
+  <div id="stage">
+    <div id="spot"></div>
+    <div id="wrap">
+      <div id="text"></div>
+    </div>
+  </div>
+
+<script>
+/**
+ * centered_text_segmented_readable.html
+ *
+ * Same segmented system — slower, calmer, more readable.
+ *
+ * Segment params:
+ *   s1=...&s2=...&s3=...
+ *
+ * Timing (longer defaults):
+ *   in=420      fade in ms
+ *   out=360     fade out ms
+ *   hold=5200   default hold per sentence (LONG)
+ *   gap=300     gap between sentences
+ *   start=0     delay before first sentence
+ *
+ * Mode:
+ *   mode=once|loop
+ *
+ * Example:
+ *   ?s1=THIS%20VIDEO%20CONTAINS%20DISTURBING%20MATERIAL.
+ *   &s2=THE%20FOLLOWING%20SCENES%20ARE%20BASED%20ON%20REAL%20EVENTS.
+ *   &s3=VIEWER%20DISCRETION%20IS%20STRONGLY%20ADVISED.
+ *   &hold=6000
+ */
+
+const qs = new URLSearchParams(location.search);
+
+const IN    = clampInt(parseInt(qs.get("in")   || "420", 10), 0, 60000);
+const OUT   = clampInt(parseInt(qs.get("out")  || "360", 10), 0, 60000);
+const HOLD  = clampInt(parseInt(qs.get("hold") || "5200",10), 0, 600000);
+const GAP   = clampInt(parseInt(qs.get("gap")  || "300", 10), 0, 60000);
+const START = clampInt(parseInt(qs.get("start")|| "0",   10), 0, 600000);
+
+const MODE = (qs.get("mode") || "once").toLowerCase();
+
+document.documentElement.style.setProperty("--in-ms", String(IN));
+document.documentElement.style.setProperty("--out-ms", String(OUT));
+
+const textEl = document.getElementById("text");
+
+// Collect s1, s2, s3...
+const segments = collectNumbered(qs, "s")
+  .map(s => decodeSafe(s).trim())
+  .filter(Boolean);
+
+if (!segments.length){
+  segments.push(
+    "THIS VIDEO CONTAINS SENSITIVE MATERIAL.",
+    "THE FOLLOWING CONTENT MAY BE DISTURBING.",
+    "VIEWER DISCRETION IS ADVISED."
+  );
+}
+
+let idx = 0;
+let timer = null;
+
+function setSentence(i){
+  textEl.textContent = segments[i] || "";
+}
+
+function show(){
+  document.body.classList.add("on");
+  document.body.classList.remove("off");
+}
+function hide(){
+  document.body.classList.remove("on");
+  document.body.classList.add("off");
+}
+
+function play(){
+  clearTimeout(timer);
+
+  if (idx >= segments.length){
+    hide();
+    if (MODE === "loop"){
+      idx = 0;
+      timer = setTimeout(play, START || 100);
+    }
+    return;
+  }
+
+  setSentence(idx);
+  show();
+
+  timer = setTimeout(() => {
+    hide();
+    timer = setTimeout(() => {
+      idx++;
+      play();
+    }, OUT + GAP);
+  }, IN + HOLD);
+}
+
+function start(){
+  idx = 0;
+  hide();
+  timer = setTimeout(play, START);
+}
+
+/* Helpers */
+function collectNumbered(params, prefix){
+  const arr = [];
+  for (const [k,v] of params.entries()){
+    const m = k.match(new RegExp("^"+prefix+"(\\d+)$"));
+    if (m) arr.push([parseInt(m[1],10), v]);
+  }
+  arr.sort((a,b)=>a[0]-b[0]);
+  return arr.map(x=>x[1]);
+}
+function clampInt(x,a,b){ x=isFinite(x)?x:a; return Math.max(a,Math.min(b,x)); }
+function decodeSafe(s){ try{return decodeURIComponent(s);}catch{return s;} }
+
+start();
+addEventListener("pointerdown", () => start());
+</script>
+</body>
+</html>

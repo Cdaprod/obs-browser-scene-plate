@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>centered-text-segmented</title>
+
+<style>
+:root{
+  /* Layout */
+  --maxw: min(92vw, 1500px);
+  --pad: 24px;
+
+  /* Type */
+  --size: clamp(28px, 4.2vw, 74px);
+  --lh: 1.12;
+  --weight: 850;
+  --letter: 0.08em;
+
+  /* Look (content-warning vibe) */
+  --fg: rgba(255,255,255,0.95);
+  --stroke: rgba(0,0,0,0.92);
+  --shadow: rgba(0,0,0,0.70);
+  --glow: rgba(255,255,255,0.12);
+
+  /* Anim */
+  --in-ms: 260;
+  --out-ms: 220;
+  --rise: 10px;
+
+  /* Optional spotlight */
+  --spot-alpha: 0.16;    /* 0..0.35 */
+  --spot-blur: 34px;
+
+  /* Optional scanlines */
+  --scan-alpha: 0.10;    /* 0..0.22 */
+}
+
+/* Transparent page (OBS alpha) */
+html, body{
+  height:100%;
+  margin:0;
+  background: transparent !important;
+  overflow:hidden;
+}
+
+#stage{
+  position:absolute;
+  inset:0;
+  display:grid;
+  place-items:center;
+  pointer-events:none;
+}
+
+#spot{
+  position:absolute;
+  width: min(92vw, 1200px);
+  height: min(52vh, 620px);
+  border-radius: 999px;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(0,0,0,var(--spot-alpha)) 0%,
+    rgba(0,0,0,calc(var(--spot-alpha) * 0.55)) 38%,
+    rgba(0,0,0,0.0) 72%
+  );
+  filter: blur(var(--spot-blur));
+  opacity: 0;
+  transition: opacity calc(var(--in-ms)*1ms) ease;
+  will-change: opacity;
+}
+
+#wrap{
+  width: var(--maxw);
+  padding: var(--pad);
+  text-align:center;
+
+  opacity:0;
+  transform: translate3d(0, var(--rise), 0);
+  transition:
+    opacity calc(var(--in-ms)*1ms) ease,
+    transform calc(var(--in-ms)*1ms) cubic-bezier(.2,.8,.2,1);
+  will-change: opacity, transform;
+}
+
+/* The single sentence block (word wrapped) */
+#text{
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    Monaco,
+    Consolas,
+    "Liberation Mono",
+    "Courier New",
+    monospace;
+  font-size: var(--size);
+  line-height: var(--lh);
+  font-weight: var(--weight);
+  letter-spacing: var(--letter);
+  text-transform: none;
+  color: var(--fg);
+
+  /* depth / readability */
+  text-shadow:
+    /* faux-stroke */
+    0  3px 0 var(--stroke),
+    0 -3px 0 var(--stroke),
+    3px 0  0 var(--stroke),
+   -3px 0  0 var(--stroke),
+    3px 3px 0 var(--stroke),
+   -3px 3px 0 var(--stroke),
+    3px -3px 0 var(--stroke),
+   -3px -3px 0 var(--stroke),
+
+    /* drop */
+    0 18px 38px var(--shadow),
+
+    /* soft glow */
+    0 0 18px var(--glow);
+
+  white-space: pre-wrap;     /* allow \n if you pass it */
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+/* Scanlines overlay (optional) */
+#scan{
+  position:absolute;
+  inset:-2px;
+  opacity:0;
+  pointer-events:none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(0,0,0,var(--scan-alpha)) 0px,
+    rgba(0,0,0,var(--scan-alpha)) 1px,
+    rgba(0,0,0,0.0) 3px,
+    rgba(0,0,0,0.0) 6px
+  );
+  mix-blend-mode: multiply;
+  filter: blur(0.2px);
+  transition: opacity 180ms ease;
+  will-change: opacity;
+}
+
+/* Active states */
+body.on #wrap{
+  opacity:1;
+  transform: translate3d(0,0,0);
+}
+body.on #spot{ opacity:1; }
+body.on #scan{ opacity:1; }
+
+/* Out */
+body.off #wrap{
+  opacity:0;
+  transform: translate3d(0, var(--rise), 0);
+  transition:
+    opacity calc(var(--out-ms)*1ms) ease,
+    transform calc(var(--out-ms)*1ms) ease;
+}
+body.off #spot{ opacity:0; transition: opacity calc(var(--out-ms)*1ms) ease; }
+body.off #scan{ opacity:0; transition: opacity calc(var(--out-ms)*1ms) ease; }
+
+/* Micro jitter (optional) */
+body.jitter #wrap{
+  animation: jitter 140ms steps(2,end) 1;
+}
+@keyframes jitter{
+  0%{ transform: translate3d(0,0,0); }
+  30%{ transform: translate3d(2px,-1px,0); }
+  60%{ transform: translate3d(-2px,1px,0); }
+  100%{ transform: translate3d(0,0,0); }
+}
+
+/* Respect reduced motion */
+@media (prefers-reduced-motion: reduce){
+  *{ animation:none !important; transition:none !important; }
+}
+</style>
+</head>
+
+<body>
+  <div id="stage">
+    <div id="spot"></div>
+    <div id="wrap">
+      <div id="text"></div>
+    </div>
+    <div id="scan"></div>
+  </div>
+
+<script>
+/**
+ * centered_text_segmented.html
+ *
+ * Goal:
+ * - Transparent OBS overlay that plays N sentences sequentially.
+ * - Each sentence fades in -> holds -> fades out -> next sentence.
+ * - Sentence count is determined by how many segments appear in the URL.
+ *
+ * Segment params (preferred “one param per sentence”):
+ *   s1=...&s2=...&s3=...
+ *   (any s<number> keys are collected + sorted)
+ *
+ * Optional per-sentence duration overrides:
+ *   d1=2400&d2=1800&d3=3200   (ms)
+ *
+ * Global timing params:
+ *   in=260     fade-in ms
+ *   out=220    fade-out ms
+ *   hold=2600  default hold ms per sentence
+ *   gap=140    gap between sentences (ms)
+ *   start=0    initial delay before sentence 1 (ms)
+ *
+ * Look params:
+ *   spot=0..0.35     spotlight alpha (default 0.16)
+ *   scan=0..0.22     scanline alpha (default 0.10)
+ *   scanlines=1|0    enable scanlines (default 1)
+ *   jitter=1         tiny nudge at each sentence start
+ *
+ * Mode:
+ *   mode=once|loop   (default once)
+ *
+ * Example:
+ *   /overlays/centered_text_segmented.html
+ *     ?s1=CONTENT%20WARNING
+ *     &s2=THE%20TOPICS%20DISCUSSED%20IN%20THIS%20VIDEO%20ARE%20DISTURBING.
+ *     &s3=VIEWER%20DISCRETION%20IS%20STRONGLY%20ADVISED.
+ *     &hold=2600&in=260&out=220&gap=120&spot=0.18&scan=0.12&jitter=1
+ */
+
+const qs = new URLSearchParams(location.search);
+
+const IN   = clampInt(parseInt(qs.get("in")   || "260", 10), 0, 60000);
+const OUT  = clampInt(parseInt(qs.get("out")  || "220", 10), 0, 60000);
+const HOLD = clampInt(parseInt(qs.get("hold") || "2600",10), 0, 600000);
+const GAP  = clampInt(parseInt(qs.get("gap")  || "140", 10), 0, 60000);
+const START= clampInt(parseInt(qs.get("start")|| "0",   10), 0, 600000);
+
+const MODE = (qs.get("mode") || "once").toLowerCase();
+
+const spot = clampFloat(parseFloat(qs.get("spot") || "0.16"), 0, 0.35);
+document.documentElement.style.setProperty("--spot-alpha", String(spot));
+
+const scanAlpha = clampFloat(parseFloat(qs.get("scan") || "0.10"), 0, 0.22);
+document.documentElement.style.setProperty("--scan-alpha", String(scanAlpha));
+
+const scanlines = (qs.get("scanlines") || "1") !== "0";
+document.getElementById("scan").style.display = scanlines ? "block" : "none";
+
+const jitter = (qs.get("jitter") || "0") === "1";
+if (jitter) document.body.classList.add("jitter");
+
+// apply anim vars
+document.documentElement.style.setProperty("--in-ms", String(IN));
+document.documentElement.style.setProperty("--out-ms", String(OUT));
+
+const textEl = document.getElementById("text");
+
+// Collect segments: s1, s2, s3...
+const segments = collectNumbered(qs, "s")
+  .map(s => decodeSafe(s).trim())
+  .filter(Boolean);
+
+// Convenience fallback: segs=a|b|c (if no sN params present)
+if (segments.length === 0){
+  const segs = (qs.get("segs") || "").trim();
+  if (segs) segments.push(...segs.split("|").map(x => decodeSafe(x).trim()).filter(Boolean));
+}
+
+// Durations: d1, d2, d3... (optional)
+const durs = collectNumbered(qs, "d").map(v => clampInt(parseInt(v,10), 0, 600000));
+
+if (segments.length === 0){
+  // safe default
+  segments.push("CENTERED TEXT SEGMENT 1", "CENTERED TEXT SEGMENT 2", "CENTERED TEXT SEGMENT 3");
+}
+
+// Playback state
+let idx = 0;
+let timer = null;
+
+function setSentence(i){
+  const msg = segments[i] ?? "";
+  textEl.textContent = msg;
+}
+
+function show(){
+  document.body.classList.add("on");
+  document.body.classList.remove("off");
+  if (jitter){
+    // retrigger the tiny nudge each sentence
+    document.body.classList.remove("jitter");
+    void document.body.offsetWidth;
+    document.body.classList.add("jitter");
+  }
+}
+
+function hide(){
+  document.body.classList.remove("on");
+  document.body.classList.add("off");
+}
+
+function sentenceHoldMs(i){
+  const override = durs[i];
+  return (typeof override === "number" && isFinite(override)) ? override : HOLD;
+}
+
+function playOnce(){
+  clearTimeout(timer);
+
+  if (idx >= segments.length){
+    // end
+    hide();
+    if (MODE === "loop"){
+      idx = 0;
+      timer = setTimeout(step, Math.max(START, 60));
+    }
+    return;
+  }
+
+  setSentence(idx);
+  show();
+
+  // Hold includes only the “fully visible” time; fades are handled by CSS transitions
+  const holdMs = sentenceHoldMs(idx);
+
+  // Schedule fade out, then next sentence
+  timer = setTimeout(() => {
+    hide();
+    timer = setTimeout(() => {
+      idx += 1;
+      playOnce();
+    }, OUT + GAP);
+  }, IN + holdMs);
+}
+
+function step(){
+  idx = 0;
+  hide();
+  timer = setTimeout(() => playOnce(), START);
+}
+
+// Helpers
+function collectNumbered(params, prefix){
+  const items = [];
+  for (const [k, v] of params.entries()){
+    const m = k.match(new RegExp("^" + prefix + "(\\d+)$"));
+    if (!m) continue;
+    items.push([parseInt(m[1],10), v]);
+  }
+  items.sort((a,b) => a[0]-b[0]);
+  return items.map(x => x[1]);
+}
+function clampInt(x,a,b){ x = isFinite(x)?x:a; return Math.max(a, Math.min(b, x)); }
+function clampFloat(x,a,b){ x = isFinite(x)?x:a; return Math.max(a, Math.min(b, x)); }
+function decodeSafe(s){ try{ return decodeURIComponent(s); }catch{ return s; } }
+
+step();
+
+// Tap retrigger (handy in browser preview)
+addEventListener("pointerdown", () => step());
+</script>
+</body>
+</html>
