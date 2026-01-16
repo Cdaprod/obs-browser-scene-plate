@@ -4,7 +4,12 @@
  * Example: node scripts/test-index-url.cjs
  */
 const assert = require("assert");
-const { buildFullUrl, normalizeBaseLocation } = require("../site/url-utils.js");
+const {
+    buildFullUrl,
+    normalizeBaseLocation,
+    extractDefaultUrlFromSource,
+    mergeBaseParams
+} = require("../site/url-utils.js");
 
 function runTests() {
     const baseLocation = new URL("http://example.com:8789/index.html?foo=1&bar=2#demo");
@@ -65,6 +70,35 @@ function runTests() {
         fromString,
         "http://example.com:8789/overlays/extra.html?beta=2",
         "should accept string base locations"
+    );
+
+    const defaultUrlInline = "<!-- Default URL (full params): http://<HOST_IP>:8789/overlays/demo.html?mode=burst -->";
+    assert.strictEqual(
+        extractDefaultUrlFromSource(defaultUrlInline),
+        "http://<HOST_IP>:8789/overlays/demo.html?mode=burst",
+        "should extract inline default URLs"
+    );
+
+    const defaultUrlMultiline = `
+        /**
+         * Default URL (full params):
+         *  http://<HOST_IP>:8789/overlays/demo.html?mode=loop&hold=1200
+         */
+    `;
+    assert.strictEqual(
+        extractDefaultUrlFromSource(defaultUrlMultiline),
+        "http://<HOST_IP>:8789/overlays/demo.html?mode=loop&hold=1200",
+        "should extract multiline default URLs"
+    );
+
+    const merged = mergeBaseParams({
+        url: "http://example.com:8789/overlays/demo.html?mode=loop",
+        baseLocation: "http://example.com:8789/index.html?alpha=1#keep"
+    });
+    assert.strictEqual(
+        merged.toString(),
+        "http://example.com:8789/overlays/demo.html?mode=loop&alpha=1#keep",
+        "should append base params and hash without overriding existing params"
     );
 }
 
