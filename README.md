@@ -16,11 +16,11 @@ No cloud dependencies. No static file dragging. Just URLs.
 
 ## What This Is
 
-- A minimal **Nginx container** serving a single HTML "plate" page  
-- Designed specifically for **OBS Browser Source**  
-- Supports **looping video plates**, cinematic fallbacks, HUD/debug mode, and layout guides  
-- Fully controllable via **URL query parameters**  
-- Runs entirely on your local machine or LAN  
+- A **containerized plate server stack** purpose-built for **OBS Browser Sources**  
+- **Nginx-backed static hosting** for a cinematic HTML plate UI (found in `site/`)  
+- **URL-driven controls** for video sources, layout fitting, HUD/debug mode, and guides  
+- Optional **rendering services** (`render-api/`) to export plates as MOV assets  
+- Fully **local-first**: runs on your machine or LAN with no cloud dependencies  
 
 ---
 
