@@ -60,11 +60,11 @@ That makes it ideal for:
 
 From the project root:
 
-docker-compose up -d --build
+`docker-compose up -d --build`
 
 This exposes the plate server at:
 
-http://<HOST_IP>:8789/
+`http://<HOST_IP>:8789/`
 
 ---
 
@@ -72,11 +72,11 @@ http://<HOST_IP>:8789/
 
 Add a **Browser Source**:
 
-- URL: http://<HOST_IP>:8789/  
-- Width: 1080  
-- Height: 1920  
-- Shutdown source when not visible: OFF  
-- Refresh browser when scene becomes active: optional  
+- URL: `http://<HOST_IP>:8789/`
+- Width: `1080`
+- Height: `1920`
+- Shutdown source when not visible: `OFF`
+- Refresh browser when scene becomes active: `optional`
 
 ---
 
@@ -86,7 +86,7 @@ The plate page is controlled entirely by query parameters.
 
 ### Video Source
 
-?src=http://<HOST_IP>:8789/plate.mp4
+`?src=http://<HOST_IP>:8789/plate.mp4`
 
 You can also point to **any LAN-accessible video URL**.
 
@@ -94,23 +94,23 @@ You can also point to **any LAN-accessible video URL**.
 
 ### Layout & Debug
 
-&hud=off  
-&guide=on  
-&fit=cover  
+`&hud=off`
+`&guide=on  
+`&fit=cover`
 
-Values for fit: cover | contain | fill
+Values for fit: `cover | contain | fill`
 
 ---
 
 ### Example (clean production)
 
-http://<HOST_IP>:8789/?src=http://<HOST_IP>:8789/plate.mp4&hud=off
+`http://<HOST_IP>:8789/?src=http://<HOST_IP>:8789/plate.mp4&hud=off`
 
 ---
 
 ### Example (debug mode)
 
-http://<HOST_IP>:8789/?guide=on
+`http://<HOST_IP>:8789/?guide=on`
 
 ---
 
