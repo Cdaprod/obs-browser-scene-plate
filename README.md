@@ -8,6 +8,12 @@ No cloud dependencies. No static file dragging. Just URLs.
 
 ---
 
+<div align="center">
+  <p>
+    <img src="public/screenshot.png" />
+  </p>
+</div> 
+
 ## What This Is
 
 - A minimal **Nginx container** serving a single HTML "plate" page  
