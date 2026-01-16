@@ -1,0 +1,668 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Topic Dial</title>
+  <style>
+    :root{
+      --dial-size: min(82vmin, 980px);
+
+      --font: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+      --label-size: clamp(14px, 1.55vmin, 22px);
+      --title-size: clamp(12px, 1.2vmin, 16px);
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+
+      /* Ascetic palette (but legible) */
+      --fg: rgba(255,255,255,0.94);
+      --fg-dim: rgba(255,255,255,0.44);
+      --stroke: rgba(255,255,255,0.14);
+      --shadow: rgba(0,0,0,0.45);
+
+      --post-hold-opacity: 0.90;
+    }
+
+    html, body {
+      height: 100%;
+      margin: 0;
+      background: transparent;
+      overflow: hidden;
+      font-family: var(--font);
+    }
+
+    .stage{
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      display: grid;
+      place-items: center;
+    }
+
+    .hud{
+      width: var(--dial-size);
+      height: var(--dial-size);
+      position: relative;
+      filter:
+        drop-shadow(0 14px 28px var(--shadow))
+        drop-shadow(0 2px 6px rgba(0,0,0,0.22));
+      transform: translateZ(0);
+      opacity: 1;
+    }
+    .hud.boot{ animation: bootIn 520ms ease-out both; }
+    @keyframes bootIn{
+      from { opacity: 0; transform: translateY(10px) scale(0.985); }
+      to   { opacity: 1; transform: translateY(0px) scale(1.0); }
+    }
+
+    .plate{
+      position: absolute;
+      left: 0;
+      top: calc(-1 * clamp(24px, 3.2vmin, 42px));
+      width: 100%;
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 12px;
+      color: rgba(255,255,255,0.55);
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      font-size: var(--title-size);
+      opacity: 0.92;
+      user-select: none;
+    }
+    .plate .right{
+      font-family: var(--mono);
+      letter-spacing: 0.10em;
+      opacity: 0.55;
+      white-space: nowrap;
+    }
+
+    .ring{
+      position: absolute;
+      inset: 0;
+      border-radius: 999px;
+      border: 2px solid var(--stroke);
+      box-sizing: border-box;
+      overflow: hidden; /* ring visuals clipped; labels are in separate layer */
+      background:
+        radial-gradient(circle at 50% 50%, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.02) 38%, rgba(255,255,255,0.00) 66%),
+        radial-gradient(circle at 50% 50%, rgba(0,0,0,0.12) 0%, rgba(0,0,0,0.00) 62%);
+    }
+
+    .ring::before{
+      content:"";
+      position: absolute;
+      inset: 10.5%;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.10);
+      background: radial-gradient(circle at 50% 30%, rgba(255,255,255,0.05), rgba(255,255,255,0.00) 55%);
+      pointer-events: none;
+    }
+
+    .pointer{
+      position: absolute;
+      left: 50%;
+      top: -2px;
+      transform: translateX(-50%);
+      width: 0; height: 0;
+      border-left: 12px solid transparent;
+      border-right: 12px solid transparent;
+      border-bottom: 18px solid rgba(255,255,255,0.86);
+      filter: drop-shadow(0 6px 10px rgba(0,0,0,0.36));
+      opacity: 0.95;
+      z-index: 4;
+    }
+    .pointer::after{
+      content:"";
+      position: absolute;
+      left: 50%;
+      top: 17px;
+      transform: translateX(-50%);
+      width: 2px;
+      height: 16px;
+      background: rgba(255,255,255,0.35);
+      border-radius: 999px;
+    }
+
+    .active-arc{
+      position: absolute;
+      inset: 0;
+      border-radius: 999px;
+      pointer-events: none;
+      background:
+        conic-gradient(
+          from -7deg,
+          rgba(255,255,255,0.00) 0deg,
+          rgba(255,255,255,0.00) 345deg,
+          rgba(255,255,255,0.44) 345deg 358deg,
+          rgba(255,255,255,0.00) 358deg 360deg
+        );
+      mask: radial-gradient(circle, transparent 86%, #000 87%);
+      opacity: 0.85;
+      z-index: 3;
+    }
+
+    /* Rotating visuals only */
+    .dial{
+      position: absolute;
+      inset: 0;
+      border-radius: 999px;
+      transform: rotate(0deg);
+      will-change: transform;
+      z-index: 1;
+    }
+
+    .ticks{
+      position: absolute;
+      inset: 7%;
+      border-radius: 999px;
+      background:
+        repeating-conic-gradient(
+          from 0deg,
+          rgba(255,255,255,0.0) 0deg 4deg,
+          rgba(255,255,255,0.10) 4deg 4.5deg
+        );
+      mask: radial-gradient(circle, transparent 60%, #000 61%);
+      opacity: 0.55;
+      filter: blur(0.15px);
+      pointer-events: none;
+    }
+
+    .sweep{
+      position: absolute;
+      inset: 0;
+      border-radius: 999px;
+      background:
+        conic-gradient(from 0deg,
+          rgba(255,255,255,0.00) 0deg,
+          rgba(255,255,255,0.08) 18deg,
+          rgba(255,255,255,0.00) 48deg,
+          rgba(255,255,255,0.00) 360deg
+        );
+      opacity: 0.65;
+      mix-blend-mode: screen;
+      pointer-events: none;
+    }
+
+    /* Labels are NOT inside the rotating dial.
+       We place them every frame using polar coordinates so they stay on the circle,
+       and they remain upright + readable. */
+    .label-layer{
+      position: absolute;
+      inset: 0;
+      border-radius: 999px;
+      pointer-events: none;
+      z-index: 5; /* above visuals */
+    }
+
+    .label{
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform:
+        translate(-50%, -50%)
+        translate(var(--x, 0px), var(--y, 0px))
+        rotate(var(--rot, 0deg));
+      transform-origin: center center;
+      will-change: transform, opacity, filter;
+      opacity: 0.55;
+      transition: opacity 180ms ease, filter 180ms ease;
+    }
+
+    .label > span{
+      display: inline-block;
+      padding: 10px 14px;
+      border-radius: 999px;
+      font-size: var(--label-size);
+      letter-spacing: 0.20em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.58);
+      background: rgba(0,0,0,0.14);
+      border: 1px solid rgba(255,255,255,0.12);
+      backdrop-filter: blur(2px);
+    }
+
+    .label.is-active{
+      opacity: 1;
+      filter: drop-shadow(0 0 10px rgba(255,255,255,0.16));
+    }
+    .label.is-active > span{
+      color: var(--fg);
+      background: rgba(0,0,0,0.22);
+      border-color: rgba(255,255,255,0.22);
+    }
+
+    .center{
+      position: absolute;
+      inset: 26%;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.14);
+      background:
+        radial-gradient(circle at 50% 30%, rgba(255,255,255,0.08), rgba(255,255,255,0.00) 70%),
+        linear-gradient(180deg, rgba(0,0,0,0.14), rgba(0,0,0,0.02));
+      display: grid;
+      place-items: center;
+      text-align: center;
+      color: var(--fg);
+      box-sizing: border-box;
+      pointer-events: none;
+      z-index: 2;
+    }
+
+    .center .topic{
+      font-size: clamp(16px, 2.2vmin, 28px);
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      line-height: 1.2;
+      padding: 0 14px;
+      opacity: 0;
+      transform: translateY(8px);
+      transition: opacity 260ms ease, transform 260ms ease;
+    }
+    .center .topic.is-visible{
+      opacity: 0.98;
+      transform: translateY(0px);
+    }
+
+    .hud.post-hold{
+      opacity: var(--post-hold-opacity);
+      transition: opacity 420ms ease;
+    }
+
+    @media (prefers-reduced-motion: reduce){
+      .label, .center .topic { transition: none !important; }
+      .hud.boot { animation: none !important; }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="stage">
+    <div class="hud boot" id="hud">
+      <div class="plate">
+        <div>DIRECTION</div>
+        <div class="right" id="meta">—</div>
+      </div>
+
+      <div class="ring" aria-hidden="true">
+        <div class="active-arc"></div>
+        <div class="pointer"></div>
+
+        <div class="dial" id="dial">
+          <div class="ticks"></div>
+          <div class="sweep"></div>
+        </div>
+
+        <div class="center" aria-hidden="true">
+          <div class="topic" id="topicReadout">—</div>
+        </div>
+      </div>
+
+      <!-- labels are outside ring clipping -->
+      <div class="label-layer" id="labelLayer" aria-hidden="true"></div>
+    </div>
+  </div>
+
+  <script>
+    const TOPICS = [
+      "FAMILY",
+      "THE STORY",
+      "THE BUILD",
+      "THE CRAFT",
+      "PRINCIPLES",
+      "PROCESS",
+    ];
+    const WEIGHTS = TOPICS.map(() => 1);
+
+    const SPIN_MIN_MS = 2200;
+    const SPIN_MAX_MS = 3200;
+    const HOLD_AFTER_LAND_MS = 900;
+    const POST_HOLD_DIM = true;
+
+    const BASE_TURNS_MIN = 3;
+    const BASE_TURNS_MAX = 5;
+
+    const MICRO_SETTLE_DEG = 1.15;
+    const MICRO_SETTLE_MS  = 170;
+
+    const hud = document.getElementById("hud");
+    const dial = document.getElementById("dial");
+    const labelLayer = document.getElementById("labelLayer");
+    const topicReadout = document.getElementById("topicReadout");
+    const meta = document.getElementById("meta");
+
+    const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
+    const lerp  = (a, b, t) => a + (b - a) * t;
+
+    const N = TOPICS.length;
+    const SEG = 360 / N;
+
+    function normTopic(s){
+      return String(s || "").toUpperCase().replace(/[\s_-]+/g, "").trim();
+    }
+
+    function parseParams(){
+      const u = new URL(location.href);
+      const p = u.searchParams;
+      return {
+        topic: p.get("topic"),
+        seed: p.get("seed"),
+        autospin: p.get("autospin") !== "0",
+      };
+    }
+
+    // seeded RNG helpers
+    function xmur3(str) {
+      let h = 1779033703 ^ str.length;
+      for (let i = 0; i < str.length; i++) {
+        h = Math.imul(h ^ str.charCodeAt(i), 3432918353);
+        h = (h << 13) | (h >>> 19);
+      }
+      return function() {
+        h = Math.imul(h ^ (h >>> 16), 2246822507);
+        h = Math.imul(h ^ (h >>> 13), 3266489909);
+        h ^= h >>> 16;
+        return h >>> 0;
+      };
+    }
+    function mulberry32(a) {
+      return function() {
+        let t = (a += 0x6D2B79F5);
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+    function makeRng(seedStr){
+      const seed = xmur3(seedStr)();
+      return mulberry32(seed);
+    }
+    function weightedPickIndex(weights, rng){
+      const total = weights.reduce((s, w) => s + w, 0);
+      let r = rng() * total;
+      for (let i = 0; i < weights.length; i++){
+        r -= weights[i];
+        if (r <= 0) return i;
+      }
+      return weights.length - 1;
+    }
+
+    function easeOutResist(t){
+      const c = 1 - Math.pow(1 - t, 3);
+      const resist = 1 - Math.pow(1 - t, 6);
+      return lerp(c, resist, 0.35);
+    }
+
+    function normalizeDeg(deg){
+      let d = deg % 360;
+      if (d < 0) d += 360;
+      return d;
+    }
+
+    function nowStamp(){
+      const d = new Date();
+      const hh = String(d.getHours()).padStart(2,"0");
+      const mm = String(d.getMinutes()).padStart(2,"0");
+      const ss = String(d.getSeconds()).padStart(2,"0");
+      return `${hh}:${mm}:${ss}`;
+    }
+
+    function showReadout(text){
+      topicReadout.textContent = text;
+      topicReadout.classList.add("is-visible");
+    }
+    function hideReadout(){
+      topicReadout.classList.remove("is-visible");
+    }
+
+    // Active index: which slice is at TOP (pointer).
+    function activeIndexFromRotation(rotDeg){
+      const rot = normalizeDeg(rotDeg);
+      const idx = Math.round(((360 - rot) % 360) / SEG) % N;
+      return idx;
+    }
+
+    // Land index i under pointer at TOP: rot = -i*SEG
+    function targetRotationForIndex(i){
+      return -(i * SEG);
+    }
+
+    // Build labels once; update their x/y each frame based on dial rotation.
+    const labelEls = [];
+    function buildLabels(){
+      labelLayer.innerHTML = "";
+      labelEls.length = 0;
+
+      for (let i = 0; i < N; i++){
+        const div = document.createElement("div");
+        div.className = "label";
+        div.dataset.idx = String(i);
+
+        const span = document.createElement("span");
+        span.textContent = TOPICS[i];
+        div.appendChild(span);
+
+        labelLayer.appendChild(div);
+        labelEls.push(div);
+      }
+    }
+
+    function setActiveIndex(idx){
+      for (let i = 0; i < labelEls.length; i++){
+        labelEls[i].classList.toggle("is-active", i === idx);
+      }
+    }
+
+    function updateLabelOrbit(dialRotDeg){
+      // radius in px based on actual rendered size
+      const rect = hud.getBoundingClientRect();
+      const size = Math.min(rect.width, rect.height);
+
+      // tight enough to feel “mounted”, wide enough to read
+      const R = size * 0.40;
+
+      const rot = normalizeDeg(dialRotDeg);
+
+      for (let i = 0; i < N; i++){
+        // local angle centers: i*SEG, with 0° at TOP (so start at -90 for trig)
+        const ang = (rot + i * SEG) - 90;
+        const rad = ang * Math.PI / 180;
+
+        const x = Math.cos(rad) * R;
+        const y = Math.sin(rad) * R;
+
+        // Keep pills upright & readable: rotate 0 always.
+        // If you want a slight “mounted” feel, use rot = 0 and rely on orbit only.
+        labelEls[i].style.setProperty("--x", `${x.toFixed(2)}px`);
+        labelEls[i].style.setProperty("--y", `${y.toFixed(2)}px`);
+        labelEls[i].style.setProperty("--rot", `0deg`);
+      }
+    }
+
+    // If you later want tangential but still readable, change --rot to:
+    // const tangent = (rot + i*SEG);
+    // labelEls[i].style.setProperty("--rot", `${tangent}deg`);
+    // then auto-flip when tangent is left-side. But upright is the cleanest.
+
+    // Spin engine
+    let currentDeg = 0;
+    let isSpinning = false;
+    let forcedIndex = null;
+
+    function setDialRotation(deg){
+      dial.style.transform = `rotate(${deg}deg)`;
+    }
+
+    function chooseIndex(params){
+      if (params.topic){
+        const want = normTopic(params.topic);
+        const idx = TOPICS.findIndex(t => normTopic(t) === want);
+        if (idx >= 0) return { index: idx, mode: "topic" };
+      }
+      if (forcedIndex !== null && forcedIndex >= 0 && forcedIndex < N){
+        return { index: forcedIndex, mode: "forced" };
+      }
+      if (params.seed){
+        const rng = makeRng(String(params.seed));
+        return { index: weightedPickIndex(WEIGHTS, rng), mode: "seed" };
+      }
+      return { index: weightedPickIndex(WEIGHTS, Math.random), mode: "random" };
+    }
+
+    async function spinToIndex(index, opts = {}){
+      if (isSpinning) return;
+      isSpinning = true;
+
+      hud.classList.remove("post-hold");
+      hideReadout();
+
+      const duration = opts.duration ?? Math.floor(lerp(SPIN_MIN_MS, SPIN_MAX_MS, Math.random()));
+      const turns = opts.turns ?? Math.floor(lerp(BASE_TURNS_MIN, BASE_TURNS_MAX + 0.999, Math.random()));
+      const base = turns * 360;
+
+      const target = targetRotationForIndex(index);
+
+      const cur = currentDeg;
+      const curNorm = normalizeDeg(cur);
+      const targetNorm = normalizeDeg(target);
+
+      let deltaToTarget = targetNorm - curNorm;
+      if (deltaToTarget < 0) deltaToTarget += 360;
+
+      const end = cur + base + deltaToTarget;
+
+      const start = performance.now();
+      const startDeg = cur;
+      const endDeg = end;
+
+      const animate = (tNow) => {
+        const t = clamp((tNow - start) / duration, 0, 1);
+        const e = easeOutResist(t);
+        const d = lerp(startDeg, endDeg, e);
+
+        currentDeg = d;
+
+        setDialRotation(d);
+        updateLabelOrbit(d);
+
+        setActiveIndex(activeIndexFromRotation(d));
+
+        if (t < 1) requestAnimationFrame(animate);
+        else {
+          microSettle(index).then(() => {
+            setActiveIndex(index);
+            showReadout(TOPICS[index]);
+            meta.textContent = `${nowStamp()}  •  ${TOPICS[index]}`;
+
+            setTimeout(() => {
+              if (POST_HOLD_DIM) hud.classList.add("post-hold");
+              isSpinning = false;
+            }, HOLD_AFTER_LAND_MS);
+          });
+        }
+      };
+
+      requestAnimationFrame(animate);
+    }
+
+    function microSettle(index){
+      return new Promise((resolve) => {
+        const baseTarget = targetRotationForIndex(index);
+
+        const cur = currentDeg;
+        const curNorm = normalizeDeg(cur);
+        const baseNorm = normalizeDeg(baseTarget);
+
+        let snapDelta = baseNorm - curNorm;
+        snapDelta = (((snapDelta % 360) + 540) % 360) - 180;
+        const snapped = cur + snapDelta;
+
+        currentDeg = snapped;
+        setDialRotation(snapped);
+        updateLabelOrbit(snapped);
+
+        const overshoot = snapped + MICRO_SETTLE_DEG;
+        const start = performance.now();
+
+        const animate = (tNow) => {
+          const t = clamp((tNow - start) / MICRO_SETTLE_MS, 0, 1);
+          const mid = t < 0.55
+            ? lerp(snapped, overshoot, easeOutResist(t / 0.55))
+            : lerp(overshoot, snapped, easeOutResist((t - 0.55) / 0.45));
+
+          currentDeg = mid;
+          setDialRotation(mid);
+          updateLabelOrbit(mid);
+
+          if (t < 1) requestAnimationFrame(animate);
+          else resolve();
+        };
+
+        requestAnimationFrame(animate);
+      });
+    }
+
+    // Public API
+    window.spin = () => {
+      const params = parseParams();
+      const chosen = chooseIndex(params);
+      spinToIndex(chosen.index);
+    };
+    window.setTopic = (topicString) => {
+      const want = normTopic(topicString);
+      const idx = TOPICS.findIndex(t => normTopic(t) === want);
+      if (idx >= 0){
+        forcedIndex = idx;
+        spinToIndex(idx);
+      }
+    };
+    window.setIndex = (oneBasedIndex) => {
+      const idx = Number(oneBasedIndex) - 1;
+      if (Number.isFinite(idx) && idx >= 0 && idx < N){
+        forcedIndex = idx;
+        spinToIndex(idx);
+      }
+    };
+
+    window.addEventListener("keydown", (e) => {
+      if (e.code === "Space"){
+        e.preventDefault();
+        window.spin();
+        return;
+      }
+      if (e.key >= "1" && e.key <= String(N)){
+        e.preventDefault();
+        window.setIndex(Number(e.key));
+        return;
+      }
+    });
+
+    // Boot
+    buildLabels();
+
+    // keep labels correct on resize/orientation change
+    window.addEventListener("resize", () => {
+      updateLabelOrbit(currentDeg);
+    });
+
+    (function boot(){
+      const params = parseParams();
+      const chosen = chooseIndex(params);
+
+      meta.textContent = `${nowStamp()}  •  ${chosen.mode.toUpperCase()}`;
+
+      // initial placement
+      updateLabelOrbit(currentDeg);
+      setActiveIndex(activeIndexFromRotation(currentDeg));
+
+      if (params.autospin){
+        setTimeout(() => {
+          const chosen2 = chooseIndex(params);
+          meta.textContent = `${nowStamp()}  •  ${chosen2.mode.toUpperCase()}`;
+          spinToIndex(chosen2.index);
+        }, 120);
+      }
+    })();
+  </script>
+</body>
+</html>
