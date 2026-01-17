@@ -120,6 +120,10 @@
             min-height: 0;
         }
 
+        .files-pane .tree {
+            min-height: 0;
+        }
+
         .pane .bar {
             padding: 10px 12px;
             border-bottom: 1px solid var(--border);
@@ -493,6 +497,21 @@
                 white-space: normal;
             }
         }
+
+        @media (max-width: 720px) and (orientation: portrait) {
+            .wrap {
+                grid-template-columns: minmax(160px, 38%) 1fr;
+                grid-template-rows: 1fr;
+            }
+
+            .files-pane .bar {
+                flex-wrap: wrap;
+            }
+
+            .files-pane .bar input {
+                flex-basis: 100%;
+            }
+        }
     </style>
 </head>
 <body>
@@ -508,7 +527,7 @@
     </header>
 
     <div class="wrap">
-        <section class="pane">
+        <section class="pane files-pane">
             <div class="bar">
                 <div class="label">Files</div>
                 <input id="filter" placeholder="filter (e.g. overlays, glitch, plate-)" />
