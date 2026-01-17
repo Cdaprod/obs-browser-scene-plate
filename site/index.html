@@ -244,6 +244,7 @@
             box-sizing: border-box;
             border-bottom: 1px solid rgba(255,255,255,0.06);
             flex-wrap: wrap;
+            position: relative;
         }
 
         .btn {
@@ -361,6 +362,80 @@
             display: none;
         }
 
+        .export-menu {
+            position: absolute;
+            top: calc(100% + 6px);
+            right: 12px;
+            min-width: 260px;
+            max-width: 420px;
+            background: rgba(9, 12, 18, 0.98);
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 12px;
+            padding: 10px;
+            box-shadow: 0 12px 30px rgba(0,0,0,0.35);
+            z-index: 20;
+        }
+
+        .export-menu h4 {
+            margin: 0 0 8px;
+            font-family: var(--ui);
+            font-size: 12px;
+            color: rgba(255,255,255,0.8);
+        }
+
+        .export-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            max-height: 220px;
+            overflow-y: auto;
+        }
+
+        .export-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            padding: 6px 8px;
+            border-radius: 10px;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.06);
+        }
+
+        .export-item .meta {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            min-width: 0;
+        }
+
+        .export-item .name {
+            font-family: var(--mono);
+            font-size: 11px;
+            color: rgba(255,255,255,0.9);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .export-item .time {
+            font-family: var(--mono);
+            font-size: 10px;
+            color: rgba(255,255,255,0.5);
+        }
+
+        .export-item a {
+            color: rgba(120,190,255,0.95);
+            text-decoration: none;
+            font-family: var(--mono);
+            font-size: 11px;
+            white-space: nowrap;
+        }
+
+        .export-item a:hover {
+            text-decoration: underline;
+        }
+
         iframe {
             width: 100%;
             height: 100%;
@@ -457,9 +532,14 @@
                 <button class="btn" id="openBtn">Open Tab</button>
                 <button class="btn" id="reloadBtn">Reload</button>
                 <button class="btn" id="exportBtn">Export MOV</button>
+                <button class="btn" id="recentBtn">Recent Exports</button>
                 <input class="input" id="secondsInput" type="number" min="0" step="0.1" placeholder="auto sec" />
                 <span class="status" id="exportStatus">Idle</span>
                 <a class="btn hidden" id="downloadBtn" download>Download MOV</a>
+                <div class="export-menu hidden" id="recentMenu">
+                    <h4>Recent exports</h4>
+                    <div class="export-list" id="recentList"></div>
+                </div>
             </div>
 
             <iframe id="frame" src="about:blank"></iframe>
@@ -486,9 +566,12 @@
         const openBtn = document.getElementById("openBtn");
         const reloadBtn = document.getElementById("reloadBtn");
         const exportBtn = document.getElementById("exportBtn");
+        const recentBtn = document.getElementById("recentBtn");
         const secondsInput = document.getElementById("secondsInput");
         const exportStatus = document.getElementById("exportStatus");
         const downloadBtn = document.getElementById("downloadBtn");
+        const recentMenu = document.getElementById("recentMenu");
+        const recentList = document.getElementById("recentList");
         const toast = document.getElementById("toast");
 
         const openBrowse = document.getElementById("openBrowse");
@@ -531,11 +614,77 @@
         let pollTimer = null;
         let selectionToken = 0;
         let urlUpdateTimer = null;
+        const exportHistoryKey = "obs-export-history";
 
         function showToast(text) {
             toast.textContent = text;
             toast.classList.add("show");
             setTimeout(() => toast.classList.remove("show"), 900);
+        }
+
+        function loadExportHistory() {
+            try {
+                const raw = localStorage.getItem(exportHistoryKey);
+                if (!raw) return [];
+                const parsed = JSON.parse(raw);
+                return Array.isArray(parsed) ? parsed : [];
+            } catch (_) {
+                return [];
+            }
+        }
+
+        function saveExportHistory(entries) {
+            localStorage.setItem(exportHistoryKey, JSON.stringify(entries));
+        }
+
+        function formatExportTime(timestamp) {
+            const date = new Date(timestamp);
+            if (Number.isNaN(date.getTime())) {
+                return "just now";
+            }
+            return date.toLocaleString();
+        }
+
+        function renderExportHistory() {
+            const entries = loadExportHistory();
+            recentList.innerHTML = "";
+
+            if (!entries.length) {
+                const empty = document.createElement("div");
+                empty.className = "status";
+                empty.textContent = "No exports yet.";
+                recentList.appendChild(empty);
+                return;
+            }
+
+            entries.forEach((entry) => {
+                const item = document.createElement("div");
+                item.className = "export-item";
+
+                const meta = document.createElement("div");
+                meta.className = "meta";
+
+                const name = document.createElement("div");
+                name.className = "name";
+                name.textContent = entry.name || "render.mov";
+
+                const time = document.createElement("div");
+                time.className = "time";
+                time.textContent = formatExportTime(entry.createdAt);
+
+                meta.appendChild(name);
+                meta.appendChild(time);
+
+                const link = document.createElement("a");
+                link.href = entry.url;
+                link.target = "_blank";
+                link.rel = "noreferrer";
+                link.textContent = "Open";
+
+                item.appendChild(meta);
+                item.appendChild(link);
+                recentList.appendChild(item);
+            });
         }
 
         function tagFor(path) {
@@ -827,6 +976,21 @@
                 exportBtn.disabled = false;
                 exportBtn.textContent = "Export MOV";
                 showToast("Export ready");
+
+                const history = loadExportHistory();
+                const entry = {
+                    url: downloadUrl,
+                    name: data.filename || inferNameFromPath(activePath),
+                    createdAt: Date.now()
+                };
+                const nextHistory = [entry, ...history]
+                    .filter((item, index, self) =>
+                        index === self.findIndex((other) => other.url === item.url)
+                    )
+                    .slice(0, 8);
+                saveExportHistory(nextHistory);
+                renderExportHistory();
+
                 return true;
             }
 
@@ -932,6 +1096,18 @@
 
         filterEl.addEventListener("input", render);
 
+        recentBtn.onclick = (event) => {
+            event.stopPropagation();
+            renderExportHistory();
+            recentMenu.classList.toggle("hidden");
+        };
+
+        document.addEventListener("click", (event) => {
+            if (recentMenu.classList.contains("hidden")) return;
+            if (recentMenu.contains(event.target) || recentBtn.contains(event.target)) return;
+            recentMenu.classList.add("hidden");
+        });
+
         urlBuilder.addEventListener("input", (event) => {
             if (!event.target.matches("[data-url-value]")) return;
             scheduleUrlUpdate();
@@ -981,6 +1157,7 @@
 
             render();
             pickPreferred();
+            renderExportHistory();
         }
 
         boot().catch(err => {

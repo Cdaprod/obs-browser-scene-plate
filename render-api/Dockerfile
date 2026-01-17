@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
 RUN npm init -y && npm install playwright@1.42.1
 
 COPY render-api/render.js /app/render.js
+COPY render-api/render-utils.js /app/render-utils.js
 COPY render-api/server.js /app/server.js
 
 EXPOSE 8791
