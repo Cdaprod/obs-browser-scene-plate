@@ -294,6 +294,63 @@
             word-break: break-word;
         }
 
+        .url-builder {
+            flex: 1;
+            min-width: 0;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 4px 6px;
+            font-family: var(--mono);
+            font-size: 11px;
+            color: rgba(255, 255, 255, 0.85);
+            white-space: normal;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+
+        .url-builder.empty {
+            color: rgba(255, 255, 255, 0.5);
+        }
+
+        .url-segment {
+            color: rgba(255, 255, 255, 0.75);
+        }
+
+        .url-path {
+            color: rgba(214, 234, 255, 0.92);
+        }
+
+        .url-fragment {
+            color: rgba(160, 200, 255, 0.75);
+        }
+
+        .url-sep {
+            color: rgba(255, 255, 255, 0.4);
+            padding: 0 1px;
+        }
+
+        .url-key {
+            color: rgba(170, 210, 255, 0.9);
+        }
+
+        .url-value {
+            min-width: 36px;
+            padding: 2px 8px;
+            border-radius: 999px;
+            background: rgba(130, 180, 255, 0.18);
+            color: rgba(255, 255, 255, 0.92);
+            outline: none;
+            border: 1px solid rgba(130, 180, 255, 0.3);
+            box-shadow: inset 0 0 0 1px rgba(130, 180, 255, 0.08);
+            white-space: pre-wrap;
+        }
+
+        .url-value:focus {
+            border-color: rgba(130, 200, 255, 0.75);
+            box-shadow: 0 0 0 2px rgba(130, 200, 255, 0.2);
+        }
+
         .status {
             font-family: var(--mono);
             font-size: 11px;
@@ -360,6 +417,11 @@
                 white-space: normal;
                 overflow-wrap: anywhere;
             }
+
+            .url-builder {
+                flex-basis: 100%;
+                white-space: normal;
+            }
         }
     </style>
 </head>
@@ -387,7 +449,7 @@
         <section class="pane previewWrap">
             <div class="bar">
                 <div class="label">Preview</div>
-                <div class="url" id="urlText">Select a file…</div>
+                <div class="url-builder empty" id="urlBuilder">Select a file…</div>
             </div>
 
             <div class="actions">
@@ -398,7 +460,6 @@
                 <input class="input" id="secondsInput" type="number" min="0" step="0.1" placeholder="auto sec" />
                 <span class="status" id="exportStatus">Idle</span>
                 <a class="btn hidden" id="downloadBtn" download>Download MOV</a>
-                <div class="url" id="urlText2"></div>
             </div>
 
             <iframe id="frame" src="about:blank"></iframe>
@@ -420,8 +481,7 @@
         const treeEl = document.getElementById("tree");
         const filterEl = document.getElementById("filter");
         const frame = document.getElementById("frame");
-        const urlText = document.getElementById("urlText");
-        const urlText2 = document.getElementById("urlText2");
+        const urlBuilder = document.getElementById("urlBuilder");
         const copyBtn = document.getElementById("copyBtn");
         const openBtn = document.getElementById("openBtn");
         const reloadBtn = document.getElementById("reloadBtn");
@@ -452,6 +512,7 @@
         let currentFullUrl = "";
         let pollTimer = null;
         let selectionToken = 0;
+        let urlUpdateTimer = null;
 
         function showToast(text) {
             toast.textContent = text;
@@ -519,10 +580,110 @@
             });
         }
 
+        function createUrlSpan(className, text) {
+            const span = document.createElement("span");
+            span.className = className;
+            span.textContent = text;
+            return span;
+        }
+
+        function createSeparator(text) {
+            return createUrlSpan("url-sep", text);
+        }
+
+        function renderUrlBuilder(url) {
+            urlBuilder.innerHTML = "";
+
+            if (!url || url.startsWith("Select")) {
+                urlBuilder.classList.add("empty");
+                urlBuilder.textContent = "Select a file…";
+                urlBuilder.removeAttribute("data-full-url");
+                urlBuilder.removeAttribute("data-origin");
+                urlBuilder.removeAttribute("data-pathname");
+                urlBuilder.removeAttribute("data-hash");
+                urlBuilder.removeAttribute("title");
+                return;
+            }
+
+            const parsed = new URL(url, window.location.origin);
+            urlBuilder.classList.remove("empty");
+            urlBuilder.dataset.fullUrl = parsed.toString();
+            urlBuilder.dataset.origin = parsed.origin;
+            urlBuilder.dataset.pathname = parsed.pathname;
+            urlBuilder.dataset.hash = parsed.hash || "";
+            urlBuilder.title = parsed.toString();
+
+            urlBuilder.appendChild(createUrlSpan("url-segment url-base", parsed.origin));
+            urlBuilder.appendChild(createUrlSpan("url-segment url-path", parsed.pathname));
+
+            const params = Array.from(parsed.searchParams.entries());
+            if (params.length) {
+                urlBuilder.appendChild(createSeparator("?"));
+            }
+
+            params.forEach(([key, value], index) => {
+                if (index > 0) {
+                    urlBuilder.appendChild(createSeparator("&"));
+                }
+
+                urlBuilder.appendChild(createUrlSpan("url-key", key));
+                urlBuilder.appendChild(createSeparator("="));
+
+                const valueSpan = createUrlSpan("url-value", window.decodeQueryValue(value));
+                valueSpan.setAttribute("contenteditable", "true");
+                valueSpan.setAttribute("data-url-value", "true");
+                valueSpan.setAttribute("data-key", key);
+                valueSpan.spellcheck = false;
+                urlBuilder.appendChild(valueSpan);
+            });
+
+            if (parsed.hash) {
+                urlBuilder.appendChild(createUrlSpan("url-fragment", parsed.hash));
+            }
+        }
+
         function setCurrentUrl(url) {
             currentFullUrl = url;
-            urlText.textContent = url;
-            urlText2.textContent = url;
+            renderUrlBuilder(url);
+        }
+
+        function buildUrlFromBuilder() {
+            const origin = urlBuilder.dataset.origin;
+            const pathname = urlBuilder.dataset.pathname || "";
+            const hash = urlBuilder.dataset.hash || "";
+
+            if (!origin) {
+                return "";
+            }
+
+            const params = Array.from(urlBuilder.querySelectorAll("[data-url-value]"))
+                .map((valueEl) => {
+                    const key = valueEl.dataset.key || "";
+                    const value = valueEl.textContent || "";
+                    return { key, value };
+                })
+                .filter((param) => param.key);
+
+            const search = params.length
+                ? `?${params.map(param => `${encodeURIComponent(param.key)}=${window.encodeQueryValue(param.value)}`).join("&")}`
+                : "";
+
+            return `${origin}${pathname}${search}${hash}`;
+        }
+
+        function scheduleUrlUpdate() {
+            if (urlUpdateTimer) {
+                clearTimeout(urlUpdateTimer);
+            }
+
+            urlUpdateTimer = setTimeout(() => {
+                const nextUrl = buildUrlFromBuilder();
+                if (!nextUrl) return;
+                currentFullUrl = nextUrl;
+                urlBuilder.dataset.fullUrl = nextUrl;
+                urlBuilder.title = nextUrl;
+                frame.src = nextUrl;
+            }, 120);
         }
 
         function isTextAsset(path) {
@@ -602,7 +763,7 @@
         }
 
         copyBtn.onclick = async () => {
-            const text = currentFullUrl || urlText2.textContent || "";
+            const text = currentFullUrl || urlBuilder.dataset.fullUrl || "";
             if (!text || text.startsWith("Select")) return;
 
             try {
@@ -614,7 +775,7 @@
         };
 
         openBtn.onclick = () => {
-            const text = currentFullUrl || urlText2.textContent || "";
+            const text = currentFullUrl || urlBuilder.dataset.fullUrl || "";
             if (!text || text.startsWith("Select")) return;
             window.open(text, "_blank");
         };
@@ -663,7 +824,7 @@
         }
 
         exportBtn.onclick = async () => {
-            const text = currentFullUrl || urlText2.textContent || "";
+            const text = currentFullUrl || urlBuilder.dataset.fullUrl || "";
             if (!text || text.startsWith("Select")) {
                 showToast("Select a plate first");
                 return;
@@ -752,6 +913,29 @@
         };
 
         filterEl.addEventListener("input", render);
+
+        urlBuilder.addEventListener("input", (event) => {
+            if (!event.target.matches("[data-url-value]")) return;
+            scheduleUrlUpdate();
+        });
+
+        urlBuilder.addEventListener("focusout", (event) => {
+            if (!event.target.matches("[data-url-value]")) return;
+            scheduleUrlUpdate();
+        });
+
+        urlBuilder.addEventListener("keydown", (event) => {
+            if (!event.target.matches("[data-url-value]")) return;
+            if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                event.target.blur();
+                scheduleUrlUpdate();
+            }
+            if (event.key === "Escape") {
+                event.preventDefault();
+                event.target.blur();
+            }
+        });
 
         function pickPreferred() {
             const preferred =
