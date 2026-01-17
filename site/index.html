@@ -344,6 +344,9 @@
             border: 1px solid rgba(130, 180, 255, 0.3);
             box-shadow: inset 0 0 0 1px rgba(130, 180, 255, 0.08);
             white-space: pre-wrap;
+            display: inline-flex;
+            align-items: center;
+            cursor: text;
         }
 
         .url-value:focus {
@@ -513,6 +516,7 @@
         let pollTimer = null;
         let selectionToken = 0;
         let urlUpdateTimer = null;
+        let currentDefaultParams = [];
 
         function showToast(text) {
             toast.textContent = text;
@@ -591,6 +595,19 @@
             return createUrlSpan("url-sep", text);
         }
 
+        function mergeDefaultParams(params) {
+            const merged = params.slice();
+            const existingKeys = new Set(params.map(([key]) => key));
+
+            currentDefaultParams.forEach(([key, value]) => {
+                if (!existingKeys.has(key)) {
+                    merged.push([key, value]);
+                }
+            });
+
+            return merged;
+        }
+
         function renderUrlBuilder(url) {
             urlBuilder.innerHTML = "";
 
@@ -616,7 +633,8 @@
             urlBuilder.appendChild(createUrlSpan("url-segment url-base", parsed.origin));
             urlBuilder.appendChild(createUrlSpan("url-segment url-path", parsed.pathname));
 
-            const params = Array.from(parsed.searchParams.entries());
+            const rawParams = Array.from(parsed.searchParams.entries());
+            const params = mergeDefaultParams(rawParams);
             if (params.length) {
                 urlBuilder.appendChild(createSeparator("?"));
             }
@@ -671,18 +689,22 @@
             return `${origin}${pathname}${search}${hash}`;
         }
 
+        function applyUrlUpdate() {
+            const nextUrl = buildUrlFromBuilder();
+            if (!nextUrl) return;
+            currentFullUrl = nextUrl;
+            urlBuilder.dataset.fullUrl = nextUrl;
+            urlBuilder.title = nextUrl;
+            frame.src = nextUrl;
+        }
+
         function scheduleUrlUpdate() {
             if (urlUpdateTimer) {
                 clearTimeout(urlUpdateTimer);
             }
 
             urlUpdateTimer = setTimeout(() => {
-                const nextUrl = buildUrlFromBuilder();
-                if (!nextUrl) return;
-                currentFullUrl = nextUrl;
-                urlBuilder.dataset.fullUrl = nextUrl;
-                urlBuilder.title = nextUrl;
-                frame.src = nextUrl;
+                applyUrlUpdate();
             }, 120);
         }
 
@@ -699,12 +721,12 @@
 
             try {
                 if (!isTextAsset(path)) {
-                    return fallback;
+                    return { url: fallback, defaultParams: [] };
                 }
 
                 const res = await fetch(path, { cache: "no-store" });
                 if (!res.ok) {
-                    return fallback;
+                    return { url: fallback, defaultParams: [] };
                 }
 
                 const contentType = res.headers.get("content-type") || "";
@@ -714,13 +736,13 @@
                     && !contentType.includes("javascript")
                     && !contentType.includes("json")
                 ) {
-                    return fallback;
+                    return { url: fallback, defaultParams: [] };
                 }
 
                 const sourceText = await res.text();
                 const defaultUrl = window.extractDefaultUrlFromSource(sourceText);
                 if (!defaultUrl) {
-                    return fallback;
+                    return { url: fallback, defaultParams: [] };
                 }
 
                 const replaced = defaultUrl.replace(/<HOST_IP>/g, baseLocation.hostname);
@@ -734,9 +756,11 @@
                     baseLocation
                 });
 
-                return merged.toString();
+                const defaultParams = Array.from(merged.searchParams.entries());
+
+                return { url: merged.toString(), defaultParams };
             } catch (_) {
-                return fallback;
+                return { url: fallback, defaultParams: [] };
             }
         }
 
@@ -747,6 +771,7 @@
                 baseLocation: window.location
             });
             const token = ++selectionToken;
+            currentDefaultParams = [];
             setCurrentUrl(full);
             baseInfo.textContent = `Selected: ${path}`;
 
@@ -756,9 +781,14 @@
 
             resolveDefaultUrl(path).then((resolved) => {
                 if (token !== selectionToken) return;
-                if (!resolved || resolved === currentFullUrl) return;
-                setCurrentUrl(resolved);
-                frame.src = resolved;
+                if (!resolved || !resolved.url) return;
+                currentDefaultParams = resolved.defaultParams || [];
+                if (resolved.url === currentFullUrl) {
+                    renderUrlBuilder(currentFullUrl);
+                    return;
+                }
+                setCurrentUrl(resolved.url);
+                frame.src = resolved.url;
             });
         }
 
@@ -929,7 +959,7 @@
             if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
                 event.target.blur();
-                scheduleUrlUpdate();
+                applyUrlUpdate();
             }
             if (event.key === "Escape") {
                 event.preventDefault();
