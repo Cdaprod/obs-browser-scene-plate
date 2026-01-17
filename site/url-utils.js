@@ -121,12 +121,32 @@ function mergeBaseParams({ url, baseLocation }) {
     return targetUrl;
 }
 
+function encodeQueryValue(value) {
+    return encodeURIComponent(value ?? "");
+}
+
+function decodeQueryValue(value) {
+    if (value === null || value === undefined) {
+        return "";
+    }
+
+    const normalized = String(value).replace(/\+/g, "%20");
+
+    try {
+        return decodeURIComponent(normalized);
+    } catch (_) {
+        return String(value).replace(/\+/g, " ");
+    }
+}
+
 if (typeof window !== "undefined") {
     window.buildFullUrl = buildFullUrl;
     window.normalizeBaseLocation = normalizeBaseLocation;
     window.applyBaseToUrl = applyBaseToUrl;
     window.extractDefaultUrlFromSource = extractDefaultUrlFromSource;
     window.mergeBaseParams = mergeBaseParams;
+    window.encodeQueryValue = encodeQueryValue;
+    window.decodeQueryValue = decodeQueryValue;
 }
 
 if (typeof module !== "undefined" && module.exports) {
@@ -135,6 +155,8 @@ if (typeof module !== "undefined" && module.exports) {
         normalizeBaseLocation,
         applyBaseToUrl,
         extractDefaultUrlFromSource,
-        mergeBaseParams
+        mergeBaseParams,
+        encodeQueryValue,
+        decodeQueryValue
     };
 }
