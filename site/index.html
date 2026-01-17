@@ -495,10 +495,10 @@
         const openDefault = document.getElementById("openDefault");
         const baseInfo = document.getElementById("baseInfo");
 
-        const encodeQueryValue =
+        const encodeQueryValueSafe =
             window.encodeQueryValue
             || ((value) => encodeURIComponent(value ?? ""));
-        const decodeQueryValue =
+        const decodeQueryValueSafe =
             window.decodeQueryValue
             || ((value) => {
                 if (value === null || value === undefined) {
@@ -647,7 +647,7 @@
                 urlBuilder.appendChild(createUrlSpan("url-key", key));
                 urlBuilder.appendChild(createSeparator("="));
 
-                const valueSpan = createUrlSpan("url-value", decodeQueryValue(value));
+                const valueSpan = createUrlSpan("url-value", decodeQueryValueSafe(value));
                 valueSpan.setAttribute("contenteditable", "true");
                 valueSpan.setAttribute("data-url-value", "true");
                 valueSpan.setAttribute("data-key", key);
@@ -683,7 +683,7 @@
                 .filter((param) => param.key);
 
             const search = params.length
-                ? `?${params.map(param => `${encodeURIComponent(param.key)}=${encodeQueryValue(param.value)}`).join("&")}`
+                ? `?${params.map(param => `${encodeURIComponent(param.key)}=${encodeQueryValueSafe(param.value)}`).join("&")}`
                 : "";
 
             return `${origin}${pathname}${search}${hash}`;
