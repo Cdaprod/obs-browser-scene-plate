@@ -137,6 +137,18 @@ function runTests() {
         "line1\nline2",
         "should decode line breaks"
     );
+
+    assert.strictEqual(
+        decodeQueryValue("a%2Bb"),
+        "a+b",
+        "should preserve encoded plus values"
+    );
+
+    assert.strictEqual(
+        decodeQueryValue("a+b"),
+        "a+b",
+        "should not coerce literal plus into spaces"
+    );
 }
 
 try {
