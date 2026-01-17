@@ -9,7 +9,9 @@ const {
     normalizeBaseLocation,
     applyBaseToUrl,
     extractDefaultUrlFromSource,
-    mergeBaseParams
+    mergeBaseParams,
+    encodeQueryValue,
+    decodeQueryValue
 } = require("../site/url-utils.js");
 
 function runTests() {
@@ -110,6 +112,30 @@ function runTests() {
         appliedBase.toString(),
         "https://example.com/overlays/demo.html?mode=loop",
         "should apply base protocol/host and clear non-matching ports"
+    );
+
+    assert.strictEqual(
+        encodeQueryValue("WORD WORD"),
+        "WORD%20WORD",
+        "should encode spaces as %20"
+    );
+
+    assert.strictEqual(
+        encodeQueryValue("a&b=c"),
+        "a%26b%3Dc",
+        "should encode reserved characters"
+    );
+
+    assert.strictEqual(
+        decodeQueryValue("WORD%20WORD"),
+        "WORD WORD",
+        "should decode encoded text"
+    );
+
+    assert.strictEqual(
+        decodeQueryValue("line1%0Aline2"),
+        "line1\nline2",
+        "should decode line breaks"
     );
 }
 
