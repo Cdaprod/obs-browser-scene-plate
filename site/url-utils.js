@@ -130,12 +130,12 @@ function decodeQueryValue(value) {
         return "";
     }
 
-    const normalized = String(value).replace(/\+/g, "%20");
+    const normalized = String(value);
 
     try {
         return decodeURIComponent(normalized);
     } catch (_) {
-        return String(value).replace(/\+/g, " ");
+        return String(value);
     }
 }
 

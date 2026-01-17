@@ -268,6 +268,76 @@
             cursor: not-allowed;
         }
 
+        .recent-wrap {
+            position: relative;
+        }
+
+        .recent-menu {
+            position: absolute;
+            top: calc(100% + 6px);
+            right: 0;
+            min-width: 240px;
+            max-width: min(360px, 80vw);
+            max-height: 280px;
+            overflow-y: auto;
+            background: rgba(12, 16, 24, 0.98);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 12px;
+            padding: 8px;
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            z-index: 20;
+        }
+
+        .recent-item {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            padding: 8px 10px;
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            background: rgba(0, 0, 0, 0.3);
+            text-decoration: none;
+            color: var(--fg);
+        }
+
+        .recent-item:hover {
+            border-color: rgba(120, 190, 255, 0.35);
+            background: rgba(120, 190, 255, 0.12);
+        }
+
+        .recent-name {
+            font-family: var(--mono);
+            font-size: 11px;
+            color: rgba(220, 235, 255, 0.95);
+        }
+
+        .recent-meta {
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            font-family: var(--mono);
+            font-size: 10px;
+            color: rgba(255, 255, 255, 0.55);
+            flex-wrap: wrap;
+        }
+
+        .recent-url {
+            font-family: var(--mono);
+            font-size: 10px;
+            color: rgba(255, 255, 255, 0.5);
+            word-break: break-all;
+        }
+
+        .recent-empty {
+            font-family: var(--mono);
+            font-size: 11px;
+            color: rgba(255, 255, 255, 0.5);
+            padding: 6px 8px;
+        }
+
         .input {
             font-family: var(--mono);
             font-size: 11px;
@@ -457,6 +527,10 @@
                 <button class="btn" id="openBtn">Open Tab</button>
                 <button class="btn" id="reloadBtn">Reload</button>
                 <button class="btn" id="exportBtn">Export MOV</button>
+                <div class="recent-wrap">
+                    <button class="btn" id="recentBtn" type="button">Recent Exports</button>
+                    <div class="recent-menu hidden" id="recentMenu"></div>
+                </div>
                 <input class="input" id="secondsInput" type="number" min="0" step="0.1" placeholder="auto sec" />
                 <span class="status" id="exportStatus">Idle</span>
                 <a class="btn hidden" id="downloadBtn" download>Download MOV</a>
@@ -490,10 +564,15 @@
         const exportStatus = document.getElementById("exportStatus");
         const downloadBtn = document.getElementById("downloadBtn");
         const toast = document.getElementById("toast");
+        const recentBtn = document.getElementById("recentBtn");
+        const recentMenu = document.getElementById("recentMenu");
 
         const openBrowse = document.getElementById("openBrowse");
         const openDefault = document.getElementById("openDefault");
         const baseInfo = document.getElementById("baseInfo");
+
+        const EXPORT_HISTORY_KEY = "obs-browser-export-history";
+        const EXPORT_HISTORY_LIMIT = 8;
 
         const encodeQueryValueSafe =
             window.encodeQueryValue
@@ -505,11 +584,11 @@
                     return "";
                 }
 
-                const normalized = String(value).replace(/\+/g, "%20");
+                const normalized = String(value);
                 try {
                     return decodeURIComponent(normalized);
                 } catch (_) {
-                    return String(value).replace(/\+/g, " ");
+                    return String(value);
                 }
             });
 
@@ -536,6 +615,92 @@
             toast.textContent = text;
             toast.classList.add("show");
             setTimeout(() => toast.classList.remove("show"), 900);
+        }
+
+        function loadExportHistory() {
+            try {
+                const stored = window.localStorage.getItem(EXPORT_HISTORY_KEY);
+                if (!stored) return [];
+                const parsed = JSON.parse(stored);
+                return Array.isArray(parsed) ? parsed : [];
+            } catch (_) {
+                return [];
+            }
+        }
+
+        function saveExportHistory(entries) {
+            try {
+                window.localStorage.setItem(EXPORT_HISTORY_KEY, JSON.stringify(entries));
+            } catch (_) {
+                // Ignore storage errors (private mode, quota, etc.)
+            }
+        }
+
+        function formatExportTime(timestamp) {
+            if (!timestamp) return "";
+            const date = new Date(timestamp);
+            if (Number.isNaN(date.getTime())) return "";
+            return date.toLocaleString(undefined, {
+                month: "short",
+                day: "numeric",
+                hour: "2-digit",
+                minute: "2-digit"
+            });
+        }
+
+        function renderExportHistory(entries) {
+            recentMenu.innerHTML = "";
+
+            if (!entries.length) {
+                const empty = document.createElement("div");
+                empty.className = "recent-empty";
+                empty.textContent = "No recent exports yet.";
+                recentMenu.appendChild(empty);
+                return;
+            }
+
+            entries.forEach((entry) => {
+                const link = document.createElement("a");
+                link.className = "recent-item";
+                link.href = entry.url;
+                link.target = "_blank";
+                link.rel = "noreferrer";
+
+                const name = document.createElement("div");
+                name.className = "recent-name";
+                name.textContent = entry.name || "export";
+
+                const meta = document.createElement("div");
+                meta.className = "recent-meta";
+
+                const time = document.createElement("span");
+                time.textContent = formatExportTime(entry.createdAt) || "just now";
+                meta.appendChild(time);
+
+                const size = document.createElement("span");
+                size.textContent = "Download MOV";
+                meta.appendChild(size);
+
+                const urlText = document.createElement("div");
+                urlText.className = "recent-url";
+                urlText.textContent = entry.url;
+
+                link.appendChild(name);
+                link.appendChild(meta);
+                link.appendChild(urlText);
+                recentMenu.appendChild(link);
+            });
+        }
+
+        function updateExportHistory(entry) {
+            if (!entry || !entry.url) return;
+            const history = loadExportHistory();
+            const next = [
+                entry,
+                ...history.filter((item) => item.url !== entry.url)
+            ].slice(0, EXPORT_HISTORY_LIMIT);
+            saveExportHistory(next);
+            renderExportHistory(next);
         }
 
         function tagFor(path) {
@@ -665,6 +830,21 @@
             renderUrlBuilder(url);
         }
 
+        function syncUrlFromBuilder({ updateFrame = false } = {}) {
+            const nextUrl = buildUrlFromBuilder();
+            if (!nextUrl) {
+                return currentFullUrl || urlBuilder.dataset.fullUrl || "";
+            }
+
+            currentFullUrl = nextUrl;
+            urlBuilder.dataset.fullUrl = nextUrl;
+            urlBuilder.title = nextUrl;
+            if (updateFrame) {
+                frame.src = nextUrl;
+            }
+            return nextUrl;
+        }
+
         function buildUrlFromBuilder() {
             const origin = urlBuilder.dataset.origin;
             const pathname = urlBuilder.dataset.pathname || "";
@@ -695,12 +875,7 @@
             }
 
             urlUpdateTimer = setTimeout(() => {
-                const nextUrl = buildUrlFromBuilder();
-                if (!nextUrl) return;
-                currentFullUrl = nextUrl;
-                urlBuilder.dataset.fullUrl = nextUrl;
-                urlBuilder.title = nextUrl;
-                frame.src = nextUrl;
+                syncUrlFromBuilder({ updateFrame: true });
             }, 120);
         }
 
@@ -781,7 +956,7 @@
         }
 
         copyBtn.onclick = async () => {
-            const text = currentFullUrl || urlBuilder.dataset.fullUrl || "";
+            const text = syncUrlFromBuilder({ updateFrame: true });
             if (!text || text.startsWith("Select")) return;
 
             try {
@@ -793,7 +968,7 @@
         };
 
         openBtn.onclick = () => {
-            const text = currentFullUrl || urlBuilder.dataset.fullUrl || "";
+            const text = syncUrlFromBuilder({ updateFrame: true });
             if (!text || text.startsWith("Select")) return;
             window.open(text, "_blank");
         };
@@ -824,6 +999,11 @@
                     downloadBtn.download = data.filename;
                 }
                 downloadBtn.classList.remove("hidden");
+                updateExportHistory({
+                    url: downloadUrl,
+                    name: data.filename || inferNameFromPath(activePath),
+                    createdAt: Date.now()
+                });
                 exportBtn.disabled = false;
                 exportBtn.textContent = "Export MOV";
                 showToast("Export ready");
@@ -842,7 +1022,7 @@
         }
 
         exportBtn.onclick = async () => {
-            const text = currentFullUrl || urlBuilder.dataset.fullUrl || "";
+            const text = syncUrlFromBuilder({ updateFrame: true });
             if (!text || text.startsWith("Select")) {
                 showToast("Select a plate first");
                 return;
@@ -930,7 +1110,25 @@
             select(PREFERRED_DEFAULT);
         };
 
+        recentBtn.onclick = (event) => {
+            event.stopPropagation();
+            const history = loadExportHistory();
+            renderExportHistory(history);
+            recentMenu.classList.toggle("hidden");
+        };
+
+        document.addEventListener("click", (event) => {
+            if (recentMenu.classList.contains("hidden")) return;
+            if (event.target.closest(".recent-wrap")) return;
+            recentMenu.classList.add("hidden");
+        });
+
         filterEl.addEventListener("input", render);
+
+        urlBuilder.addEventListener("focusin", (event) => {
+            if (!event.target.matches("[data-url-value]")) return;
+            event.target.dataset.originalValue = event.target.textContent;
+        });
 
         urlBuilder.addEventListener("input", (event) => {
             if (!event.target.matches("[data-url-value]")) return;
@@ -951,7 +1149,11 @@
             }
             if (event.key === "Escape") {
                 event.preventDefault();
+                if (event.target.dataset.originalValue !== undefined) {
+                    event.target.textContent = event.target.dataset.originalValue;
+                }
                 event.target.blur();
+                scheduleUrlUpdate();
             }
         });
 
@@ -980,6 +1182,7 @@
                 .sort((a, b) => a.localeCompare(b));
 
             render();
+            renderExportHistory(loadExportHistory());
             pickPreferred();
         }
 
