@@ -55,7 +55,8 @@ class WallApiTests(TestCase):
         with patch.object(main, "YOUTUBE_API_KEY", ""):
             with patch.object(main, "YOUTUBE_CHANNEL_ID", ""):
                 with patch("app.main.subprocess.check_output", return_value=json.dumps(fallback_payload).encode()):
-                    youtube = asyncio.run(main.fetch_youtube())
+                    with patch("app.main.fetch_youtube_fallback_html", new=AsyncMock(return_value=main._default_youtube("@html"))):
+                        youtube = asyncio.run(main.fetch_youtube())
 
         self.assertEqual(
             youtube,
@@ -80,6 +81,57 @@ class WallApiTests(TestCase):
         with patch.object(main, "YOUTUBE_API_KEY", ""):
             with patch.object(main, "YOUTUBE_CHANNEL_ID", ""):
                 with patch("app.main.subprocess.check_output", side_effect=OSError("missing")):
-                    youtube = asyncio.run(main.fetch_youtube())
+                    with patch(
+                        "app.main.fetch_youtube_fallback_html",
+                        new=AsyncMock(side_effect=main.httpx.HTTPError("fail")),
+                    ):
+                        youtube = asyncio.run(main.fetch_youtube())
 
         self.assertEqual(youtube, last_good)
+
+    def test_parse_compact_count(self) -> None:
+        self.assertEqual(main._parse_compact_count("1.2k"), 1200)
+        self.assertEqual(main._parse_compact_count("3M"), 3_000_000)
+        self.assertEqual(main._parse_compact_count("987"), 987)
+
+    def test_merge_youtube_stats(self) -> None:
+        primary = {
+            "handle": "@primary",
+            "subscribers": 0,
+            "views": 100,
+            "videos": 0,
+            "live": False,
+        }
+        secondary = {
+            "handle": "@secondary",
+            "subscribers": 50,
+            "views": 200,
+            "videos": 10,
+            "live": False,
+        }
+        merged = main._merge_youtube_stats(primary, secondary)
+
+        self.assertEqual(merged["handle"], "@primary")
+        self.assertEqual(merged["subscribers"], 50)
+        self.assertEqual(merged["views"], 100)
+        self.assertEqual(merged["videos"], 10)
+
+    def test_extract_github_counter(self) -> None:
+        html = """
+        <a href="/octo?tab=repositories">
+          <span class="Counter">42</span>
+        </a>
+        <a href="/octo?tab=followers">
+          <span class="Counter">1.2k</span>
+        </a>
+        <a href="/octo?tab=following">
+          <span class="Counter">12</span>
+        </a>
+        <a href="/octo?tab=stars">
+          <span class="Counter">3</span>
+        </a>
+        """
+        self.assertEqual(main._extract_github_counter(html, "octo", "repositories"), 42)
+        self.assertEqual(main._extract_github_counter(html, "octo", "followers"), 1200)
+        self.assertEqual(main._extract_github_counter(html, "octo", "following"), 12)
+        self.assertEqual(main._extract_github_counter(html, "octo", "stars"), 3)
