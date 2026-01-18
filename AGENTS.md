@@ -7,6 +7,7 @@
 - `site/` contains the browser-facing UI and plates/overlays.
 - `render-api/` provides rendering services for exporting MOV assets.
 - `nginx/` serves static assets and proxies render outputs.
+- `render-api` now also exposes `GET /api/renders` for recent render listings (used by the UI).
 
 ## URL Parameters as Interface
 - The primary interface for plates/overlays is the URL itself.

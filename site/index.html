@@ -305,6 +305,10 @@
             background: rgba(0, 0, 0, 0.3);
             text-decoration: none;
             color: var(--fg);
+            cursor: pointer;
+            text-align: left;
+            width: 100%;
+            font-family: inherit;
         }
 
         .recent-item:hover {
@@ -471,6 +475,65 @@
             opacity: 1;
         }
 
+        .modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(6, 8, 12, 0.82);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            z-index: 40;
+        }
+
+        .modal-card {
+            width: min(720px, 92vw);
+            background: rgba(12, 16, 24, 0.98);
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            border-radius: 16px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.55);
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            padding: 16px;
+        }
+
+        .modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+
+        .modal-title {
+            font-family: var(--mono);
+            font-size: 12px;
+            color: rgba(220, 235, 255, 0.95);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .modal-meta {
+            font-family: var(--mono);
+            font-size: 10px;
+            color: rgba(255, 255, 255, 0.55);
+        }
+
+        .modal-video {
+            width: 100%;
+            max-height: 420px;
+            border-radius: 12px;
+            background: #000;
+        }
+
+        .modal-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
         @media (max-width: 720px) {
             header {
                 height: auto;
@@ -601,6 +664,23 @@
 
     <div class="toast" id="toast">Copied</div>
 
+    <div class="modal hidden" id="exportModal" aria-hidden="true">
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="exportModalTitle">
+            <div class="modal-header">
+                <div>
+                    <div class="modal-title" id="exportModalTitle">Export Preview</div>
+                    <div class="modal-meta" id="exportModalMeta"></div>
+                </div>
+                <button class="btn" id="exportModalClose" type="button">Close</button>
+            </div>
+            <video class="modal-video" id="exportModalVideo" controls playsinline></video>
+            <div class="modal-actions">
+                <a class="btn" id="exportModalDownload" download>Download MOV</a>
+                <button class="btn" id="exportModalOpen" type="button">Open in New Tab</button>
+            </div>
+        </div>
+    </div>
+
     <script src="url-utils.js"></script>
     <script>
         const TREE_URL = "/tree.json";
@@ -623,6 +703,13 @@
         const recentBtn = document.getElementById("recentBtn");
         const recentMenu = document.getElementById("recentMenu");
         const filesToggle = document.getElementById("filesToggle");
+        const exportModal = document.getElementById("exportModal");
+        const exportModalTitle = document.getElementById("exportModalTitle");
+        const exportModalMeta = document.getElementById("exportModalMeta");
+        const exportModalVideo = document.getElementById("exportModalVideo");
+        const exportModalDownload = document.getElementById("exportModalDownload");
+        const exportModalOpen = document.getElementById("exportModalOpen");
+        const exportModalClose = document.getElementById("exportModalClose");
 
         const openBrowse = document.getElementById("openBrowse");
         const openDefault = document.getElementById("openDefault");
@@ -740,6 +827,18 @@
             });
         }
 
+        function formatBytes(bytes) {
+            if (!Number.isFinite(bytes) || bytes <= 0) return "";
+            const units = ["B", "KB", "MB", "GB"];
+            let index = 0;
+            let value = bytes;
+            while (value >= 1024 && index < units.length - 1) {
+                value /= 1024;
+                index += 1;
+            }
+            return `${value.toFixed(value >= 10 || index === 0 ? 0 : 1)} ${units[index]}`;
+        }
+
         function renderExportHistory(entries) {
             recentMenu.innerHTML = "";
 
@@ -752,11 +851,15 @@
             }
 
             entries.forEach((entry) => {
-                const link = document.createElement("a");
+                const link = document.createElement("button");
+                link.type = "button";
                 link.className = "recent-item";
-                link.href = entry.url;
-                link.target = "_blank";
-                link.rel = "noreferrer";
+                link.dataset.url = entry.url;
+                link.dataset.name = entry.name || "export";
+                link.dataset.createdAt = entry.createdAt ? String(entry.createdAt) : "";
+                link.dataset.sizeBytes = Number.isFinite(entry.sizeBytes)
+                    ? String(entry.sizeBytes)
+                    : "";
 
                 const name = document.createElement("div");
                 name.className = "recent-name";
@@ -770,7 +873,7 @@
                 meta.appendChild(time);
 
                 const size = document.createElement("span");
-                size.textContent = "Download MOV";
+                size.textContent = formatBytes(entry.sizeBytes) || "Download MOV";
                 meta.appendChild(size);
 
                 const urlText = document.createElement("div");
@@ -793,6 +896,58 @@
             ].slice(0, EXPORT_HISTORY_LIMIT);
             saveExportHistory(next);
             renderExportHistory(next);
+        }
+
+        async function fetchRecentExports() {
+            const url = `${renderApiBase}/api/renders?limit=${EXPORT_HISTORY_LIMIT}`;
+            try {
+                const res = await fetch(url, { cache: "no-store" });
+                const data = await res.json();
+                if (!res.ok || !data.ok) {
+                    throw new Error(data.error || "recent_failed");
+                }
+                const entries = (data.renders || []).map((item) => {
+                    const downloadUrl = buildRenderDownloadUrlSafe({
+                        downloadBase,
+                        downloadPath: item.download_url,
+                        filename: item.filename
+                    });
+                    return {
+                        url: downloadUrl,
+                        name: item.filename || "export",
+                        createdAt: item.updated_at ? Date.parse(item.updated_at) : Date.now(),
+                        sizeBytes: item.size_bytes ?? null
+                    };
+                });
+                const sorted = entries.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+                saveExportHistory(sorted);
+                return sorted;
+            } catch (err) {
+                console.warn("Recent exports unavailable, using cached history.", err);
+                return loadExportHistory();
+            }
+        }
+
+        function openExportModal(entry) {
+            if (!entry || !entry.url) return;
+            exportModalTitle.textContent = entry.name || "Export Preview";
+            const timeLabel = formatExportTime(entry.createdAt);
+            const sizeLabel = formatBytes(entry.sizeBytes);
+            exportModalMeta.textContent = [timeLabel, sizeLabel].filter(Boolean).join(" • ");
+            exportModalVideo.src = entry.url;
+            exportModalDownload.href = entry.url;
+            exportModalDownload.download = entry.name || "";
+            exportModalOpen.onclick = () => window.open(entry.url, "_blank");
+            exportModal.classList.remove("hidden");
+            exportModal.setAttribute("aria-hidden", "false");
+        }
+
+        function closeExportModal() {
+            exportModal.classList.add("hidden");
+            exportModal.setAttribute("aria-hidden", "true");
+            exportModalVideo.pause();
+            exportModalVideo.removeAttribute("src");
+            exportModalVideo.load();
         }
 
         function tagFor(path) {
@@ -1208,9 +1363,10 @@
 
         recentBtn.onclick = (event) => {
             event.stopPropagation();
-            const history = loadExportHistory();
-            renderExportHistory(history);
-            recentMenu.classList.toggle("hidden");
+            fetchRecentExports().then((history) => {
+                renderExportHistory(history);
+                recentMenu.classList.toggle("hidden");
+            });
         };
 
         if (filesToggle) {
@@ -1230,6 +1386,32 @@
             if (recentMenu.classList.contains("hidden")) return;
             if (event.target.closest(".recent-wrap")) return;
             recentMenu.classList.add("hidden");
+        });
+
+        recentMenu.addEventListener("click", (event) => {
+            const item = event.target.closest(".recent-item");
+            if (!item) return;
+            const entry = {
+                url: item.dataset.url,
+                name: item.dataset.name,
+                createdAt: item.dataset.createdAt ? Number(item.dataset.createdAt) : null,
+                sizeBytes: item.dataset.sizeBytes ? Number(item.dataset.sizeBytes) : null
+            };
+            openExportModal(entry);
+            recentMenu.classList.add("hidden");
+        });
+
+        exportModalClose.addEventListener("click", closeExportModal);
+        exportModal.addEventListener("click", (event) => {
+            if (event.target === exportModal) {
+                closeExportModal();
+            }
+        });
+
+        document.addEventListener("keydown", (event) => {
+            if (event.key === "Escape" && !exportModal.classList.contains("hidden")) {
+                closeExportModal();
+            }
         });
 
         filterEl.addEventListener("input", render);
@@ -1291,7 +1473,7 @@
                 .sort((a, b) => a.localeCompare(b));
 
             render();
-            renderExportHistory(loadExportHistory());
+            fetchRecentExports().then(renderExportHistory);
             pickPreferred();
         }
 
