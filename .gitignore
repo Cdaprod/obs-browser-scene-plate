@@ -1,3 +1,5 @@
 # Keep renders directory, ignore rendered files
 renders/*
 !renders/.gitkeep
+.env
+wall-api/.env
