@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>centered-text-segmented-typewriter</title>
+
+<style>
+:root{
+  /* Layout */
+  --maxw: min(88vw, 1100px);
+  --pad: 28px;
+
+  /* Type — neutral + cinematic readable */
+  --size: clamp(22px, 2.8vw, 46px);
+  --lh: 1.32;
+  --weight: 520;
+  --letter: 0.035em;
+
+  /* Color + depth */
+  --fg: rgba(255,255,255,0.93);
+  --shadow: rgba(0,0,0,0.68);
+
+  /* Fade anim */
+  --in-ms: 420;
+  --out-ms: 360;
+  --rise: 6px;
+
+  /* Typewriter */
+  --caret-w: 10px;
+  --caret-h: 1.05em;
+  --caret-alpha: 0.92;
+  --caret-glow: 0.14;
+
+  /* Soft readability plate */
+  --spot-alpha: 0.20;  /* 0..0.35 */
+  --spot-blur: 44px;
+
+  /* Optional subtle “film grain” feel via text-shadow jitter (very mild) */
+  --micro: 0.18; /* 0..0.6 */
+}
+
+/* Transparent canvas */
+html, body{
+  height:100%;
+  margin:0;
+  background: transparent !important;
+  overflow:hidden;
+}
+
+#stage{
+  position:absolute;
+  inset:0;
+  display:grid;
+  place-items:center;
+  pointer-events:none;
+}
+
+/* Very soft spotlight for legibility (still transparent overall) */
+#spot{
+  position:absolute;
+  width: min(86vw, 920px);
+  height: min(42vh, 460px);
+  border-radius: 999px;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(0,0,0,var(--spot-alpha)) 0%,
+    rgba(0,0,0,calc(var(--spot-alpha) * 0.6)) 40%,
+    rgba(0,0,0,0.0) 72%
+  );
+  filter: blur(var(--spot-blur));
+  opacity:0;
+  transition: opacity calc(var(--in-ms)*1ms) ease;
+  will-change: opacity;
+}
+
+#wrap{
+  width: var(--maxw);
+  padding: var(--pad);
+  text-align:center;
+
+  opacity:0;
+  transform: translate3d(0, var(--rise), 0);
+  transition:
+    opacity calc(var(--in-ms)*1ms) ease,
+    transform calc(var(--in-ms)*1ms) ease;
+  will-change: opacity, transform;
+}
+
+/* The text itself */
+#text{
+  font-family:
+    Inter,
+    system-ui,
+    -apple-system,
+    Segoe UI,
+    Roboto,
+    Helvetica,
+    Arial,
+    sans-serif;
+
+  font-size: var(--size);
+  line-height: var(--lh);
+  font-weight: var(--weight);
+  letter-spacing: var(--letter);
+  color: var(--fg);
+
+  text-shadow:
+    0 10px 26px var(--shadow);
+
+  white-space: pre-wrap;     /* allow \n if passed */
+  word-break: break-word;
+  overflow-wrap: anywhere;
+
+  /* prevent layout shift when caret appears */
+  display: inline-block;
+  max-width: 100%;
+}
+
+/* Caret (typewriter cursor) */
+#caret{
+  display:inline-block;
+  width: var(--caret-w);
+  height: var(--caret-h);
+  vertical-align: -0.12em;
+  margin-left: 0.12em;
+  border-radius: 2px;
+  background: rgba(255,255,255,var(--caret-alpha));
+  box-shadow:
+    0 0 14px rgba(255,255,255,var(--caret-glow)),
+    0 10px 26px rgba(0,0,0,0.55);
+  opacity:0;
+  transform: translate3d(0,0,0);
+}
+
+/* Caret blink */
+body.typing #caret{
+  opacity: 1;
+  animation: blink 860ms steps(2,end) infinite;
+}
+@keyframes blink{
+  0%, 48%{ opacity: 1; }
+  49%, 100%{ opacity: 0; }
+}
+
+/* Visible */
+body.on #wrap{
+  opacity:1;
+  transform: translate3d(0,0,0);
+}
+body.on #spot{ opacity:1; }
+
+/* Fade out */
+body.off #wrap{
+  opacity:0;
+  transform: translate3d(0, var(--rise), 0);
+  transition:
+    opacity calc(var(--out-ms)*1ms) ease,
+    transform calc(var(--out-ms)*1ms) ease;
+}
+body.off #spot{
+  opacity:0;
+  transition: opacity calc(var(--out-ms)*1ms) ease;
+}
+
+/* Tiny “analog” micro jitter on the text while typing (optional) */
+body.micro #text{
+  animation: micro 120ms steps(2,end) infinite;
+}
+@keyframes micro{
+  0%{ text-shadow: 0 10px 26px var(--shadow); }
+  50%{ text-shadow: calc(var(--micro) * 1px) 10px 26px var(--shadow); }
+  100%{ text-shadow: 0 10px 26px var(--shadow); }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce){
+  *{ transition:none !important; animation:none !important; }
+}
+</style>
+</head>
+
+<body>
+  <div id="stage">
+    <div id="spot"></div>
+    <div id="wrap">
+      <span id="text"></span><span id="caret"></span>
+    </div>
+  </div>
+
+<script>
+/**
+ * centered_text_segmented_typewriter.html
+ *
+ * Centered segmented text overlay with TYPEWRITER reveal per sentence.
+ * Designed for OBS Browser Source (transparent).
+ *
+ * Default URL (full params):
+ *  http://<HOST_IP>:8789/overlays/centered_text_segmented_typewriter.html
+ *    ?s1=THIS%20VIDEO%20CONTAINS%20SENSITIVE%20MATERIAL.
+ *    &s2=THE%20FOLLOWING%20CONTENT%20MAY%20BE%20DISTURBING.
+ *    &s3=VIEWER%20DISCRETION%20IS%20ADVISED.
+ *    &in=420&out=360&hold=2600&gap=320&start=0
+ *    &cps=22&pause=650&jitter=0&micro=0&mode=once&spot=0.20
+ *
+ * Segment params:
+ *   s1=...&s2=...&s3=...   (any s<number> collected + sorted)
+ *
+ * Timing:
+ *   in=420        fade in ms (container/spot)
+ *   out=360       fade out ms
+ *   hold=2600     extra hold AFTER typing completes (ms)
+ *   gap=320       gap between sentences (ms)
+ *   start=0       delay before first sentence (ms)
+ *
+ * Typewriter:
+ *   cps=22        characters-per-second (global)
+ *   pause=650     pause after typing finishes before hold starts (ms)
+ *   chunk=1..6    characters per tick (default auto based on cps)
+ *
+ * Optional per-sentence overrides:
+ *   cps1=18&cps2=26&cps3=20
+ *   hold1=3200&hold2=2600&hold3=4000
+ *   pause1=800&pause2=500&pause3=900
+ *
+ * Look:
+ *   spot=0..0.35  spotlight alpha
+ *   micro=1       subtle typing jitter vibe
+ *   jitter=1      random tiny position jitter while typing (super subtle)
+ *
+ * Mode:
+ *   mode=once|loop
+ */
+
+const qs = new URLSearchParams(location.search);
+
+const IN    = clampInt(parseInt(qs.get("in")   || "420", 10), 0, 60000);
+const OUT   = clampInt(parseInt(qs.get("out")  || "360", 10), 0, 60000);
+const HOLD  = clampInt(parseInt(qs.get("hold") || "2600",10), 0, 600000);
+const GAP   = clampInt(parseInt(qs.get("gap")  || "320", 10), 0, 60000);
+const START = clampInt(parseInt(qs.get("start")|| "0",   10), 0, 600000);
+
+const MODE  = (qs.get("mode") || "once").toLowerCase();
+
+/* Typewriter tuning */
+const CPS   = clampFloat(parseFloat(qs.get("cps") || "22"), 1, 120);
+const PAUSE = clampInt(parseInt(qs.get("pause") || "650", 10), 0, 60000);
+const CHUNK = clampInt(parseInt(qs.get("chunk") || "0", 10), 0, 12); // 0 => auto
+
+/* Look tuning */
+const spot  = clampFloat(parseFloat(qs.get("spot") || "0.20"), 0, 0.35);
+document.documentElement.style.setProperty("--spot-alpha", String(spot));
+
+const micro = (qs.get("micro") || "0") === "1";
+if (micro) document.body.classList.add("micro");
+
+const jitter = (qs.get("jitter") || "0") === "1";
+
+document.documentElement.style.setProperty("--in-ms", String(IN));
+document.documentElement.style.setProperty("--out-ms", String(OUT));
+
+const textEl  = document.getElementById("text");
+const wrapEl  = document.getElementById("wrap");
+
+/* Collect s1, s2, s3... */
+const segments = collectNumbered(qs, "s")
+  .map(s => decodeSafe(s).trim())
+  .filter(Boolean);
+
+if (!segments.length){
+  segments.push(
+    "THIS VIDEO CONTAINS SENSITIVE MATERIAL.",
+    "THE FOLLOWING CONTENT MAY BE DISTURBING.",
+    "VIEWER DISCRETION IS ADVISED."
+  );
+}
+
+/* Per-sentence overrides (optional) */
+const cpsOverrides   = collectNumbered(qs, "cps").map(v => clampFloat(parseFloat(v), 1, 120));
+const holdOverrides  = collectNumbered(qs, "hold").map(v => clampInt(parseInt(v,10), 0, 600000));
+const pauseOverrides = collectNumbered(qs, "pause").map(v => clampInt(parseInt(v,10), 0, 60000));
+
+let idx = 0;
+let activeTimer = null;
+
+/* Basic fade helpers */
+function show(){
+  document.body.classList.add("on");
+  document.body.classList.remove("off");
+}
+function hide(){
+  document.body.classList.remove("on");
+  document.body.classList.add("off");
+}
+
+/* Utility to cancel timers */
+function clearTimer(){
+  if (activeTimer) clearTimeout(activeTimer);
+  activeTimer = null;
+}
+
+/* Typewriter engine */
+function typeSentence(fullText, cps, onDone){
+  // Reset output
+  textEl.textContent = "";
+  document.body.classList.add("typing");
+
+  // Optional very subtle jitter while typing
+  let jitterOn = false;
+  if (jitter){
+    jitterOn = true;
+    wrapEl.style.willChange = "transform";
+  }
+
+  const total = fullText.length;
+  if (total === 0){
+    document.body.classList.remove("typing");
+    if (jitterOn) wrapEl.style.transform = "translate3d(0,0,0)";
+    onDone();
+    return;
+  }
+
+  // tick interval and chunk sizing
+  const chunk = (CHUNK > 0) ? CHUNK : Math.max(1, Math.round(cps / 18)); // auto: faster cps => bigger chunk
+  const intervalMs = Math.max(16, Math.round(1000 / cps) * chunk);
+
+  let i = 0;
+
+  const tick = () => {
+    // add next chunk
+    const next = fullText.slice(i, i + chunk);
+    textEl.textContent += next;
+    i += chunk;
+
+    // tiny random “handheld” jitter (1-2px max) while typing
+    if (jitterOn){
+      const dx = (Math.random() - 0.5) * 1.6;
+      const dy = (Math.random() - 0.5) * 1.2;
+      wrapEl.style.transform = `translate3d(${dx.toFixed(2)}px, ${dy.toFixed(2)}px, 0)`;
+    }
+
+    if (i >= total){
+      // finish
+      document.body.classList.remove("typing");
+      if (jitterOn){
+        wrapEl.style.transform = "translate3d(0,0,0)";
+        wrapEl.style.willChange = "";
+      }
+      onDone();
+      return;
+    }
+
+    activeTimer = setTimeout(tick, intervalMs);
+  };
+
+  activeTimer = setTimeout(tick, intervalMs);
+}
+
+function sentenceCps(i){
+  const v = cpsOverrides[i];
+  return (typeof v === "number" && isFinite(v)) ? v : CPS;
+}
+function sentenceHold(i){
+  const v = holdOverrides[i];
+  return (typeof v === "number" && isFinite(v)) ? v : HOLD;
+}
+function sentencePause(i){
+  const v = pauseOverrides[i];
+  return (typeof v === "number" && isFinite(v)) ? v : PAUSE;
+}
+
+/* Main playback */
+function play(){
+  clearTimer();
+
+  if (idx >= segments.length){
+    hide();
+    if (MODE === "loop"){
+      idx = 0;
+      activeTimer = setTimeout(play, START || 120);
+    }
+    return;
+  }
+
+  const msg = segments[idx];
+  const cps = sentenceCps(idx);
+  const pauseMs = sentencePause(idx);
+  const holdMs = sentenceHold(idx);
+
+  show();
+
+  // Type the sentence, then pause, then hold, then fade out, then next
+  typeSentence(msg, cps, () => {
+    activeTimer = setTimeout(() => {
+      // finished typing; keep it visible for hold
+      activeTimer = setTimeout(() => {
+        hide();
+        activeTimer = setTimeout(() => {
+          idx++;
+          play();
+        }, OUT + GAP);
+      }, holdMs);
+    }, pauseMs);
+  });
+}
+
+function start(){
+  idx = 0;
+  hide();
+  clearTimer();
+  activeTimer = setTimeout(play, START);
+}
+
+/* Helpers */
+function collectNumbered(params, prefix){
+  const arr = [];
+  for (const [k,v] of params.entries()){
+    const m = k.match(new RegExp("^"+prefix+"(\\d+)$"));
+    if (m) arr.push([parseInt(m[1],10), v]);
+  }
+  arr.sort((a,b)=>a[0]-b[0]);
+  return arr.map(x=>x[1]);
+}
+function clampInt(x,a,b){ x=isFinite(x)?x:a; return Math.max(a,Math.min(b,x)); }
+function clampFloat(x,a,b){ x=isFinite(x)?x:a; return Math.max(a,Math.min(b,x)); }
+function decodeSafe(s){ try{return decodeURIComponent(s);}catch{return s;} }
+
+start();
+addEventListener("pointerdown", () => start());
+</script>
+</body>
+</html>
