@@ -10,6 +10,8 @@
  *     -d '{"url":"http://nginx/plate-default.html","name":"plate","seconds":4,"fps":60,"width":1080,"height":1920}'
  *
  *   curl http://localhost:8791/api/render/<job_id>
+ *
+ *   curl http://localhost:8791/api/renders?limit=8
  */
 const http = require('http');
 const { spawn } = require('child_process');
@@ -52,6 +54,37 @@ function parseOptionalNumber(value) {
   }
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function listRenderFiles({ dir = RENDERS_DIR, limit = 25 } = {}) {
+  try {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    const files = entries
+      .filter((entry) => entry.isFile())
+      .map((entry) => entry.name)
+      .filter((name) => name && !name.startsWith('.'))
+      .filter((name) => name.toLowerCase().endsWith('.mov'))
+      .map((name) => {
+        const filePath = path.join(dir, name);
+        const stats = fs.statSync(filePath);
+        return {
+          filename: name,
+          size_bytes: stats.size,
+          updated_at: stats.mtime.toISOString(),
+          download_url: `/renders/${encodeURIComponent(name)}`,
+          _mtimeMs: stats.mtimeMs
+        };
+      })
+      .sort((a, b) => b._mtimeMs - a._mtimeMs)
+      .slice(0, Number.isFinite(limit) && limit > 0 ? limit : 25)
+      .map(({ _mtimeMs, ...entry }) => entry);
+    return files;
+  } catch (err) {
+    if (err && err.code === 'ENOENT') {
+      return [];
+    }
+    throw err;
+  }
 }
 
 function ensureJobsDir() {
@@ -121,6 +154,17 @@ function startServer() {
 
     if (req.method === 'GET' && parsed.pathname === '/api/health') {
       return json(res, 200, { ok: true });
+    }
+
+    if (req.method === 'GET' && parsed.pathname === '/api/renders') {
+      const limit = parseOptionalNumber(parsed.query.limit);
+      try {
+        const renders = listRenderFiles({ limit });
+        return json(res, 200, { ok: true, renders });
+      } catch (err) {
+        console.error(err);
+        return json(res, 500, { ok: false, error: 'render_list_failed' });
+      }
     }
 
     if (req.method === 'GET' && parsed.pathname.startsWith('/api/render/')) {
@@ -287,5 +331,6 @@ if (require.main === module) {
 module.exports = {
   safeName,
   buildFilename,
+  listRenderFiles,
   startServer
 };
