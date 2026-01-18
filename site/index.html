@@ -120,6 +120,10 @@
             min-height: 0;
         }
 
+        .files-pane .tree {
+            min-height: 0;
+        }
+
         .pane .bar {
             padding: 10px 12px;
             border-bottom: 1px solid var(--border);
@@ -231,7 +235,7 @@
         .previewWrap {
             overflow: hidden;
             display: grid;
-            grid-template-rows: auto auto 1fr;
+            grid-template-rows: auto auto minmax(0, 1fr) auto;
             min-width: 0;
             min-height: 0;
         }
@@ -493,6 +497,55 @@
                 white-space: normal;
             }
         }
+
+        @media (max-width: 720px) and (orientation: portrait) {
+            .wrap {
+                position: relative;
+                grid-template-columns: 1fr;
+                grid-template-rows: 1fr;
+            }
+
+            .files-pane {
+                position: absolute;
+                inset: 0 auto 0 0;
+                width: min(300px, 78%);
+                height: 100%;
+                z-index: 6;
+                box-shadow: 6px 0 16px rgba(0, 0, 0, 0.35);
+            }
+
+            .files-pane .bar {
+                flex-wrap: wrap;
+            }
+
+            .files-pane .bar input {
+                flex-basis: 100%;
+            }
+
+            .files-toggle::after {
+                content: "▾";
+                margin-left: 6px;
+                font-size: 11px;
+                color: rgba(255, 255, 255, 0.6);
+            }
+
+            body.files-collapsed .files-pane .bar input,
+            body.files-collapsed .files-pane .tree {
+                display: none;
+            }
+
+            body.files-collapsed .files-pane {
+                width: 0;
+                border: none;
+                background: transparent;
+                box-shadow: none;
+                overflow: hidden;
+            }
+
+            body.files-collapsed .files-toggle::after {
+                content: "▸";
+            }
+        }
     </style>
 </head>
 <body>
@@ -502,13 +555,14 @@
             <div class="sub" id="baseInfo">Select an item to preview • Copy URL into OBS Browser Source</div>
         </div>
         <div class="right">
+            <button class="chip files-toggle" id="filesToggle" type="button" aria-expanded="true">Files</button>
             <div class="chip" id="openBrowse">/browse/</div>
             <div class="chip" id="openDefault">Open Default Plate</div>
         </div>
     </header>
 
     <div class="wrap">
-        <section class="pane">
+        <section class="pane files-pane">
             <div class="bar">
                 <div class="label">Files</div>
                 <input id="filter" placeholder="filter (e.g. overlays, glitch, plate-)" />
@@ -566,6 +620,7 @@
         const toast = document.getElementById("toast");
         const recentBtn = document.getElementById("recentBtn");
         const recentMenu = document.getElementById("recentMenu");
+        const filesToggle = document.getElementById("filesToggle");
 
         const openBrowse = document.getElementById("openBrowse");
         const openDefault = document.getElementById("openDefault");
@@ -573,6 +628,7 @@
 
         const EXPORT_HISTORY_KEY = "obs-browser-export-history";
         const EXPORT_HISTORY_LIMIT = 8;
+        const portraitQuery = window.matchMedia("(max-width: 720px) and (orientation: portrait)");
 
         const encodeQueryValueSafe =
             window.encodeQueryValue
@@ -590,6 +646,24 @@
                 } catch (_) {
                     return String(value);
                 }
+            });
+        const buildRenderDownloadUrlSafe =
+            window.buildRenderDownloadUrl
+            || (({ downloadBase: base, downloadPath, filename }) => {
+                if (!base) {
+                    return downloadPath || "";
+                }
+                const normalizedBase = base.replace(/\/+$/, "");
+                if (filename) {
+                    return `${normalizedBase}/renders/${encodeURIComponent(filename)}`;
+                }
+                if (downloadPath) {
+                    const normalizedPath = downloadPath.startsWith("/")
+                        ? downloadPath
+                        : `/${downloadPath}`;
+                    return `${normalizedBase}${normalizedPath}`;
+                }
+                return normalizedBase;
             });
 
         // ---------------------------------------------------------------------
@@ -615,6 +689,22 @@
             toast.textContent = text;
             toast.classList.add("show");
             setTimeout(() => toast.classList.remove("show"), 900);
+        }
+
+        function setFilesCollapsed(collapsed) {
+            const nextState = Boolean(collapsed);
+            document.body.classList.toggle("files-collapsed", nextState);
+            if (filesToggle) {
+                filesToggle.setAttribute("aria-expanded", String(!nextState));
+            }
+        }
+
+        function syncFilesCollapseFromViewport() {
+            if (portraitQuery.matches) {
+                setFilesCollapsed(true);
+            } else {
+                setFilesCollapsed(false);
+            }
         }
 
         function loadExportHistory() {
@@ -993,7 +1083,11 @@
             setExportStatus(data.state || "rendering");
 
             if (data.state === "ready" && data.download_url) {
-                const downloadUrl = `${downloadBase}${data.download_url}`;
+                const downloadUrl = buildRenderDownloadUrlSafe({
+                    downloadBase,
+                    downloadPath: data.download_url,
+                    filename: data.filename
+                });
                 downloadBtn.href = downloadUrl;
                 if (data.filename) {
                     downloadBtn.download = data.filename;
@@ -1022,7 +1116,7 @@
         }
 
         exportBtn.onclick = async () => {
-            const text = syncUrlFromBuilder({ updateFrame: true });
+            const text = syncUrlFromBuilder({ updateFrame: true }) || frame.src;
             if (!text || text.startsWith("Select")) {
                 showToast("Select a plate first");
                 return;
@@ -1116,6 +1210,19 @@
             renderExportHistory(history);
             recentMenu.classList.toggle("hidden");
         };
+
+        if (filesToggle) {
+            filesToggle.addEventListener("click", () => {
+                if (!portraitQuery.matches) {
+                    return;
+                }
+                const isCollapsed = document.body.classList.contains("files-collapsed");
+                setFilesCollapsed(!isCollapsed);
+            });
+        }
+
+        portraitQuery.addEventListener("change", syncFilesCollapseFromViewport);
+        syncFilesCollapseFromViewport();
 
         document.addEventListener("click", (event) => {
             if (recentMenu.classList.contains("hidden")) return;
