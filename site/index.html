@@ -135,11 +135,21 @@
             box-sizing: border-box;
         }
 
-        .pane .bar .label {
+        .pane .bar .label,
+        .pane .bar .files-toggle {
             font-size: 12px;
             font-weight: 800;
             color: var(--fg);
             white-space: nowrap;
+        }
+
+        .pane .bar .files-toggle {
+            background: none;
+            border: none;
+            padding: 0;
+            margin: 0;
+            font-family: inherit;
+            cursor: pointer;
         }
 
         .pane .bar input {
@@ -511,6 +521,30 @@
             .files-pane .bar input {
                 flex-basis: 100%;
             }
+
+            .files-pane .files-toggle::after {
+                content: "▾";
+                margin-left: 6px;
+                font-size: 11px;
+                color: rgba(255, 255, 255, 0.6);
+            }
+
+            body.files-collapsed .wrap {
+                grid-template-columns: 52px 1fr;
+            }
+
+            body.files-collapsed .files-pane .bar {
+                justify-content: center;
+            }
+
+            body.files-collapsed .files-pane .bar input,
+            body.files-collapsed .files-pane .tree {
+                display: none;
+            }
+
+            body.files-collapsed .files-pane .files-toggle::after {
+                content: "▸";
+            }
         }
     </style>
 </head>
@@ -529,7 +563,7 @@
     <div class="wrap">
         <section class="pane files-pane">
             <div class="bar">
-                <div class="label">Files</div>
+                <button class="files-toggle" id="filesToggle" type="button" aria-expanded="true">Files</button>
                 <input id="filter" placeholder="filter (e.g. overlays, glitch, plate-)" />
             </div>
             <div class="tree" id="tree"></div>
@@ -585,6 +619,7 @@
         const toast = document.getElementById("toast");
         const recentBtn = document.getElementById("recentBtn");
         const recentMenu = document.getElementById("recentMenu");
+        const filesToggle = document.getElementById("filesToggle");
 
         const openBrowse = document.getElementById("openBrowse");
         const openDefault = document.getElementById("openDefault");
@@ -592,6 +627,7 @@
 
         const EXPORT_HISTORY_KEY = "obs-browser-export-history";
         const EXPORT_HISTORY_LIMIT = 8;
+        const portraitQuery = window.matchMedia("(max-width: 720px) and (orientation: portrait)");
 
         const encodeQueryValueSafe =
             window.encodeQueryValue
@@ -609,6 +645,24 @@
                 } catch (_) {
                     return String(value);
                 }
+            });
+        const buildRenderDownloadUrlSafe =
+            window.buildRenderDownloadUrl
+            || (({ downloadBase: base, downloadPath, filename }) => {
+                if (!base) {
+                    return downloadPath || "";
+                }
+                const normalizedBase = base.replace(/\/+$/, "");
+                if (filename) {
+                    return `${normalizedBase}/renders/${encodeURIComponent(filename)}`;
+                }
+                if (downloadPath) {
+                    const normalizedPath = downloadPath.startsWith("/")
+                        ? downloadPath
+                        : `/${downloadPath}`;
+                    return `${normalizedBase}${normalizedPath}`;
+                }
+                return normalizedBase;
             });
 
         // ---------------------------------------------------------------------
@@ -634,6 +688,22 @@
             toast.textContent = text;
             toast.classList.add("show");
             setTimeout(() => toast.classList.remove("show"), 900);
+        }
+
+        function setFilesCollapsed(collapsed) {
+            const nextState = Boolean(collapsed);
+            document.body.classList.toggle("files-collapsed", nextState);
+            if (filesToggle) {
+                filesToggle.setAttribute("aria-expanded", String(!nextState));
+            }
+        }
+
+        function syncFilesCollapseFromViewport() {
+            if (portraitQuery.matches) {
+                setFilesCollapsed(true);
+            } else {
+                setFilesCollapsed(false);
+            }
         }
 
         function loadExportHistory() {
@@ -1012,7 +1082,11 @@
             setExportStatus(data.state || "rendering");
 
             if (data.state === "ready" && data.download_url) {
-                const downloadUrl = `${downloadBase}${data.download_url}`;
+                const downloadUrl = buildRenderDownloadUrlSafe({
+                    downloadBase,
+                    downloadPath: data.download_url,
+                    filename: data.filename
+                });
                 downloadBtn.href = downloadUrl;
                 if (data.filename) {
                     downloadBtn.download = data.filename;
@@ -1041,7 +1115,7 @@
         }
 
         exportBtn.onclick = async () => {
-            const text = syncUrlFromBuilder({ updateFrame: true });
+            const text = syncUrlFromBuilder({ updateFrame: true }) || frame.src;
             if (!text || text.startsWith("Select")) {
                 showToast("Select a plate first");
                 return;
@@ -1135,6 +1209,19 @@
             renderExportHistory(history);
             recentMenu.classList.toggle("hidden");
         };
+
+        if (filesToggle) {
+            filesToggle.addEventListener("click", () => {
+                if (!portraitQuery.matches) {
+                    return;
+                }
+                const isCollapsed = document.body.classList.contains("files-collapsed");
+                setFilesCollapsed(!isCollapsed);
+            });
+        }
+
+        portraitQuery.addEventListener("change", syncFilesCollapseFromViewport);
+        syncFilesCollapseFromViewport();
 
         document.addEventListener("click", (event) => {
             if (recentMenu.classList.contains("hidden")) return;

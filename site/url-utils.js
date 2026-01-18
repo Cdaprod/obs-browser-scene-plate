@@ -139,6 +139,33 @@ function decodeQueryValue(value) {
     }
 }
 
+function buildRenderDownloadUrl({ downloadBase, downloadPath, filename }) {
+    if (!downloadBase) {
+        throw new Error("buildRenderDownloadUrl requires a downloadBase");
+    }
+
+    const baseUrl = downloadBase instanceof URL
+        ? new URL(downloadBase.toString())
+        : new URL(downloadBase);
+    const cleanBase = baseUrl.toString().replace(/\/+$/, "/");
+
+    let renderPath = "";
+    if (filename) {
+        renderPath = `/renders/${encodeURIComponent(filename)}`;
+    } else if (downloadPath) {
+        const normalizedPath = String(downloadPath).replace(/^\/+/, "");
+        renderPath = normalizedPath.startsWith("renders/")
+            ? `/${normalizedPath}`
+            : `/renders/${normalizedPath}`;
+    }
+
+    if (!renderPath) {
+        return cleanBase.replace(/\/+$/, "");
+    }
+
+    return new URL(renderPath, cleanBase).toString();
+}
+
 if (typeof window !== "undefined") {
     window.buildFullUrl = buildFullUrl;
     window.normalizeBaseLocation = normalizeBaseLocation;
@@ -147,6 +174,7 @@ if (typeof window !== "undefined") {
     window.mergeBaseParams = mergeBaseParams;
     window.encodeQueryValue = encodeQueryValue;
     window.decodeQueryValue = decodeQueryValue;
+    window.buildRenderDownloadUrl = buildRenderDownloadUrl;
 }
 
 if (typeof module !== "undefined" && module.exports) {
@@ -157,6 +185,7 @@ if (typeof module !== "undefined" && module.exports) {
         extractDefaultUrlFromSource,
         mergeBaseParams,
         encodeQueryValue,
-        decodeQueryValue
+        decodeQueryValue,
+        buildRenderDownloadUrl
     };
 }

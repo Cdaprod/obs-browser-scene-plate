@@ -11,7 +11,8 @@ const {
     extractDefaultUrlFromSource,
     mergeBaseParams,
     encodeQueryValue,
-    decodeQueryValue
+    decodeQueryValue,
+    buildRenderDownloadUrl
 } = require("../site/url-utils.js");
 
 function runTests() {
@@ -148,6 +149,24 @@ function runTests() {
         decodeQueryValue("a+b"),
         "a+b",
         "should not coerce literal plus into spaces"
+    );
+
+    assert.strictEqual(
+        buildRenderDownloadUrl({
+            downloadBase: "http://example.com:8789",
+            filename: "demo.mov"
+        }),
+        "http://example.com:8789/renders/demo.mov",
+        "should build render downloads from filename"
+    );
+
+    assert.strictEqual(
+        buildRenderDownloadUrl({
+            downloadBase: "http://example.com:8789/",
+            downloadPath: "/renders/demo.mov"
+        }),
+        "http://example.com:8789/renders/demo.mov",
+        "should normalize existing render download paths"
     );
 }
 
