@@ -12,6 +12,8 @@
 const { chromium } = require('playwright');
 const { execSync } = require('child_process');
 const fs = require('fs');
+const os = require('os');
+const path = require('path');
 
 const {
   DEFAULT_PAD_SECONDS,
@@ -70,68 +72,66 @@ async function render() {
   }
 
   const querySeconds = inferDurationFromQuery(URL);
-  const FRAME_DIR = '/tmp/frames';
-
-  fs.mkdirSync(FRAME_DIR, { recursive: true });
-
-  const browser = await chromium.launch({
-    args: ['--disable-gpu', '--disable-dev-shm-usage']
-  });
-
-  const context = await browser.newContext({
-    viewport: { width: WIDTH, height: HEIGHT },
-    deviceScaleFactor: 1
-  });
-
-  const page = await context.newPage();
-
-  await page.addInitScript(() => {
-    window.__RENDER_SECONDS_EVENT = null;
-    window.addEventListener('render:duration', (event) => {
-      const seconds = event && event.detail ? Number(event.detail.seconds) : NaN;
-      if (Number.isFinite(seconds) && seconds > 0) {
-        window.__RENDER_SECONDS_EVENT = seconds;
-      }
-    }, { once: true });
-  });
-
-  await page.goto(URL, { waitUntil: 'load' });
-  if (warmupMs > 0) {
-    await page.waitForTimeout(warmupMs);
-  }
-
-  const pageSeconds = await readDurationFromPage(page);
-  const SECONDS = resolveRenderSeconds({
-    explicitSeconds,
-    pageSeconds,
-    querySeconds,
-    padSeconds,
-    defaultSeconds: DEFAULT_SECONDS
-  });
-
-  const FRAMES = Math.max(1, Math.round(FPS * SECONDS));
-
-  console.log('RENDER_STATE:rendering');
-  const frameIntervalMs = 1000 / FPS;
-  const captureStart = Date.now();
-
-  for (let i = 0; i < FRAMES; i++) {
-    const n = String(i).padStart(5, '0');
-    await page.screenshot({
-      path: `${FRAME_DIR}/frame_${n}.png`,
-      omitBackground: true
-    });
-
-    const targetTime = captureStart + (i + 1) * frameIntervalMs;
-    const drift = targetTime - Date.now();
-    if (drift > 0) {
-      await page.waitForTimeout(drift);
-    }
-  }
-
-  await browser.close();
+  const FRAME_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'render-frames-'));
+  let browser;
+  let page;
 
   try {
+    browser = await chromium.launch({
+      args: ['--disable-gpu', '--disable-dev-shm-usage']
+    });
+
+    const context = await browser.newContext({
+      viewport: { width: WIDTH, height: HEIGHT },
+      deviceScaleFactor: 1
+    });
+
+    page = await context.newPage();
+
+    await page.addInitScript(() => {
+      window.__RENDER_SECONDS_EVENT = null;
+      window.addEventListener('render:duration', (event) => {
+        const seconds = event && event.detail ? Number(event.detail.seconds) : NaN;
+        if (Number.isFinite(seconds) && seconds > 0) {
+          window.__RENDER_SECONDS_EVENT = seconds;
+        }
+      }, { once: true });
+    });
+
+    await page.goto(URL, { waitUntil: 'load' });
+    if (warmupMs > 0) {
+      await page.waitForTimeout(warmupMs);
+    }
+
+    const pageSeconds = await readDurationFromPage(page);
+    const SECONDS = resolveRenderSeconds({
+      explicitSeconds,
+      pageSeconds,
+      querySeconds,
+      padSeconds,
+      defaultSeconds: DEFAULT_SECONDS
+    });
+
+    const FRAMES = Math.max(1, Math.round(FPS * SECONDS));
+
+    console.log('RENDER_STATE:rendering');
+    const frameIntervalMs = 1000 / FPS;
+    const captureStart = Date.now();
+
+    for (let i = 0; i < FRAMES; i++) {
+      const n = String(i).padStart(5, '0');
+      await page.screenshot({
+        path: `${FRAME_DIR}/frame_${n}.png`,
+        omitBackground: true
+      });
+
+      const targetTime = captureStart + (i + 1) * frameIntervalMs;
+      const drift = targetTime - Date.now();
+      if (drift > 0) {
+        await page.waitForTimeout(drift);
+      }
+    }
+
     console.log('RENDER_STATE:encoding');
     execSync(
       `ffmpeg -y -framerate ${FPS} ` +
@@ -141,9 +141,24 @@ async function render() {
       { stdio: 'inherit' }
     );
   } catch (err) {
-    console.error('ffmpeg failed to encode frames.');
-    console.error(err);
-    process.exit(3);
+    if (OUT && fs.existsSync(OUT)) {
+      fs.rmSync(OUT, { force: true });
+    }
+    if (err && err.stderr) {
+      console.error(err.stderr.toString());
+    }
+    if (err && err.message && err.message.includes('ffmpeg')) {
+      err.exitCode = 3;
+    }
+    throw err;
+  } finally {
+    if (page) {
+      await page.close().catch(() => {});
+    }
+    if (browser) {
+      await browser.close().catch(() => {});
+    }
+    fs.rmSync(FRAME_DIR, { recursive: true, force: true });
   }
 }
 
@@ -160,7 +175,7 @@ process.on('uncaughtException', (err) => {
 if (require.main === module) {
   render().catch((err) => {
     console.error(err);
-    process.exit(1);
+    process.exit(err.exitCode || 1);
   });
 }
 

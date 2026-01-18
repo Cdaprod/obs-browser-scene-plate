@@ -24,6 +24,14 @@ curl -X POST http://localhost:8791/api/render \
   -d '{"url":"http://nginx/plate-default.html","name":"plate","seconds":4,"fps":60,"width":1080,"height":1920}'
 ```
 
+If you send a `localhost` URL (or a relative path like `/overlays/...`), the API rewrites
+it to the render origin so the container can resolve it. Configure the origin via
+`RENDER_ORIGIN` (defaults to `http://obs_plate`):
+
+```shell
+RENDER_ORIGIN=http://obs_plate docker compose up -d --build render_api
+```
+
 The response includes a job ID and status URL:
 
 ```json

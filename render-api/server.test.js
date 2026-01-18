@@ -5,7 +5,12 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { safeName, buildFilename, listRenderFiles } = require('./server');
+const {
+  safeName,
+  buildFilename,
+  listRenderFiles,
+  normalizeRenderUrl
+} = require('./server');
 
 test('safeName sanitizes unsafe characters and trims length', () => {
   const input = 'Hello/World?* With Spaces!!!';
@@ -70,4 +75,17 @@ test('listRenderFiles returns renders sorted by newest first', () => {
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
+});
+
+test('normalizeRenderUrl rewrites localhost to the render origin', () => {
+  const url = 'http://localhost:8789/overlays/title.html?mode=burst#hash';
+  const result = normalizeRenderUrl(url, { renderOrigin: 'http://obs_plate' });
+  assert.equal(result, 'http://obs_plate/overlays/title.html?mode=burst#hash');
+});
+
+test('normalizeRenderUrl accepts relative paths', () => {
+  const result = normalizeRenderUrl('/overlays/title.html?mode=burst', {
+    renderOrigin: 'http://obs_plate'
+  });
+  assert.equal(result, 'http://obs_plate/overlays/title.html?mode=burst');
 });

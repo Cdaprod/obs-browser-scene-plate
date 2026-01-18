@@ -24,6 +24,7 @@ const PORT = Number(process.env.PORT || 8791);
 const RENDERS_DIR = process.env.RENDERS_DIR || '/renders';
 const JOBS_DIR = path.join(RENDERS_DIR, '.jobs');
 const MAX_BODY_BYTES = 1024 * 1024;
+const DEFAULT_RENDER_ORIGIN = process.env.RENDER_ORIGIN || 'http://obs_plate';
 
 function json(res, code, obj) {
   const body = JSON.stringify(obj);
@@ -54,6 +55,38 @@ function parseOptionalNumber(value) {
   }
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function isLocalhostHost(hostname) {
+  return ['localhost', '127.0.0.1', '0.0.0.0'].includes(hostname);
+}
+
+function normalizeRenderUrl(inputUrl, { renderOrigin = DEFAULT_RENDER_ORIGIN } = {}) {
+  if (!inputUrl) {
+    return null;
+  }
+
+  const trimmed = String(inputUrl).trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(trimmed);
+  } catch (err) {
+    if (trimmed.startsWith('/')) {
+      return new URL(trimmed, renderOrigin).toString();
+    }
+    return null;
+  }
+
+  if (isLocalhostHost(parsed.hostname)) {
+    const relative = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    return new URL(relative, renderOrigin).toString();
+  }
+
+  return parsed.toString();
 }
 
 function listRenderFiles({ dir = RENDERS_DIR, limit = 25 } = {}) {
@@ -196,8 +229,8 @@ function startServer() {
       return json(res, status, { ok: false, error: 'bad_json' });
     }
 
-    const targetUrl = String(body.url || '').trim();
-    if (!/^https?:\/\//.test(targetUrl)) {
+    const targetUrl = normalizeRenderUrl(body.url);
+    if (!targetUrl) {
       return json(res, 400, { ok: false, error: 'missing_or_invalid_url' });
     }
 
@@ -332,5 +365,6 @@ module.exports = {
   safeName,
   buildFilename,
   listRenderFiles,
+  normalizeRenderUrl,
   startServer
 };
