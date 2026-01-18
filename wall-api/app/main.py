@@ -25,7 +25,7 @@ LOGGER = logging.getLogger("wall_api")
 
 GITHUB_USER = os.getenv("GITHUB_USER", "Cdaprod")
 YOUTUBE_CHANNEL_ID = os.getenv("YOUTUBE_CHANNEL_ID", "")
-YOUTUBE_CHANNEL_URL = os.getenv("YOUTUBE_CHANNEL_URL", "")
+YOUTUBE_CHANNEL_URL = os.getenv("YOUTUBE_CHANNEL_URL", "https://youtube.com/@cdaprod")
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 YTDLP_BIN = os.getenv("YTDLP_BIN", "yt-dlp")
