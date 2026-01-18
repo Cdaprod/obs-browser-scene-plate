@@ -53,3 +53,5 @@ python -m unittest discover -s tests
 - If YouTube API keys are omitted, the service falls back to `yt-dlp` for metadata
   extraction. Configure `YOUTUBE_CHANNEL_URL` for the most reliable fallback
   target and `YTDLP_BIN` if the binary is not on the PATH.
+- If GitHub API calls fail (rate limits, network), the service scrapes the public
+  profile HTML to populate repos/followers/following/stars without keys.

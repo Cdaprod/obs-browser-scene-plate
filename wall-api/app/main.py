@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 import time
 from typing import Any, Dict
@@ -57,6 +58,59 @@ def _default_youtube(handle: str) -> Dict[str, Any]:
     }
 
 
+def _parse_compact_count(value: str) -> int:
+    """Parse compact count strings like 1.2k or 3.4M into an integer."""
+    normalized = value.strip().lower().replace(",", "")
+    match = re.search(r"([\d.]+)\s*([kmb])?", normalized)
+    if not match:
+        return 0
+    number = float(match.group(1))
+    suffix = match.group(2)
+    multiplier = {"k": 1_000, "m": 1_000_000, "b": 1_000_000_000}.get(suffix, 1)
+    return int(number * multiplier)
+
+
+def _extract_github_counter(html: str, user: str, tab: str) -> int:
+    """Extract GitHub counters from profile HTML."""
+    pattern = (
+        rf'href="/{re.escape(user)}\?tab={tab}"[^>]*>.*?'
+        r'Counter[^>]*>([^<]+)</'
+    )
+    match = re.search(pattern, html, flags=re.IGNORECASE | re.DOTALL)
+    if not match:
+        return 0
+    return _parse_compact_count(match.group(1))
+
+
+def _extract_youtube_text(html: str, key: str) -> str:
+    """Extract a YouTube text field from the HTML payload."""
+    patterns = [
+        rf'"{key}":\{{"simpleText":"([^"]+)"',
+        rf'"{key}":\{{"runs":\[\{{"text":"([^"]+)"',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, html)
+        if match:
+            return match.group(1)
+    return ""
+
+
+def _extract_youtube_handle(html: str) -> str:
+    """Extract the channel handle from HTML if present."""
+    patterns = [
+        r'"channelHandleText":\{"simpleText":"(@[^"]+)"',
+        r'"canonicalBaseUrl":"(/@[^"]+)"',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, html)
+        if match:
+            value = match.group(1)
+            if value.startswith("/@"):
+                return value[1:]
+            return value
+    return ""
+
+
 def _yt_target_url() -> str:
     """Return the best YouTube URL target for metadata extraction."""
     if YOUTUBE_CHANNEL_URL:
@@ -64,6 +118,15 @@ def _yt_target_url() -> str:
     if YOUTUBE_CHANNEL_ID:
         return f"https://www.youtube.com/channel/{YOUTUBE_CHANNEL_ID}"
     return "https://www.youtube.com/@Cdaprod"
+
+
+def _yt_about_url() -> str:
+    """Return a YouTube About URL for HTML fallback parsing."""
+    if YOUTUBE_CHANNEL_URL:
+        return YOUTUBE_CHANNEL_URL.rstrip("/") + "/about"
+    if YOUTUBE_CHANNEL_ID:
+        return f"https://www.youtube.com/channel/{YOUTUBE_CHANNEL_ID}/about"
+    return "https://www.youtube.com/@Cdaprod/about"
 
 
 async def fetch_github(user: str) -> Dict[str, Any]:
@@ -77,38 +140,62 @@ async def fetch_github(user: str) -> Dict[str, Any]:
         headers["Authorization"] = f"Bearer {GITHUB_TOKEN}"
         headers["X-GitHub-Api-Version"] = "2022-11-28"
 
-    async with httpx.AsyncClient(timeout=10.0, headers=headers) as client:
-        u = await client.get(f"https://api.github.com/users/{user}")
-        u.raise_for_status()
-        udata = u.json()
+    try:
+        async with httpx.AsyncClient(timeout=10.0, headers=headers) as client:
+            u = await client.get(f"https://api.github.com/users/{user}")
+            u.raise_for_status()
+            udata = u.json()
 
-        stars = 0
-        page = 1
-        per_page = 100
-        max_pages = 10
+            stars = 0
+            page = 1
+            per_page = 100
+            max_pages = 10
 
-        while page <= max_pages:
-            r = await client.get(
-                f"https://api.github.com/users/{user}/repos",
-                params={"per_page": per_page, "page": page, "sort": "updated"},
-            )
-            r.raise_for_status()
-            repos = r.json()
-            if not repos:
-                break
-            for repo in repos:
-                stars += int(repo.get("stargazers_count") or 0)
-            if len(repos) < per_page:
-                break
-            page += 1
+            while page <= max_pages:
+                r = await client.get(
+                    f"https://api.github.com/users/{user}/repos",
+                    params={"per_page": per_page, "page": page, "sort": "updated"},
+                )
+                r.raise_for_status()
+                repos = r.json()
+                if not repos:
+                    break
+                for repo in repos:
+                    stars += int(repo.get("stargazers_count") or 0)
+                if len(repos) < per_page:
+                    break
+                page += 1
 
-        return {
-            "handle": f"@{udata.get('login', user)}",
-            "public_repos": int(udata.get("public_repos") or 0),
-            "followers": int(udata.get("followers") or 0),
-            "following": int(udata.get("following") or 0),
-            "stars_estimate": int(stars),
-        }
+            return {
+                "handle": f"@{udata.get('login', user)}",
+                "public_repos": int(udata.get("public_repos") or 0),
+                "followers": int(udata.get("followers") or 0),
+                "following": int(udata.get("following") or 0),
+                "stars_estimate": int(stars),
+            }
+    except (httpx.HTTPError, ValueError) as exc:
+        LOGGER.warning("GitHub API fetch failed, using HTML fallback: %s", exc)
+        return await fetch_github_fallback_html(user)
+
+
+async def fetch_github_fallback_html(user: str) -> Dict[str, Any]:
+    """Fetch GitHub stats by parsing the public profile page."""
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            response = await client.get(f"https://github.com/{user}")
+            response.raise_for_status()
+            html = response.text
+    except httpx.HTTPError as exc:
+        LOGGER.warning("GitHub HTML fallback failed: %s", exc)
+        return _default_github(f"@{user}")
+
+    return {
+        "handle": f"@{user}",
+        "public_repos": _extract_github_counter(html, user, "repositories"),
+        "followers": _extract_github_counter(html, user, "followers"),
+        "following": _extract_github_counter(html, user, "following"),
+        "stars_estimate": _extract_github_counter(html, user, "stars"),
+    }
 
 
 async def fetch_youtube_official() -> Dict[str, Any]:
@@ -174,6 +261,42 @@ def fetch_youtube_fallback_ytdlp() -> Dict[str, Any]:
     }
 
 
+async def fetch_youtube_fallback_html() -> Dict[str, Any]:
+    """Fetch YouTube stats by parsing the channel About page HTML."""
+    try:
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            response = await client.get(_yt_about_url())
+            response.raise_for_status()
+            html = response.text
+    except httpx.HTTPError as exc:
+        LOGGER.warning("YouTube HTML fallback failed: %s", exc)
+        return _default_youtube("@Cdaprod")
+
+    handle = _extract_youtube_handle(html) or "@Cdaprod"
+    subscribers_text = _extract_youtube_text(html, "subscriberCountText")
+    views_text = _extract_youtube_text(html, "viewCountText")
+    videos_text = _extract_youtube_text(html, "videoCountText")
+
+    return {
+        "handle": handle.replace("@@", "@"),
+        "subscribers": _parse_compact_count(subscribers_text),
+        "views": _parse_compact_count(views_text),
+        "videos": _parse_compact_count(videos_text),
+        "live": False,
+    }
+
+
+def _merge_youtube_stats(primary: Dict[str, Any], secondary: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge non-zero YouTube stats from secondary into primary."""
+    merged = dict(primary)
+    for key in ("subscribers", "views", "videos"):
+        if not merged.get(key) and secondary.get(key):
+            merged[key] = secondary[key]
+    if (not merged.get("handle") or merged.get("handle") == "@Cdaprod") and secondary.get("handle"):
+        merged["handle"] = secondary["handle"]
+    return merged
+
+
 async def fetch_youtube() -> Dict[str, Any]:
     """Fetch YouTube stats for the configured channel.
 
@@ -190,10 +313,22 @@ async def fetch_youtube() -> Dict[str, Any]:
                 youtube = await fetch_youtube_official()
             except (httpx.HTTPError, ValueError) as exc:
                 LOGGER.warning("YouTube official fetch failed, falling back: %s", exc)
-                youtube = fetch_youtube_fallback_ytdlp()
-        else:
+            else:
+                _last_good_youtube = youtube
+                return youtube
+
+        youtube = None
+        try:
             youtube = fetch_youtube_fallback_ytdlp()
-    except (subprocess.SubprocessError, json.JSONDecodeError, OSError, ValueError) as exc:
+        except (subprocess.SubprocessError, json.JSONDecodeError, OSError, ValueError) as exc:
+            LOGGER.warning("YouTube yt-dlp fallback failed: %s", exc)
+
+        html_fallback = await fetch_youtube_fallback_html()
+        if youtube:
+            youtube = _merge_youtube_stats(youtube, html_fallback)
+        else:
+            youtube = html_fallback
+    except httpx.HTTPError as exc:
         LOGGER.warning("YouTube fetch failed, using last good data: %s", exc)
         return _last_good_youtube
 
