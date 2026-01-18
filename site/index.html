@@ -274,6 +274,7 @@
 
         .recent-wrap {
             position: relative;
+            max-width: 100%;
         }
 
         .recent-menu {
@@ -282,6 +283,8 @@
             right: 0;
             min-width: 240px;
             max-width: min(360px, 80vw);
+            width: min(360px, calc(100vw - 24px));
+            box-sizing: border-box;
             max-height: 280px;
             overflow-y: auto;
             background: rgba(12, 16, 24, 0.98);
@@ -337,6 +340,13 @@
             font-size: 10px;
             color: rgba(255, 255, 255, 0.5);
             word-break: break-all;
+        }
+
+        @media (max-width: 720px) {
+            .recent-menu {
+                left: 0;
+                right: auto;
+            }
         }
 
         .recent-empty {
