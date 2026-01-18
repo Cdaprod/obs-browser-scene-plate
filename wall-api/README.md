@@ -50,4 +50,6 @@ python -m unittest discover -s tests
 ## Notes
 
 - The service caches responses using `CACHE_TTL_SEC` to reduce rate limiting.
-- Leave YouTube settings blank to return zeros while keeping the UI stable.
+- If YouTube API keys are omitted, the service falls back to `yt-dlp` for metadata
+  extraction. Configure `YOUTUBE_CHANNEL_URL` for the most reliable fallback
+  target and `YTDLP_BIN` if the binary is not on the PATH.

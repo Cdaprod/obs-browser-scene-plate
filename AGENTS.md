@@ -9,6 +9,7 @@
 - `nginx/` serves static assets and proxies render outputs.
 - `render-api` now also exposes `GET /api/renders` for recent render listings (used by the UI).
 - `wall-api/` provides local stats for `plate-wall.html` without exposing API keys to the browser.
+- `wall-api/` supports a yt-dlp fallback for YouTube metadata when API keys are absent; configure `YOUTUBE_CHANNEL_URL` and `YTDLP_BIN` for reliability.
 
 ## URL Parameters as Interface
 - The primary interface for plates/overlays is the URL itself.
