@@ -32,3 +32,14 @@ services:
     volumes:
       - ./renders:/renders:rw
     restart: unless-stopped
+
+  wall_api:
+    build:
+      context: ./wall-api
+      dockerfile: Dockerfile
+    container_name: wall-api
+    ports:
+      - "8795:8795"
+    env_file:
+      - ./wall-api/.env
+    restart: unless-stopped

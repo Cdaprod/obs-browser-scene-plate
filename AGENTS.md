@@ -8,6 +8,7 @@
 - `render-api/` provides rendering services for exporting MOV assets.
 - `nginx/` serves static assets and proxies render outputs.
 - `render-api` now also exposes `GET /api/renders` for recent render listings (used by the UI).
+- `wall-api/` provides local stats for `plate-wall.html` without exposing API keys to the browser.
 
 ## URL Parameters as Interface
 - The primary interface for plates/overlays is the URL itself.
