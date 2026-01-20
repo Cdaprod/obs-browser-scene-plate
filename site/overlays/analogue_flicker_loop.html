@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>analog-flicker-loop</title>
+
+<style>
+:root{
+  /* Overall visibility */
+  --alpha: 0.08;         /* 0..0.25 */
+
+  /* Flicker character */
+  --rate: 1.0;           /* 0.2..3.0 (speed) */
+  --depth: 0.55;         /* 0..1 (how much it flickers) */
+  --strobe: 0.10;        /* 0..0.4 (rare sharp hits) */
+
+  /* Vignette / exposure shaping */
+  --vignette: 0.14;      /* 0..0.35 */
+  --soft: 0.65;          /* 0..1 edge softness */
+
+  /* Optional subtle chroma drift */
+  --chroma: 0.08;        /* 0..0.25 */
+
+  /* Loop length seconds (deterministic) */
+  --loop: 8;
+}
+
+html, body{
+  height:100%;
+  margin:0;
+  background: transparent !important;
+  overflow:hidden;
+}
+
+#wrap{
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+  opacity: var(--alpha);
+  mix-blend-mode: overlay;
+}
+
+#layer{
+  position:absolute;
+  inset:0;
+  background:
+    radial-gradient(ellipse at center,
+      rgba(255,255,255,0.10) 0%,
+      rgba(255,255,255,0.00) 55%,
+      rgba(0,0,0,var(--vignette)) 100%);
+  -webkit-mask-image: radial-gradient(circle at 50% 50%,
+    rgba(0,0,0,1) 0%,
+    rgba(0,0,0,1) calc(60% * var(--soft)),
+    rgba(0,0,0,0) 100%);
+  mask-image: radial-gradient(circle at 50% 50%,
+    rgba(0,0,0,1) 0%,
+    rgba(0,0,0,1) calc(60% * var(--soft)),
+    rgba(0,0,0,0) 100%);
+  will-change: opacity, filter, transform;
+}
+
+#rgb{
+  position:absolute;
+  inset:-2px;
+  background:
+    linear-gradient(90deg,
+      rgba(255,0,80,var(--chroma)) 0%,
+      rgba(0,0,0,0) 40%,
+      rgba(0,160,255,var(--chroma)) 100%);
+  mix-blend-mode: screen;
+  opacity: 0.0;
+  will-change: opacity, transform;
+}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="layer"></div>
+  <div id="rgb"></div>
+</div>
+
+<script>
+/**
+ * analog_flicker_loop.html
+ *
+ * A subtle exposure flicker layer intended to stack with analog_dust_loop.html.
+ *
+ * Default URL (full params):
+ *  http://<HOST_IP>:8789/overlays/analog_flicker_loop.html
+ *    ?alpha=0.08&rate=1.0&depth=0.55&strobe=0.10&vignette=0.14&soft=0.65&chroma=0.08&loop=8
+ *
+ * Params:
+ *  alpha=0..0.25
+ *  rate=0.2..3.0
+ *  depth=0..1
+ *  strobe=0..0.4
+ *  vignette=0..0.35
+ *  soft=0..1
+ *  chroma=0..0.25
+ *  loop=4..30
+ */
+
+const qs = new URLSearchParams(location.search);
+const cfg = {
+  alpha: clampF(getF("alpha", 0.08), 0, 0.25),
+  rate: clampF(getF("rate", 1.0), 0.2, 3.0),
+  depth: clampF(getF("depth", 0.55), 0, 1),
+  strobe: clampF(getF("strobe", 0.10), 0, 0.4),
+  vignette: clampF(getF("vignette", 0.14), 0, 0.35),
+  soft: clampF(getF("soft", 0.65), 0.0, 1.0),
+  chroma: clampF(getF("chroma", 0.08), 0, 0.25),
+  loop: clampF(getF("loop", 8), 4, 30),
+};
+
+const root = document.documentElement.style;
+root.setProperty("--alpha", String(cfg.alpha));
+root.setProperty("--rate", String(cfg.rate));
+root.setProperty("--depth", String(cfg.depth));
+root.setProperty("--strobe", String(cfg.strobe));
+root.setProperty("--vignette", String(cfg.vignette));
+root.setProperty("--soft", String(cfg.soft));
+root.setProperty("--chroma", String(cfg.chroma));
+root.setProperty("--loop", String(cfg.loop));
+
+const layer = document.getElementById("layer");
+const rgb = document.getElementById("rgb");
+
+/* Deterministic pseudo-random */
+function mulberry32(seed){
+  return function(){
+    let t = seed += 0x6D2B79F5;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+const rnd = mulberry32(777);
+
+let t0 = performance.now();
+function tick(now){
+  const elapsed = (now - t0) / 1000;
+  const T = (elapsed * cfg.rate) % cfg.loop;
+  const nT = T / cfg.loop;
+
+  // slow base flicker (sin stack)
+  const s1 = Math.sin(nT * Math.PI * 2);
+  const s2 = Math.sin(nT * Math.PI * 2 * 3.3 + 1.7);
+  const s3 = Math.sin(nT * Math.PI * 2 * 9.2 + 0.4);
+  let base = (s1*0.55 + s2*0.30 + s3*0.15); // -1..1
+
+  // normalize to 0..1
+  base = (base * 0.5 + 0.5);
+
+  // occasional strobe hits (deterministic per “frame bucket”)
+  const bucket = Math.floor(nT * 120) >>> 0;
+  const hitRnd = mulberry32(777 + bucket)();
+  const strobeHit = (hitRnd < (0.02 * cfg.strobe)) ? (0.55 + hitRnd*0.9) : 0;
+
+  // combine
+  const flick = clampF((0.35 + base*0.65) * cfg.depth + strobeHit, 0, 1);
+
+  // apply as opacity + tiny contrast/brightness shift
+  layer.style.opacity = String(0.30 + flick * 0.70);
+  layer.style.filter = `brightness(${1.0 + flick*0.10}) contrast(${1.0 + flick*0.16})`;
+
+  // subtle chroma drift
+  if (cfg.chroma > 0.001){
+    const dx = (Math.sin(nT * Math.PI * 2 * 2.1) * 4);
+    rgb.style.opacity = String(0.15 + flick * 0.30);
+    rgb.style.transform = `translate3d(${dx.toFixed(2)}px, 0, 0)`;
+  }else{
+    rgb.style.opacity = "0";
+  }
+
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+
+function getF(k, d){
+  const v = qs.get(k);
+  if (v === null || v === "") return d;
+  const n = parseFloat(v);
+  return isFinite(n) ? n : d;
+}
+function clampF(x,a,b){ x=isFinite(x)?x:a; return Math.max(a, Math.min(b, x)); }
+</script>
+</body>
+</html>

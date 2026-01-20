@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>analog-static-interference-loop</title>
+
+<style>
+:root{
+  /* Overall visibility */
+  --alpha: 0.14;        /* 0..0.4 */
+
+  /* Static character */
+  --noise: 0.75;        /* 0..1 fine static */
+  --bands: 0.35;        /* 0..1 horizontal RF bands */
+  --flutter: 0.45;      /* 0..1 intensity variation */
+
+  /* Motion */
+  --speed: 1.0;         /* 0.3..3.0 */
+  --drift: 0.6;         /* 0..1 vertical drift */
+
+  /* Tone */
+  --cool: 0.10;         /* 0..0.3 bluish interference */
+
+  /* Loop (seconds, deterministic) */
+  --loop: 7;
+}
+
+html, body{
+  height:100%;
+  margin:0;
+  background: transparent !important;
+  overflow:hidden;
+}
+
+#wrap{
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+}
+
+canvas{
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+  opacity: var(--alpha);
+  mix-blend-mode: screen;
+}
+</style>
+</head>
+
+<body>
+<div id="wrap">
+  <canvas id="c"></canvas>
+</div>
+
+<script>
+/**
+ * analog_static_interference_loop.html
+ *
+ * PURPOSE:
+ *  A constant, stronger static/interference layer to stack with
+ *  analog_dust_loop.html — NOT a glitch burst.
+ *
+ * Default URL:
+ *  http://<HOST_IP>:8789/overlays/analog_static_interference_loop.html
+ *    ?alpha=0.14&noise=0.75&bands=0.35&flutter=0.45
+ *    &speed=1.0&drift=0.6&cool=0.10&loop=7
+ *
+ * Params:
+ *  alpha=0..0.4
+ *  noise=0..1
+ *  bands=0..1
+ *  flutter=0..1
+ *  speed=0.3..3
+ *  drift=0..1
+ *  cool=0..0.3
+ *  loop=4..20
+ */
+
+const qs = new URLSearchParams(location.search);
+const cfg = {
+  alpha: clampF(getF("alpha", 0.14), 0, 0.4),
+  noise: clampF(getF("noise", 0.75), 0, 1),
+  bands: clampF(getF("bands", 0.35), 0, 1),
+  flutter: clampF(getF("flutter", 0.45), 0, 1),
+  speed: clampF(getF("speed", 1.0), 0.3, 3),
+  drift: clampF(getF("drift", 0.6), 0, 1),
+  cool: clampF(getF("cool", 0.10), 0, 0.3),
+  loop: clampF(getF("loop", 7), 4, 20),
+};
+
+document.documentElement.style.setProperty("--alpha", cfg.alpha);
+
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d", { alpha:true });
+
+let W=0,H=0,DPR=1;
+function resize(){
+  DPR = Math.max(1, Math.min(2, devicePixelRatio || 1));
+  W = Math.floor(innerWidth * DPR);
+  H = Math.floor(innerHeight * DPR);
+  canvas.width = W;
+  canvas.height = H;
+}
+addEventListener("resize", resize, { passive:true });
+resize();
+
+/* deterministic RNG */
+function mulberry32(seed){
+  return function(){
+    let t = seed += 0x6D2B79F5;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+let t0 = performance.now();
+
+function frame(now){
+  const elapsed = (now - t0) / 1000;
+  const T = (elapsed * cfg.speed) % cfg.loop;
+  const nT = T / cfg.loop;
+
+  ctx.clearRect(0,0,W,H);
+
+  // --- Base static (fine noise) ---
+  const tile = 200;
+  const seed = Math.floor(nT * 100000) >>> 0;
+  const rnd = mulberry32(seed);
+
+  const img = ctx.createImageData(tile, tile);
+  const d = img.data;
+
+  for (let i=0; i<d.length; i+=4){
+    const v = rnd();
+    const n = v * 255 * cfg.noise;
+
+    d[i]   = n * (1.0 - cfg.cool*0.2);
+    d[i+1] = n;
+    d[i+2] = n * (1.0 + cfg.cool*0.4);
+    d[i+3] = clampI(22 + v*85*cfg.noise, 0, 140);
+  }
+
+  // --- Horizontal RF banding ---
+  if (cfg.bands > 0.001){
+    const bandCount = Math.floor(6 + 18 * cfg.bands);
+    for (let b=0; b<bandCount; b++){
+      const by = Math.floor(rnd() * tile);
+      const bh = Math.floor(2 + rnd()*10);
+      const a  = (0.06 + rnd()*0.22) * cfg.bands;
+
+      for (let y=by; y<Math.min(tile, by+bh); y++){
+        for (let x=0; x<tile; x++){
+          const idx = (y*tile + x) * 4 + 3;
+          d[idx] = clampI(d[idx] + a*200, 0, 180);
+        }
+      }
+    }
+  }
+
+  // draw scaled
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  ctx.imageSmoothingEnabled = true;
+  ctx.putImageData(img, 0, 0);
+  ctx.drawImage(canvas, 0,0,tile,tile, 0,0,W,H);
+  ctx.restore();
+
+  // --- Flutter (global exposure wobble) ---
+  if (cfg.flutter > 0.001){
+    const f = 0.85 + 0.15 * Math.sin(nT * Math.PI*2 * (1.8 + cfg.flutter*3));
+    ctx.fillStyle = `rgba(255,255,255,${(1-f)*cfg.flutter*0.08})`;
+    ctx.fillRect(0,0,W,H);
+  }
+
+  // --- Vertical drift ---
+  if (cfg.drift > 0.001){
+    const dy = Math.sin(nT * Math.PI*2) * cfg.drift * 6 * DPR;
+    ctx.translate(0, dy);
+  }
+
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+/* helpers */
+function getF(k,d){
+  const v = qs.get(k);
+  if (v === null || v === "") return d;
+  const n = parseFloat(v);
+  return isFinite(n) ? n : d;
+}
+function clampF(x,a,b){ return Math.max(a, Math.min(b, x)); }
+function clampI(x,a,b){ return Math.max(a, Math.min(b, x)); }
+</script>
+</body>
+</html>

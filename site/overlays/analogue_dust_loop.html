@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>analog-dust-loop</title>
+
+<style>
+:root{
+  /* Intensity (overall opacity) */
+  --alpha: 0.12;          /* 0..0.35 */
+
+  /* Grain / dust balance */
+  --grain: 0.55;          /* 0..1  (fine luma noise) */
+  --dust: 0.40;           /* 0..1  (small specks) */
+  --scratches: 0.12;      /* 0..1  (very subtle vertical hairs) */
+
+  /* Motion */
+  --speed: 1.00;          /* 0.2..3.0 overall time scale */
+  --drift: 0.55;          /* 0..1 slow drift strength */
+
+  /* Tone */
+  --tint: 0;              /* -1..1  negative=warmer, positive=cooler */
+  --contrast: 1.05;       /* 0.8..1.4 */
+  --soft: 1;              /* 1 = soften specks via blur a bit */
+
+  /* Scanlines (optional) */
+  --scan: 0.10;           /* 0..0.25 */
+  --scanSpeed: 0.70;      /* 0.2..2.5 */
+
+  /* Loop length (seconds) */
+  --loop: 10;
+}
+
+/* Transparent, full-canvas overlay (OBS alpha) */
+html, body{
+  height:100%;
+  margin:0;
+  background: transparent !important;
+  overflow:hidden;
+}
+
+#wrap{
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+}
+
+/* Canvas is our actual alpha overlay */
+canvas{
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+  opacity: var(--alpha);
+  mix-blend-mode: screen; /* reads like “noise on top” without darkening too hard */
+}
+
+/* Optional scanline layer (very subtle) */
+#scan{
+  position:absolute;
+  inset:0;
+  opacity: var(--scan);
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(0,0,0,0.0) 0px,
+    rgba(0,0,0,0.0) 2px,
+    rgba(0,0,0,0.10) 3px,
+    rgba(0,0,0,0.0) 6px
+  );
+  transform: translate3d(0,0,0);
+  will-change: transform;
+  mix-blend-mode: multiply;
+}
+
+/* Optional “soft vignette haze” to make dust sit nicer (still mostly transparent) */
+#haze{
+  position:absolute;
+  inset:0;
+  opacity: calc(var(--alpha) * 0.40);
+  background: radial-gradient(
+    ellipse at center,
+    rgba(255,255,255,0.10) 0%,
+    rgba(255,255,255,0.00) 55%,
+    rgba(0,0,0,0.08) 100%
+  );
+  mix-blend-mode: overlay;
+  pointer-events:none;
+}
+
+/* Respect reduced motion */
+@media (prefers-reduced-motion: reduce){
+  #scan{ display:none; }
+}
+</style>
+</head>
+
+<body>
+  <div id="wrap">
+    <canvas id="c"></canvas>
+    <div id="scan"></div>
+    <div id="haze"></div>
+  </div>
+
+<script>
+/**
+ * analog_dust_loop.html
+ *
+ * Alpha-transparent “constant analog dust” overlay for OBS Browser Source.
+ * Goal: subtle, always-on film/analog noise + tiny dust motes + minimal scratches,
+ * looping forever (no hard 10s “glitch burst”).
+ *
+ * Default URL (full params):
+ *  http://<HOST_IP>:8789/overlays/analog_dust_loop.html
+ *    ?alpha=0.12&grain=0.55&dust=0.40&scratches=0.12
+ *    &speed=1.00&drift=0.55&tint=0&contrast=1.05&soft=1
+ *    &scan=0.10&scanSpeed=0.70&loop=10
+ *
+ * Params:
+ *  alpha=0..0.35
+ *  grain=0..1
+ *  dust=0..1
+ *  scratches=0..1
+ *  speed=0.2..3
+ *  drift=0..1
+ *  tint=-1..1        (- = warmer, + = cooler)
+ *  contrast=0.8..1.4
+ *  soft=1|0          softens dust a bit
+ *  scan=0..0.25
+ *  scanSpeed=0.2..2.5
+ *  loop=4..30        seconds for deterministic loop (noise repeats seamlessly)
+ *
+ * Notes:
+ * - This draws procedurally to a canvas with a SEAMLESS loop (time wraps at loop seconds).
+ * - “Blend mode” is screen/multiply so it reads like an overlay and stays mostly transparent.
+ */
+
+const qs = new URLSearchParams(location.search);
+
+const cfg = {
+  alpha:      clampFloat(getF("alpha", 0.12), 0, 0.35),
+  grain:      clampFloat(getF("grain", 0.55), 0, 1),
+  dust:       clampFloat(getF("dust", 0.40), 0, 1),
+  scratches:  clampFloat(getF("scratches", 0.12), 0, 1),
+  speed:      clampFloat(getF("speed", 1.00), 0.2, 3.0),
+  drift:      clampFloat(getF("drift", 0.55), 0, 1),
+  tint:       clampFloat(getF("tint", 0), -1, 1),
+  contrast:   clampFloat(getF("contrast", 1.05), 0.8, 1.4),
+  soft:       (qs.get("soft") ?? "1") !== "0",
+  scan:       clampFloat(getF("scan", 0.10), 0, 0.25),
+  scanSpeed:  clampFloat(getF("scanSpeed", 0.70), 0.2, 2.5),
+  loop:       clampFloat(getF("loop", 10), 4, 30),
+};
+
+document.documentElement.style.setProperty("--alpha", String(cfg.alpha));
+document.documentElement.style.setProperty("--grain", String(cfg.grain));
+document.documentElement.style.setProperty("--dust", String(cfg.dust));
+document.documentElement.style.setProperty("--scratches", String(cfg.scratches));
+document.documentElement.style.setProperty("--speed", String(cfg.speed));
+document.documentElement.style.setProperty("--drift", String(cfg.drift));
+document.documentElement.style.setProperty("--tint", String(cfg.tint));
+document.documentElement.style.setProperty("--contrast", String(cfg.contrast));
+document.documentElement.style.setProperty("--scan", String(cfg.scan));
+document.documentElement.style.setProperty("--scanSpeed", String(cfg.scanSpeed));
+document.documentElement.style.setProperty("--loop", String(cfg.loop));
+
+const scanEl = document.getElementById("scan");
+if (cfg.scan <= 0.001) scanEl.style.display = "none";
+
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d", { alpha: true });
+
+let W=0,H=0, DPR=1;
+function resize(){
+  DPR = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+  W = Math.floor(innerWidth * DPR);
+  H = Math.floor(innerHeight * DPR);
+  canvas.width = W;
+  canvas.height = H;
+}
+addEventListener("resize", resize, { passive:true });
+resize();
+
+/* Deterministic PRNG for a seamless loop */
+function mulberry32(seed){
+  return function(){
+    let t = seed += 0x6D2B79F5;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/* Dust particles: pre-spawn, then animate with looping offsets */
+const dustCount = Math.floor((W*H) / (160000) * (180 * cfg.dust)); // scales w/ canvas
+const dust = [];
+const dustSeed = 1337;
+const rndDust = mulberry32(dustSeed);
+
+for (let i=0; i<dustCount; i++){
+  dust.push({
+    x: rndDust(),
+    y: rndDust(),
+    r: 0.6 + rndDust()*1.8,
+    a: 0.12 + rndDust()*0.38,
+    tw: 0.4 + rndDust()*1.6,
+    ph: rndDust()*Math.PI*2,
+  });
+}
+
+/* Scratches: few faint vertical hairs */
+const scratchCount = Math.floor(2 + 8 * cfg.scratches);
+const scratches = [];
+const rndScr = mulberry32(424242);
+for (let i=0; i<scratchCount; i++){
+  scratches.push({
+    x: rndScr(),
+    w: 0.6 + rndScr()*1.4,
+    a: 0.03 + rndScr()*0.08,
+    wob: 0.3 + rndScr()*0.9,
+    ph: rndScr()*Math.PI*2,
+  });
+}
+
+/* Main loop */
+let t0 = performance.now();
+function frame(now){
+  const elapsed = (now - t0) / 1000;
+  // wrap time for seamless loop
+  const T = (elapsed * cfg.speed) % cfg.loop;
+  const nT = T / cfg.loop; // 0..1
+
+  // move scanlines slowly (optional)
+  if (scanEl.style.display !== "none"){
+    const scanY = (elapsed * 18 * cfg.scanSpeed) % 12;
+    scanEl.style.transform = `translate3d(0, ${scanY}px, 0)`;
+  }
+
+  // Clear with transparent
+  ctx.clearRect(0,0,W,H);
+
+  // --- Grain (luma noise) ---
+  if (cfg.grain > 0.001){
+    // build a small noise tile then scale it (fast)
+    const tile = 180; // keep small for perf
+    const img = ctx.createImageData(tile, tile);
+    const data = img.data;
+
+    // deterministic seed per frame slice (loop-safe)
+    const seed = (Math.floor(nT * 100000) + 9001) >>> 0;
+    const rnd = mulberry32(seed);
+
+    // tint mapping
+    const warm = clampFloat(-cfg.tint, 0, 1); // warm uses more red
+    const cool = clampFloat(cfg.tint, 0, 1);  // cool uses more blue
+
+    for (let i=0; i<data.length; i+=4){
+      // centered noise
+      let v = (rnd()*2 - 1);
+
+      // contrast curve
+      v = Math.sign(v) * Math.pow(Math.abs(v), 1 / cfg.contrast);
+
+      // scale to 0..255 alpha-ish
+      const lum = 128 + v * 90 * cfg.grain;
+
+      // subtle chroma bias (still reads as grayscale)
+      const r = lum + warm*10;
+      const g = lum;
+      const b = lum + cool*10;
+
+      data[i]   = clampInt(r,0,255);
+      data[i+1] = clampInt(g,0,255);
+      data[i+2] = clampInt(b,0,255);
+
+      // alpha is the “grain visibility”
+      data[i+3] = clampInt(18 + Math.abs(v)*42*cfg.grain, 0, 90);
+    }
+
+    // draw noise tile scaled
+    // use screen blend so it brightens specks instead of muddying blacks
+    ctx.save();
+    ctx.globalCompositeOperation = "screen";
+    // draw to an offscreen canvas to avoid smoothing artifacts on some browsers
+    const off = getOffscreen(tile, tile);
+    off.ctx.putImageData(img, 0, 0);
+
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(off.canvas, 0,0,tile,tile, 0,0,W,H);
+    ctx.restore();
+  }
+
+  // --- Dust motes (small specks, slight drift + twinkle) ---
+  if (cfg.dust > 0.001){
+    ctx.save();
+    ctx.globalCompositeOperation = "screen";
+    ctx.fillStyle = "rgba(255,255,255,1)";
+
+    // drift across loop (wrap cleanly)
+    const driftX = (nT * 0.08 * cfg.drift);
+    const driftY = (nT * 0.10 * cfg.drift);
+
+    for (const p of dust){
+      const x = frac(p.x + driftX) * W;
+      const y = frac(p.y + driftY) * H;
+
+      // twinkle tied to loop time (sin, loop safe)
+      const tw = 0.65 + 0.35*Math.sin(p.ph + (nT * Math.PI*2 * p.tw));
+      const a = (p.a * tw) * cfg.dust;
+
+      if (a < 0.01) continue;
+
+      ctx.globalAlpha = a;
+
+      // soft dust (option)
+      if (cfg.soft){
+        ctx.beginPath();
+        ctx.arc(x,y,p.r*DPR, 0, Math.PI*2);
+        ctx.fill();
+      }else{
+        ctx.fillRect(x,y, 1.2*DPR, 1.2*DPR);
+      }
+    }
+    ctx.restore();
+  }
+
+  // --- Scratches (faint vertical hairs) ---
+  if (cfg.scratches > 0.001){
+    ctx.save();
+    ctx.globalCompositeOperation = "screen";
+    ctx.lineCap = "round";
+
+    const drift = (Math.sin(nT * Math.PI*2) * 0.002 * cfg.drift);
+
+    for (const s of scratches){
+      const x = frac(s.x + drift) * W;
+      const wob = Math.sin(s.ph + nT * Math.PI*2 * s.wob) * (2.0 * DPR);
+
+      ctx.strokeStyle = `rgba(255,255,255,${(s.a * cfg.scratches).toFixed(4)})`;
+      ctx.lineWidth = s.w * DPR;
+      ctx.beginPath();
+      ctx.moveTo(x + wob, 0);
+      ctx.lineTo(x + wob, H);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+/* Offscreen helper (single cached) */
+let _off = null;
+function getOffscreen(w,h){
+  if (_off && _off.w === w && _off.h === h) return _off;
+  const c = document.createElement("canvas");
+  c.width = w; c.height = h;
+  const cctx = c.getContext("2d", { alpha:true });
+  _off = { canvas: c, ctx: cctx, w, h };
+  return _off;
+}
+
+function getF(key, def){
+  const v = qs.get(key);
+  if (v === null || v === "") return def;
+  const n = parseFloat(v);
+  return isFinite(n) ? n : def;
+}
+function clampFloat(x,a,b){ x = isFinite(x)?x:a; return Math.max(a, Math.min(b, x)); }
+function clampInt(x,a,b){ x = isFinite(x)?x:a; return Math.max(a, Math.min(b, x)); }
+function frac(x){ return x - Math.floor(x); }
+</script>
+</body>
+</html>
