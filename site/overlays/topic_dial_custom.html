@@ -353,12 +353,93 @@
     const topicReadout = document.getElementById("topicReadout");
     const meta = document.getElementById("meta");
 
+    const TopicDialLogic = window.TopicDialLogic ?? (() => {
+      const clampLocal = (n, a, b) => Math.max(a, Math.min(b, n));
+
+      function formatTopicDisplayLocal(value){
+        const text = String(value ?? "").trim().replace(/\s+/g, " ");
+        return text.length ? text.toUpperCase() : "—";
+      }
+
+      function splitLabelsStringLocal(value){
+        if (!value) return [];
+        const raw = String(value).trim();
+        if (!raw) return [];
+        const parts = raw.includes("|") ? raw.split("|") : raw.split(",");
+        return parts.map((part) => part.trim()).filter(Boolean);
+      }
+
+      function buildTopicsFromParamsLocal({ params, defaults, maxCount = 24 }){
+        const safeDefaults = Array.isArray(defaults) && defaults.length ? defaults : ["TOPIC"];
+        const nRaw = params?.n;
+        const n = nRaw != null ? clampLocal(parseInt(nRaw, 10) || 0, 1, maxCount) : null;
+
+        let fromLabels = splitLabelsStringLocal(params?.labels);
+
+        const cap = n ?? Math.max(fromLabels.length, safeDefaults.length, 1);
+        const slotOverrides = [];
+        for (let i = 1; i <= cap; i += 1){
+          const override = params?.t ? params.t(i) : null;
+          if (override != null && String(override).trim().length){
+            slotOverrides[i - 1] = String(override).trim();
+          }
+        }
+
+        let topics = fromLabels.length ? [...fromLabels] : [...safeDefaults];
+
+        if (slotOverrides.length){
+          const needLen = Math.max(topics.length, slotOverrides.length);
+          if (topics.length < needLen){
+            for (let i = topics.length; i < needLen; i += 1){
+              topics[i] = safeDefaults[i % safeDefaults.length];
+            }
+          }
+          for (let i = 0; i < slotOverrides.length; i += 1){
+            if (slotOverrides[i] != null && String(slotOverrides[i]).trim().length){
+              topics[i] = slotOverrides[i];
+            }
+          }
+        }
+
+        if (n != null){
+          if (topics.length > n) topics = topics.slice(0, n);
+          if (topics.length < n){
+            for (let i = topics.length; i < n; i += 1){
+              topics.push(safeDefaults[i % safeDefaults.length]);
+            }
+          }
+        }
+
+        topics = topics.map(formatTopicDisplayLocal);
+        return topics.length ? topics : safeDefaults.map(formatTopicDisplayLocal);
+      }
+
+      function parseLandingIndexLocal(value, maxCount){
+        if (value == null) return null;
+        const cleaned = String(value).trim().toLowerCase();
+        if (!cleaned || cleaned === "random" || cleaned === "auto" || cleaned === "off") return null;
+        const num = parseInt(cleaned, 10);
+        if (!Number.isFinite(num) || num <= 0) return null;
+        if (Number.isFinite(maxCount)){
+          return clampLocal(num, 1, maxCount);
+        }
+        return num;
+      }
+
+      return {
+        formatTopicDisplay: formatTopicDisplayLocal,
+        splitLabelsString: splitLabelsStringLocal,
+        buildTopicsFromParams: buildTopicsFromParamsLocal,
+        parseLandingIndex: parseLandingIndexLocal
+      };
+    })();
+
     const {
       formatTopicDisplay,
       splitLabelsString,
       buildTopicsFromParams,
       parseLandingIndex
-    } = window.TopicDialLogic;
+    } = TopicDialLogic;
 
     const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
     const lerp  = (a, b, t) => a + (b - a) * t;
