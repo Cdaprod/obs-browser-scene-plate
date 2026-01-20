@@ -16,6 +16,7 @@
 - The primary interface for plates/overlays is the URL itself.
 - Preserve query parameters and hash fragments when generating or sharing URLs.
 - Avoid dropping existing parameters when composing preview or copy URLs.
+- Overlay source files must include a single-line `Default URL (full params):` entry that matches the file name so the UI can preload query params.
 
 ## UI/UX Expectations
 - Ensure the UI is responsive on mobile and desktop, with no overflow in header, actions, or preview areas.
