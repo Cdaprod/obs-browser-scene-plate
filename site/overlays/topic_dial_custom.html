@@ -476,7 +476,6 @@
       return String(s || "")
         .toUpperCase()
         .replace(/[\s_-]+/g, "")   // ignore spaces/underscore/dashes for matching
-        .replace(/[^\p{L}\p{N}]/gu, "") // drop punctuation for matching
         .trim();
     }
 
