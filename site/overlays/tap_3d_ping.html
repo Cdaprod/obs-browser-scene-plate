@@ -1,0 +1,582 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>tap-3d-ping-glass</title>
+
+<style>
+:root{
+  /* Position */
+  --x: 0.50;          /* 0..1 (viewport) */
+  --y: 0.50;          /* 0..1 (viewport) */
+  --offsetY: 0px;
+
+  /* Size + depth */
+  --r: 66px;          /* base radius */
+  --lift: 12px;
+  --tiltX: 14deg;
+  --tiltY: -18deg;
+
+  /* Accent */
+  --accent: 180,220,255;   /* rgb */
+  --accent2: 120,190,255;
+  --white: 255,255,255;
+
+  /* Timing */
+  --in-ms: 110;
+  --out-ms: 620;
+  --pulse-ms: 620;
+
+  /* Rings */
+  --rings: 3;
+
+  /* Backdrop “glass bloom” (radial blur feel) */
+  --bloom-size: 520px;      /* overall diameter of bloom */
+  --bloom-alpha: 0.22;      /* 0..0.5 */
+  --bloom-soft: 0.75;       /* softness mix */
+  --bloom-tint: 0.10;       /* tint of accent in bloom */
+
+  /* Faux blur via layered gradients + filter (works on transparent OBS) */
+  --bloom-blur: 26px;       /* css blur amount */
+  --bloom-sat: 1.15;        /* saturation */
+  --bloom-bright: 1.04;     /* brightness */
+
+  /* Soft shadow */
+  --shadowA: rgba(0,0,0,0.34);
+  --shadowB: rgba(0,0,0,0.58);
+
+  /* SFX */
+  --sfx: 1;
+  --vol: 0.55;
+  --pitch: 1.00;
+
+  /* Behavior */
+  --mode: burst;      /* burst|loop */
+  --hold: 0;          /* ms hold before fade */
+  --interval: 900;    /* loop interval */
+}
+
+/* Transparent page (OBS alpha) */
+html, body{
+  height:100%;
+  margin:0;
+  background: transparent !important;
+  overflow:hidden;
+}
+#stage{
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+}
+
+/* Anchor at (x,y) */
+#anchor{
+  position:absolute;
+  left: calc(var(--x) * 100vw);
+  top:  calc(var(--y) * 100vh);
+  transform: translate(-50%, -50%) translateY(var(--offsetY));
+  width: 1px;
+  height: 1px;
+}
+
+/* --- Glass bloom (radial blur over the whole effect) ----------------- */
+/* This is NOT true background blur (impossible over transparency),
+   but it reads like “glass diffusion” in OBS because it creates a soft
+   radial haze that the underlying screen content shows through. */
+#bloom{
+  position:absolute;
+  left:50%;
+  top:50%;
+  width: var(--bloom-size);
+  height: var(--bloom-size);
+  transform: translate(-50%,-50%);
+  border-radius: 999px;
+
+  /* layered “diffusion” */
+  background:
+    radial-gradient(circle at 50% 50%,
+      rgba(var(--white), calc(var(--bloom-alpha) * 0.95)) 0%,
+      rgba(var(--white), calc(var(--bloom-alpha) * 0.55)) 12%,
+      rgba(var(--accent), calc(var(--bloom-alpha) * var(--bloom-tint))) 32%,
+      rgba(var(--accent2), calc(var(--bloom-alpha) * 0.10)) 52%,
+      rgba(var(--white), 0.0) 72%),
+    radial-gradient(circle at 32% 28%,
+      rgba(var(--white), calc(var(--bloom-alpha) * 0.55)) 0%,
+      rgba(var(--white), 0.0) 58%),
+    radial-gradient(circle at 70% 68%,
+      rgba(var(--accent2), calc(var(--bloom-alpha) * 0.10)) 0%,
+      rgba(var(--white), 0.0) 55%);
+
+  filter: blur(var(--bloom-blur)) saturate(var(--bloom-sat)) brightness(var(--bloom-bright));
+  opacity: 0;
+  will-change: opacity, transform;
+
+  /* add “glass edge” feel */
+  box-shadow:
+    inset 0 0 0 1px rgba(var(--white), 0.10),
+    0 0 42px rgba(var(--accent2), 0.10);
+
+  mix-blend-mode: screen;
+}
+
+/* --- The 3D puck ----------------------------------------------------- */
+#tap{
+  position:absolute;
+  left:0;
+  top:0;
+  width: calc(var(--r) * 2);
+  height: calc(var(--r) * 2);
+  transform:
+    translate(-50%, -50%)
+    perspective(700px)
+    rotateX(var(--tiltX))
+    rotateY(var(--tiltY))
+    translateZ(0px);
+  transform-style: preserve-3d;
+  opacity:0;
+  filter: drop-shadow(0 18px 22px var(--shadowA)) drop-shadow(0 34px 64px var(--shadowB));
+  will-change: transform, opacity;
+}
+
+#face{
+  position:absolute;
+  inset: 0;
+  border-radius: 999px;
+
+  background:
+    radial-gradient(circle at 28% 26%,
+      rgba(var(--white), 0.92) 0%,
+      rgba(var(--white), 0.22) 18%,
+      rgba(var(--accent), 0.18) 34%,
+      rgba(var(--accent2), 0.10) 58%,
+      rgba(0,0,0,0.00) 72%),
+    radial-gradient(circle at 50% 60%,
+      rgba(0,0,0,0.10) 0%,
+      rgba(0,0,0,0.00) 56%);
+
+  border: 1px solid rgba(var(--white), 0.18);
+  box-shadow:
+    inset 0 0 0 1px rgba(var(--accent), 0.16),
+    inset 0 -16px 40px rgba(0,0,0,0.18),
+    0 0 26px rgba(var(--accent2), 0.18);
+}
+
+/* Polished arc */
+#arc{
+  position:absolute;
+  inset: 10%;
+  border-radius: 999px;
+  background: conic-gradient(
+    from 210deg,
+    rgba(var(--white), 0.00) 0deg,
+    rgba(var(--white), 0.55) 22deg,
+    rgba(var(--white), 0.00) 62deg,
+    rgba(var(--white), 0.00) 360deg
+  );
+  opacity: 0.84;
+  transform: translateZ(8px);
+  filter: blur(0.35px);
+}
+
+/* Press dimple */
+#dimple{
+  position:absolute;
+  inset: 22%;
+  border-radius: 999px;
+  background: radial-gradient(circle at 50% 44%,
+    rgba(0,0,0,0.12) 0%,
+    rgba(0,0,0,0.00) 56%);
+  transform: translateZ(4px);
+  opacity: 0.55;
+}
+
+/* Ripple rings */
+.ring{
+  position:absolute;
+  left: 50%;
+  top: 50%;
+  width: calc(var(--r) * 2);
+  height: calc(var(--r) * 2);
+  border-radius: 999px;
+  transform: translate(-50%, -50%);
+  opacity: 0;
+  border: 2px solid rgba(var(--accent), 0.0);
+  box-shadow: 0 0 24px rgba(var(--accent2), 0.0);
+  will-change: transform, opacity;
+}
+
+/* Spark cross */
+#spark{
+  position:absolute;
+  left:50%;
+  top:50%;
+  width: calc(var(--r) * 0.22);
+  height: calc(var(--r) * 0.22);
+  transform: translate(-50%,-50%) translateZ(14px);
+  opacity: 0;
+}
+#spark:before, #spark:after{
+  content:"";
+  position:absolute;
+  left:50%; top:50%;
+  transform: translate(-50%,-50%);
+  background: rgba(var(--white), 0.92);
+  border-radius: 2px;
+  filter: drop-shadow(0 0 12px rgba(var(--accent2), 0.22));
+}
+#spark:before{ width: 2px; height: 100%; }
+#spark:after{ width: 100%; height: 2px; }
+
+/* Active */
+body.on #tap{ opacity: 1; }
+body.on #bloom{ opacity: 1; }
+
+/* Animations */
+@keyframes popIn{
+  0%{
+    transform:
+      translate(-50%, -50%)
+      perspective(700px)
+      rotateX(var(--tiltX))
+      rotateY(var(--tiltY))
+      translateZ(0px)
+      scale(0.74);
+    opacity: 0;
+  }
+  45%{
+    transform:
+      translate(-50%, -50%)
+      perspective(700px)
+      rotateX(var(--tiltX))
+      rotateY(var(--tiltY))
+      translateZ(calc(var(--lift) * 1px))
+      scale(1.02);
+    opacity: 1;
+  }
+  100%{
+    transform:
+      translate(-50%, -50%)
+      perspective(700px)
+      rotateX(var(--tiltX))
+      rotateY(var(--tiltY))
+      translateZ(0px)
+      scale(1.00);
+    opacity: 1;
+  }
+}
+
+@keyframes bloomIn{
+  0%{ transform: translate(-50%,-50%) scale(0.82); opacity: 0; }
+  35%{ opacity: 1; }
+  100%{ transform: translate(-50%,-50%) scale(1.00); opacity: 1; }
+}
+
+@keyframes bloomOut{
+  0%{ opacity: 1; }
+  100%{ opacity: 0; }
+}
+
+@keyframes fadeOut{
+  0%{ opacity: 1; }
+  100%{ opacity: 0; }
+}
+
+@keyframes ringPulse{
+  0%{
+    transform: translate(-50%, -50%) scale(0.72);
+    opacity: 0.0;
+    border-color: rgba(var(--accent), 0.0);
+    box-shadow: 0 0 26px rgba(var(--accent2), 0.0);
+  }
+  16%{
+    opacity: 1.0;
+    border-color: rgba(var(--accent), 0.85);
+    box-shadow: 0 0 34px rgba(var(--accent2), 0.22);
+  }
+  100%{
+    transform: translate(-50%, -50%) scale(1.70);
+    opacity: 0.0;
+    border-color: rgba(var(--accent), 0.0);
+    box-shadow: 0 0 26px rgba(var(--accent2), 0.0);
+  }
+}
+
+@keyframes spark{
+  0%{ transform: translate(-50%,-50%) translateZ(14px) scale(0.55); opacity: 0; }
+  18%{ opacity: 1; }
+  62%{ opacity: 0.95; }
+  100%{ transform: translate(-50%,-50%) translateZ(14px) scale(1.42); opacity: 0; }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce){
+  *{ animation:none !important; transition:none !important; }
+}
+</style>
+</head>
+
+<body>
+  <div id="stage">
+    <div id="anchor">
+      <div id="bloom" aria-hidden="true"></div>
+
+      <div id="tap" aria-hidden="true">
+        <div id="face"></div>
+        <div id="arc"></div>
+        <div id="dimple"></div>
+
+        <div class="ring" id="ring1"></div>
+        <div class="ring" id="ring2"></div>
+        <div class="ring" id="ring3"></div>
+
+        <div id="spark"></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+/**
+ * tap_3d_ping_glass.html
+ *
+ * Same 3D tap as tap_3d_ping.html, but with a “glass diffusion bloom”
+ * over the entire effect (radial haze) so it reads more premium on screen
+ * recordings. Works on transparent OBS.
+ *
+ * Default URL (full params):
+ *  http://<HOST_IP>:8789/overlays/tap_3d_ping_glass.html
+ *    ?x=0.50&y=0.50&r=66&lift=12&tiltX=14&tiltY=-18
+ *    &in=110&out=620&pulse=620&rings=3
+ *    &accent=180,220,255&accent2=120,190,255
+ *    &bloom=1&bloomSize=520&bloomAlpha=0.22&bloomBlur=26&bloomTint=0.10
+ *    &spot=0.20&sfx=1&vol=0.55&pitch=1.00
+ *    &mode=burst&hold=0&interval=900
+ *
+ * Params:
+ *  x,y=0..1
+ *  r=18..220
+ *  lift=0..60
+ *  tiltX/tiltY=-85..85 (deg)
+ *
+ *  in,out,pulse (ms)
+ *  rings=1..3
+ *
+ *  accent=R,G,B
+ *  accent2=R,G,B
+ *
+ *  bloom=1|0
+ *  bloomSize=px
+ *  bloomAlpha=0..0.5
+ *  bloomBlur=px
+ *  bloomTint=0..0.25
+ *
+ *  sfx=1|0, vol=0..1, pitch=0.5..2
+ *  mode=burst|loop, interval=ms, hold=ms
+ */
+
+const qs = new URLSearchParams(location.search);
+
+const x = clampFloat(parseFloat(qs.get("x") || "0.50"), 0, 1);
+const y = clampFloat(parseFloat(qs.get("y") || "0.50"), 0, 1);
+const r = clampInt(parseInt(qs.get("r") || "66", 10), 18, 220);
+
+const lift = clampInt(parseInt(qs.get("lift") || "12", 10), 0, 60);
+const tiltX = clampDeg(qs.get("tiltX") || "14");
+const tiltY = clampDeg(qs.get("tiltY") || "-18");
+
+const IN  = clampInt(parseInt(qs.get("in") || "110", 10), 0, 5000);
+const OUT = clampInt(parseInt(qs.get("out") || "620", 10), 0, 8000);
+const PULSE = clampInt(parseInt(qs.get("pulse") || "620", 10), 80, 8000);
+
+const RINGS = clampInt(parseInt(qs.get("rings") || "3", 10), 1, 3);
+
+const accent = parseRGB(qs.get("accent") || "180,220,255");
+const accent2 = parseRGB(qs.get("accent2") || "120,190,255");
+
+const bloomOn = (qs.get("bloom") || "1") !== "0";
+const bloomSize = clampInt(parseInt(qs.get("bloomSize") || "520", 10), 200, 1400);
+const bloomAlpha = clampFloat(parseFloat(qs.get("bloomAlpha") || "0.22"), 0, 0.5);
+const bloomBlur = clampInt(parseInt(qs.get("bloomBlur") || "26", 10), 0, 80);
+const bloomTint = clampFloat(parseFloat(qs.get("bloomTint") || "0.10"), 0, 0.25);
+
+const spot = clampFloat(parseFloat(qs.get("spot") || "0.20"), 0, 0.35);
+
+const SFX = (qs.get("sfx") || "1") !== "0";
+const VOL = clampFloat(parseFloat(qs.get("vol") || "0.55"), 0, 1);
+const PITCH = clampFloat(parseFloat(qs.get("pitch") || "1.00"), 0.5, 2.0);
+
+const MODE = (qs.get("mode") || "burst").toLowerCase();
+const HOLD = clampInt(parseInt(qs.get("hold") || "0", 10), 0, 600000);
+const INTERVAL = clampInt(parseInt(qs.get("interval") || "900", 10), 120, 600000);
+
+// Apply vars
+const root = document.documentElement.style;
+root.setProperty("--x", x.toFixed(4));
+root.setProperty("--y", y.toFixed(4));
+root.setProperty("--r", r + "px");
+root.setProperty("--lift", String(lift));
+root.setProperty("--tiltX", tiltX + "deg");
+root.setProperty("--tiltY", tiltY + "deg");
+root.setProperty("--in-ms", String(IN));
+root.setProperty("--out-ms", String(OUT));
+root.setProperty("--pulse-ms", String(PULSE));
+root.setProperty("--accent", accent.join(","));
+root.setProperty("--accent2", accent2.join(","));
+root.setProperty("--spot-alpha", String(spot));
+
+root.setProperty("--bloom-size", bloomSize + "px");
+root.setProperty("--bloom-alpha", String(bloomAlpha));
+root.setProperty("--bloom-blur", bloomBlur + "px");
+root.setProperty("--bloom-tint", String(bloomTint));
+
+const bloomEl = document.getElementById("bloom");
+if (!bloomOn) bloomEl.style.display = "none";
+
+// Elements
+const tap = document.getElementById("tap");
+const ring1 = document.getElementById("ring1");
+const ring2 = document.getElementById("ring2");
+const ring3 = document.getElementById("ring3");
+const spark = document.getElementById("spark");
+
+let loopTimer = null;
+
+function playOnce(){
+  // reset
+  tap.style.animation = "none";
+  bloomEl.style.animation = "none";
+  ring1.style.animation = "none";
+  ring2.style.animation = "none";
+  ring3.style.animation = "none";
+  spark.style.animation = "none";
+  void tap.offsetWidth;
+
+  document.body.classList.add("on");
+
+  // bloom
+  if (bloomOn){
+    bloomEl.style.animation = `bloomIn ${Math.max(120, IN)}ms cubic-bezier(.2,.8,.2,1) 1 both`;
+  }
+
+  // puck pop in
+  tap.style.animation = `popIn ${IN}ms cubic-bezier(.2,.8,.2,1) 1 both`;
+
+  // rings staggered
+  const t0 = 40;
+  const step = Math.round(PULSE * 0.16);
+  const rings = [ring1, ring2, ring3];
+  rings.forEach((el, i) => {
+    el.style.display = (i < RINGS) ? "block" : "none";
+    el.style.animation = (i < RINGS)
+      ? `ringPulse ${PULSE}ms cubic-bezier(.2,.8,.2,1) ${t0 + i*step}ms 1 both`
+      : "none";
+  });
+
+  // sparkle
+  spark.style.animation = `spark ${Math.max(220, Math.round(PULSE*0.58))}ms ease ${t0+40}ms 1 both`;
+
+  // sound
+  if (SFX) tapSound(VOL, PITCH);
+
+  // auto fade out
+  const visibleMs = IN + Math.max(PULSE, 260) + HOLD;
+  setTimeout(() => {
+    tap.style.animation = `fadeOut ${OUT}ms ease 1 both`;
+    if (bloomOn) bloomEl.style.animation = `bloomOut ${OUT}ms ease 1 both`;
+    setTimeout(() => document.body.classList.remove("on"), OUT + 10);
+  }, visibleMs);
+}
+
+function start(){
+  stop();
+  playOnce();
+  if (MODE === "loop"){
+    loopTimer = setInterval(playOnce, INTERVAL);
+  }
+}
+function stop(){
+  if (loopTimer) clearInterval(loopTimer);
+  loopTimer = null;
+}
+
+/* WebAudio tap sound */
+let audioCtx = null;
+function tapSound(vol, pitch){
+  try{
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = audioCtx;
+    const t = ctx.currentTime + 0.01;
+
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.0001, vol), t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+    g.connect(ctx.destination);
+
+    // click noise
+    const noise = ctx.createBufferSource();
+    noise.buffer = makeNoiseBuffer(ctx, 0.08);
+    const nf = ctx.createBiquadFilter();
+    nf.type = "highpass";
+    nf.frequency.setValueAtTime(1200, t);
+    const ng = ctx.createGain();
+    ng.gain.setValueAtTime(0.55, t);
+    ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
+    noise.connect(nf); nf.connect(ng); ng.connect(g);
+    noise.start(t);
+    noise.stop(t + 0.08);
+
+    // tonal ping
+    const o = ctx.createOscillator();
+    o.type = "sine";
+    const base = 520 * pitch;
+    o.frequency.setValueAtTime(base, t);
+    o.frequency.exponentialRampToValueAtTime(base * 0.74, t + 0.11);
+
+    const of = ctx.createBiquadFilter();
+    of.type = "lowpass";
+    of.frequency.setValueAtTime(2400, t);
+
+    const og = ctx.createGain();
+    og.gain.setValueAtTime(0.0001, t);
+    og.gain.exponentialRampToValueAtTime(0.72, t + 0.012);
+    og.gain.exponentialRampToValueAtTime(0.0001, t + 0.14);
+
+    o.connect(of); of.connect(og); og.connect(g);
+    o.start(t);
+    o.stop(t + 0.16);
+
+  }catch(e){}
+}
+
+function makeNoiseBuffer(ctx, seconds){
+  const sr = ctx.sampleRate;
+  const len = Math.floor(sr * seconds);
+  const buf = ctx.createBuffer(1, len, sr);
+  const data = buf.getChannelData(0);
+  for (let i=0; i<len; i++){
+    const decay = 1 - (i / len);
+    data[i] = (Math.random()*2 - 1) * decay;
+  }
+  return buf;
+}
+
+/* Helpers */
+function clampInt(x,a,b){ x=isFinite(x)?x:a; return Math.max(a, Math.min(b, x)); }
+function clampFloat(x,a,b){ x=isFinite(x)?x:a; return Math.max(a, Math.min(b, x)); }
+function clampDeg(v){
+  const x = parseFloat(v);
+  const d = isFinite(x) ? x : 0;
+  return Math.max(-85, Math.min(85, d));
+}
+function parseRGB(s){
+  const parts = (s || "").split(",").map(x => parseInt(x.trim(), 10));
+  if (parts.length !== 3) return [180,220,255];
+  return parts.map(v => clampInt(v, 0, 255));
+}
+
+start();
+addEventListener("pointerdown", () => start());
+</script>
+</body>
+</html>
