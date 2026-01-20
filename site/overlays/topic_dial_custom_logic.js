@@ -9,7 +9,9 @@ function clamp(n, a, b) {
 }
 
 function formatTopicDisplay(value) {
-  const text = String(value ?? "").trim().replace(/\s+/g, " ");
+  const text = String(value === null || value === undefined ? "" : value)
+    .trim()
+    .replace(/\s+/g, " ");
   return text.length ? text.toUpperCase() : "—";
 }
 
@@ -23,15 +25,18 @@ function splitLabelsString(value) {
 
 function buildTopicsFromParams({ params, defaults, maxCount = 24 }) {
   const safeDefaults = Array.isArray(defaults) && defaults.length ? defaults : ["TOPIC"];
-  const nRaw = params?.n;
+  const safeParams = params || {};
+  const nRaw = safeParams.n;
   const n = nRaw != null ? clamp(parseInt(nRaw, 10) || 0, 1, maxCount) : null;
 
-  let fromLabels = splitLabelsString(params?.labels);
+  let fromLabels = splitLabelsString(safeParams.labels);
 
-  const cap = n ?? Math.max(fromLabels.length, safeDefaults.length, 1);
+  const cap = n !== null && n !== undefined
+    ? n
+    : Math.max(fromLabels.length, safeDefaults.length, 1);
   const slotOverrides = [];
   for (let i = 1; i <= cap; i += 1) {
-    const override = params?.t ? params.t(i) : null;
+    const override = safeParams.t ? safeParams.t(i) : null;
     if (override != null && String(override).trim().length) {
       slotOverrides[i - 1] = String(override).trim();
     }
@@ -67,7 +72,7 @@ function buildTopicsFromParams({ params, defaults, maxCount = 24 }) {
 }
 
 function parseLandingIndex(value, maxCount) {
-  if (value == null) return null;
+  if (value === null || value === undefined) return null;
   const cleaned = String(value).trim().toLowerCase();
   if (!cleaned || cleaned === "random" || cleaned === "auto" || cleaned === "off") return null;
   const num = parseInt(cleaned, 10);

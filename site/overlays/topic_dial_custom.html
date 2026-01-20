@@ -353,11 +353,13 @@
     const topicReadout = document.getElementById("topicReadout");
     const meta = document.getElementById("meta");
 
-    const TopicDialLogic = window.TopicDialLogic ?? (() => {
+    const TopicDialLogic = window.TopicDialLogic || (() => {
       const clampLocal = (n, a, b) => Math.max(a, Math.min(b, n));
 
       function formatTopicDisplayLocal(value){
-        const text = String(value ?? "").trim().replace(/\s+/g, " ");
+        const text = String(value === null || value === undefined ? "" : value)
+          .trim()
+          .replace(/\s+/g, " ");
         return text.length ? text.toUpperCase() : "—";
       }
 
@@ -371,15 +373,18 @@
 
       function buildTopicsFromParamsLocal({ params, defaults, maxCount = 24 }){
         const safeDefaults = Array.isArray(defaults) && defaults.length ? defaults : ["TOPIC"];
-        const nRaw = params?.n;
+        const safeParams = params || {};
+        const nRaw = safeParams.n;
         const n = nRaw != null ? clampLocal(parseInt(nRaw, 10) || 0, 1, maxCount) : null;
 
-        let fromLabels = splitLabelsStringLocal(params?.labels);
+        let fromLabels = splitLabelsStringLocal(safeParams.labels);
 
-        const cap = n ?? Math.max(fromLabels.length, safeDefaults.length, 1);
+        const cap = n !== null && n !== undefined
+          ? n
+          : Math.max(fromLabels.length, safeDefaults.length, 1);
         const slotOverrides = [];
         for (let i = 1; i <= cap; i += 1){
-          const override = params?.t ? params.t(i) : null;
+          const override = safeParams.t ? safeParams.t(i) : null;
           if (override != null && String(override).trim().length){
             slotOverrides[i - 1] = String(override).trim();
           }
@@ -415,7 +420,7 @@
       }
 
       function parseLandingIndexLocal(value, maxCount){
-        if (value == null) return null;
+        if (value === null || value === undefined) return null;
         const cleaned = String(value).trim().toLowerCase();
         if (!cleaned || cleaned === "random" || cleaned === "auto" || cleaned === "off") return null;
         const num = parseInt(cleaned, 10);
@@ -478,14 +483,16 @@
     function parseParams(){
       const u = new URL(location.href);
       const p = u.searchParams;
+      const nParam = p.get("n");
+      const indexParam = p.get("index");
       return {
         topic: p.get("topic"),     // force landing (existing)
         seed: p.get("seed"),       // seeded random (existing)
         autospin: p.get("autospin") !== "0",
         // new:
-        n: p.get("n") ?? p.get("count"),
+        n: nParam !== null ? nParam : p.get("count"),
         labels: p.get("labels"),
-        index: p.get("index") ?? p.get("land") ?? p.get("landing"),
+        index: indexParam || p.get("land") || p.get("landing"),
         // per-index labels:
         t: (i) => p.get(`t${i}`),
       };
@@ -594,7 +601,8 @@
         div.dataset.idx = String(i);
 
         const span = document.createElement("span");
-        span.textContent = state.topics[i] ?? "—";
+        const topicLabel = state.topics[i];
+        span.textContent = topicLabel === null || topicLabel === undefined ? "—" : topicLabel;
         div.appendChild(span);
 
         labelLayer.appendChild(div);
@@ -677,8 +685,12 @@
       hud.classList.remove("post-hold");
       hideReadout();
 
-      const duration = opts.duration ?? Math.floor(lerp(SPIN_MIN_MS, SPIN_MAX_MS, Math.random()));
-      const turns = opts.turns ?? Math.floor(lerp(BASE_TURNS_MIN, BASE_TURNS_MAX + 0.999, Math.random()));
+      const duration = opts.duration !== undefined
+        ? opts.duration
+        : Math.floor(lerp(SPIN_MIN_MS, SPIN_MAX_MS, Math.random()));
+      const turns = opts.turns !== undefined
+        ? opts.turns
+        : Math.floor(lerp(BASE_TURNS_MIN, BASE_TURNS_MAX + 0.999, Math.random()));
       const base = turns * 360;
 
       const target = targetRotationForIndex(index);
@@ -711,8 +723,10 @@
         else {
           microSettle(index).then(() => {
             setActiveIndex(index);
-            showReadout(state.topics[index] ?? "—");
-            meta.textContent = `${nowStamp()}  •  ${state.topics[index] ?? "—"}`;
+            const landedTopic = state.topics[index];
+            const landedLabel = landedTopic === null || landedTopic === undefined ? "—" : landedTopic;
+            showReadout(landedLabel);
+            meta.textContent = `${nowStamp()}  •  ${landedLabel}`;
 
             setTimeout(() => {
               if (POST_HOLD_DIM) hud.classList.add("post-hold");
@@ -790,7 +804,8 @@
 
     // NEW: set topics at runtime (string "A|B|C" OR array)
     window.setTopics = (labels, countMaybe) => {
-      let topics = Array.isArray(labels) ? labels : splitLabelsString(String(labels ?? ""));
+      const rawLabels = labels === null || labels === undefined ? "" : labels;
+      let topics = Array.isArray(rawLabels) ? rawLabels : splitLabelsString(String(rawLabels));
       if (!topics.length) topics = [...TOPICS_DEFAULT];
 
       const n = countMaybe != null ? clamp(parseInt(countMaybe, 10) || 0, 1, 24) : null;
