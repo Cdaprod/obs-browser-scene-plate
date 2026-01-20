@@ -302,9 +302,13 @@
     </div>
   </div>
 
+  <script src="topic_dial_custom_logic.js"></script>
   <script>
     /**
-     * URL PARAMS (new)
+     * Default URL (full params):
+     *  http://<HOST_IP>:8789/overlays/topic_dial_custom.html?n=6&labels=FAMILY|THE%20STORY|THE%20BUILD|THE%20CRAFT|PRINCIPLES|PROCESS&index=random&autospin=1
+     *
+     * URL PARAMS
      * - n / count: number of categories on the dial
      * - labels: pipe or comma-separated labels
      *     Example:
@@ -314,6 +318,7 @@
      * - t1..tN: explicit per-slot labels (overrides labels order)
      *     Example:
      *       ?n=4&t1=FAMILY&t2=THE%20STORY&t3=THE%20BUILD&t4=PROCESS
+     * - index / land / landing: 1-based index to force landing (use random/auto/off to opt out)
      *
      * Existing behavior preserved:
      * - topic=... forces landing on a matching label (normalized match)
@@ -347,6 +352,13 @@
     const labelLayer = document.getElementById("labelLayer");
     const topicReadout = document.getElementById("topicReadout");
     const meta = document.getElementById("meta");
+
+    const {
+      formatTopicDisplay,
+      splitLabelsString,
+      buildTopicsFromParams,
+      parseLandingIndex
+    } = window.TopicDialLogic;
 
     const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
     const lerp  = (a, b, t) => a + (b - a) * t;
@@ -382,12 +394,6 @@
         .trim();
     }
 
-    // Display formatter: keep it clean, but DO NOT change your look/typography rules
-    function formatTopicDisplay(s){
-      const t = String(s ?? "").trim().replace(/\s+/g, " ");
-      return t.length ? t.toUpperCase() : "—";
-    }
-
     function parseParams(){
       const u = new URL(location.href);
       const p = u.searchParams;
@@ -398,6 +404,7 @@
         // new:
         n: p.get("n") ?? p.get("count"),
         labels: p.get("labels"),
+        index: p.get("index") ?? p.get("land") ?? p.get("landing"),
         // per-index labels:
         t: (i) => p.get(`t${i}`),
       };
@@ -461,74 +468,12 @@
       state.weights = state.topics.map(() => 1);
     }
 
-    function splitLabelsString(s){
-      if (!s) return [];
-      // Accept pipe or comma. Pipe is recommended because commas appear naturally in speech.
-      const raw = String(s).trim();
-      if (!raw) return [];
-      const parts = raw.includes("|") ? raw.split("|") : raw.split(",");
-      return parts.map(x => x.trim()).filter(Boolean);
-    }
-
-    function buildTopicsFromParams(params){
-      const nRaw = params.n;
-      const n = nRaw != null ? clamp(parseInt(nRaw, 10) || 0, 1, 24) : null;
-
-      // 1) Start from labels list (labels=...).
-      let fromLabels = splitLabelsString(params.labels);
-
-      // 2) Per-slot overrides (t1..tN) take precedence when provided.
-      //    If n is set, we read up to n. Otherwise, read up to max( fromLabels, defaults ) size.
-      const cap = n ?? Math.max(fromLabels.length, TOPICS_DEFAULT.length, 1);
-      const slotOverrides = [];
-      for (let i = 1; i <= cap; i++){
-        const v = params.t(i);
-        if (v != null && String(v).trim().length){
-          slotOverrides[i - 1] = String(v).trim();
-        }
-      }
-
-      // Merge: base list then overrides
-      let topics = [];
-      if (fromLabels.length){
-        topics = [...fromLabels];
-      } else {
-        topics = [...TOPICS_DEFAULT];
-      }
-
-      // Apply overrides
-      if (slotOverrides.length){
-        const needLen = Math.max(topics.length, slotOverrides.length);
-        if (topics.length < needLen){
-          // extend using defaults (stable + predictable)
-          for (let i = topics.length; i < needLen; i++){
-            topics[i] = TOPICS_DEFAULT[i % TOPICS_DEFAULT.length];
-          }
-        }
-        for (let i = 0; i < slotOverrides.length; i++){
-          if (slotOverrides[i] != null && String(slotOverrides[i]).trim().length){
-            topics[i] = slotOverrides[i];
-          }
-        }
-      }
-
-      // Enforce count n if provided
-      if (n != null){
-        if (topics.length > n) topics = topics.slice(0, n);
-        if (topics.length < n){
-          for (let i = topics.length; i < n; i++){
-            topics.push(TOPICS_DEFAULT[i % TOPICS_DEFAULT.length]);
-          }
-        }
-      }
-
-      // Final cleanup / display normalization (do not alter styling, just text)
-      topics = topics.map(formatTopicDisplay);
-
-      // Safety: avoid duplicates that differ only by whitespace/punct for matching stability
-      // (keeps behavior predictable when forcing topic=)
-      // If duplicates exist, we keep them as-is; forcing "topic=" will match the first.
-      return topics.length ? topics : [...TOPICS_DEFAULT].map(formatTopicDisplay);
+    function buildTopicsFromParamsWithDefaults(params){
+      return buildTopicsFromParams({
+        params,
+        defaults: TOPICS_DEFAULT,
+        maxCount: 24
+      });
     }
 
     function applyTopics(topics){
@@ -618,6 +563,11 @@
 
     function chooseIndex(params){
       // forced by topic string
+      const landingIndex = parseLandingIndex(params.index, state.N);
+      if (landingIndex != null){
+        return { index: landingIndex - 1, mode: "index" };
+      }
+
       if (params.topic){
         const want = normTopic(params.topic);
         const idx = state.topics.findIndex(t => normTopic(t) === want);
@@ -810,7 +760,7 @@
       const params = parseParams();
 
       // Apply dynamic topics BEFORE building labels
-      const topics = buildTopicsFromParams(params);
+      const topics = buildTopicsFromParamsWithDefaults(params);
       applyTopics(topics);
 
       const chosen = chooseIndex(params);
