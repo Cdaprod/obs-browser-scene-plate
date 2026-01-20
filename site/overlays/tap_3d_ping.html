@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>tap-3d-ping-glass</title>
+<title>tap-3d-ping</title>
 
 <style>
 :root{
@@ -337,20 +337,14 @@ body.on #bloom{ opacity: 1; }
 
 <script>
 /**
- * tap_3d_ping_glass.html
+ * tap_3d_ping.html
  *
- * Same 3D tap as tap_3d_ping.html, but with a “glass diffusion bloom”
+ * 3D tap indicator with a “glass diffusion bloom”
  * over the entire effect (radial haze) so it reads more premium on screen
  * recordings. Works on transparent OBS.
  *
  * Default URL (full params):
- *  http://<HOST_IP>:8789/overlays/tap_3d_ping_glass.html
- *    ?x=0.50&y=0.50&r=66&lift=12&tiltX=14&tiltY=-18
- *    &in=110&out=620&pulse=620&rings=3
- *    &accent=180,220,255&accent2=120,190,255
- *    &bloom=1&bloomSize=520&bloomAlpha=0.22&bloomBlur=26&bloomTint=0.10
- *    &spot=0.20&sfx=1&vol=0.55&pitch=1.00
- *    &mode=burst&hold=0&interval=900
+ *  http://<HOST_IP>:8789/overlays/tap_3d_ping.html?x=0.50&y=0.50&r=66&lift=12&tiltX=14&tiltY=-18&in=110&out=620&pulse=620&rings=3&accent=180,220,255&accent2=120,190,255&bloom=1&bloomSize=520&bloomAlpha=0.22&bloomBlur=26&bloomTint=0.10&sfx=1&vol=0.55&pitch=1.00&mode=burst&hold=0&interval=900
  *
  * Params:
  *  x,y=0..1
@@ -399,8 +393,6 @@ const bloomAlpha = clampFloat(parseFloat(qs.get("bloomAlpha") || "0.22"), 0, 0.5
 const bloomBlur = clampInt(parseInt(qs.get("bloomBlur") || "26", 10), 0, 80);
 const bloomTint = clampFloat(parseFloat(qs.get("bloomTint") || "0.10"), 0, 0.25);
 
-const spot = clampFloat(parseFloat(qs.get("spot") || "0.20"), 0, 0.35);
-
 const SFX = (qs.get("sfx") || "1") !== "0";
 const VOL = clampFloat(parseFloat(qs.get("vol") || "0.55"), 0, 1);
 const PITCH = clampFloat(parseFloat(qs.get("pitch") || "1.00"), 0.5, 2.0);
@@ -422,7 +414,6 @@ root.setProperty("--out-ms", String(OUT));
 root.setProperty("--pulse-ms", String(PULSE));
 root.setProperty("--accent", accent.join(","));
 root.setProperty("--accent2", accent2.join(","));
-root.setProperty("--spot-alpha", String(spot));
 
 root.setProperty("--bloom-size", bloomSize + "px");
 root.setProperty("--bloom-alpha", String(bloomAlpha));

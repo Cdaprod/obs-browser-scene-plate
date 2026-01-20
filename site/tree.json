@@ -11,6 +11,8 @@
     "/overlays/scene_breakdown_teardown.html",
     "/overlays/scene_overlay_stack_v1.html",
     "/overlays/scene_upgrade_vision.html",
+    "/overlays/tap_3d_ping.html",
+    "/overlays/tap_3d_ping_blur.html",
     "/overlays/topic_dial.html",
     "/plate-default.html",
     "/plate-procedural-enhanced.html",
