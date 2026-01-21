@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>transition-phone-bridge-plate-1</title>
+  <style>
+    :root {
+      --accent: #7ad3ff;
+      --plate-bg: rgba(8, 12, 20, 0.88);
+      --text: rgba(230, 245, 255, 0.95);
+      --muted: rgba(200, 225, 245, 0.65);
+      --scale: 1;
+      --x: 50%;
+      --y: 50%;
+      --blur: 0px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      height: 100%;
+      margin: 0;
+      background: transparent;
+      font-family: "SF Pro Text", "Inter", system-ui, -apple-system, sans-serif;
+      color: var(--text);
+      overflow: hidden;
+    }
+
+    #plate {
+      position: absolute;
+      left: var(--x);
+      top: var(--y);
+      transform: translate(-50%, -50%) scale(var(--scale));
+      min-width: min(84vw, 1040px);
+      padding: clamp(18px, 2.6vw, 32px) clamp(20px, 3.8vw, 52px);
+      background: var(--plate-bg);
+      border: 1px solid color-mix(in srgb, var(--accent) 65%, transparent);
+      border-radius: 18px;
+      box-shadow:
+        0 0 28px color-mix(in srgb, var(--accent) 24%, transparent),
+        inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+      filter: blur(var(--blur));
+    }
+
+    #plate::before,
+    #plate::after {
+      content: "";
+      position: absolute;
+      left: 20px;
+      right: 20px;
+      height: 1px;
+      background: color-mix(in srgb, var(--accent) 55%, transparent);
+      opacity: 0.7;
+    }
+
+    #plate::before {
+      top: 18px;
+    }
+
+    #plate::after {
+      bottom: 18px;
+    }
+
+    .label {
+      font-size: clamp(20px, 2.2vw, 36px);
+      font-weight: 700;
+      letter-spacing: 0.28em;
+      text-transform: uppercase;
+    }
+
+    .sub {
+      margin-top: 12px;
+      font-size: clamp(12px, 1.2vw, 18px);
+      letter-spacing: 0.4em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .indicator {
+      margin-top: 18px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .indicator span {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--accent) 70%, transparent);
+      box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 70%, transparent);
+      animation: pulse 1.4s infinite ease-in-out;
+    }
+
+    .indicator span:nth-child(2) {
+      animation-delay: 0.2s;
+    }
+
+    .indicator span:nth-child(3) {
+      animation-delay: 0.4s;
+    }
+
+    @keyframes pulse {
+      0% {
+        transform: scale(0.85);
+        opacity: 0.4;
+      }
+      50% {
+        transform: scale(1.2);
+        opacity: 1;
+      }
+      100% {
+        transform: scale(0.85);
+        opacity: 0.4;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="plate">
+    <div class="label" id="label"></div>
+    <div class="sub" id="sub"></div>
+    <div class="indicator" aria-hidden="true">
+      <span></span>
+      <span></span>
+      <span></span>
+    </div>
+  </div>
+
+  <script>
+    /**
+     * transition_phone_bridge_plate_1.html — phone bridge plate (variant 1)
+     *
+     * Default URL (full params):
+     * http://<HOST_IP>:8789/transitions/transition_phone_bridge_plate_1.html?label=PHONE%20BRIDGE&sub=CONNECTING&accent=7ad3ff&bg=080c14&alpha=0.88&scale=1&x=50&y=50&blur=0
+     *
+     * Params:
+     *  label=TEXT      (headline label)
+     *  sub=TEXT        (sub label)
+     *  accent=HEX      (accent color without #)
+     *  bg=HEX          (background color without #)
+     *  alpha=0..1      (background alpha)
+     *  scale=0.5..2    (overall scale)
+     *  x=0..100        (horizontal position percentage)
+     *  y=0..100        (vertical position percentage)
+     *  blur=0..20      (blur px)
+     */
+
+    const qs = new URLSearchParams(location.search);
+    const label = (qs.get("label") || "PHONE BRIDGE").slice(0, 48);
+    const sub = (qs.get("sub") || "CONNECTING").slice(0, 64);
+    const accent = sanitizeHex(qs.get("accent") || "7ad3ff");
+    const bg = sanitizeHex(qs.get("bg") || "080c14");
+    const alpha = clamp(parseFloat(qs.get("alpha") || "0.88"), 0, 1);
+    const scale = clamp(parseFloat(qs.get("scale") || "1"), 0.5, 2);
+    const x = clamp(parseFloat(qs.get("x") || "50"), 0, 100);
+    const y = clamp(parseFloat(qs.get("y") || "50"), 0, 100);
+    const blur = clamp(parseFloat(qs.get("blur") || "0"), 0, 20);
+
+    const labelEl = document.getElementById("label");
+    const subEl = document.getElementById("sub");
+    labelEl.textContent = label;
+    subEl.textContent = sub;
+
+    const root = document.documentElement;
+    root.style.setProperty("--accent", `#${accent}`);
+    root.style.setProperty("--plate-bg", `rgba(${hexToRgb(bg).join(", ")}, ${alpha})`);
+    root.style.setProperty("--scale", scale.toString());
+    root.style.setProperty("--x", `${x}%`);
+    root.style.setProperty("--y", `${y}%`);
+    root.style.setProperty("--blur", `${blur}px`);
+
+    function sanitizeHex(value) {
+      const cleaned = (value || "").replace(/[^0-9a-f]/gi, "").toLowerCase();
+      if (cleaned.length === 3) {
+        return cleaned
+          .split("")
+          .map((char) => `${char}${char}`)
+          .join("");
+      }
+      if (cleaned.length >= 6) {
+        return cleaned.slice(0, 6);
+      }
+      return "000000";
+    }
+
+    function hexToRgb(hex) {
+      const safe = sanitizeHex(hex);
+      const r = parseInt(safe.slice(0, 2), 16);
+      const g = parseInt(safe.slice(2, 4), 16);
+      const b = parseInt(safe.slice(4, 6), 16);
+      return [r, g, b];
+    }
+
+    function clamp(value, min, max) {
+      return Math.min(max, Math.max(min, value));
+    }
+  </script>
+</body>
+</html>
