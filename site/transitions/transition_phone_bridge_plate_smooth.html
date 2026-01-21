@@ -1,0 +1,547 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>Transition Plate • Phone Bridge (Smooth OTS → Hold) v3</title>
+
+  <!--
+    v3 Fix: OTS-A phone running off-screen at the start
+    ---------------------------------------------------
+    Problem you showed:
+      - On some viewports (esp. iPhone preview / Working Copy), the OTS-A pose starts too large
+        and/or too offset, so parts of the phone go out of frame.
+
+    What v3 does:
+      1) Adds an automatic viewport "fitScale" computed in JS:
+         - Ensures the phone always fits inside a safe area of the viewport during OTS-A.
+      2) Restores "original-like placement":
+         - Uses adaptive (clamped) OTS offsets instead of aggressive fixed px translation.
+      3) Keeps the smoother motion + seam fixes from v2.
+
+    Behavior:
+      - ?src= present: cinematic background + iframe inside phone
+      - no ?src=: alpha background + phone-only overlay (no iframe loads)
+
+    URL Params
+    ----------
+    src        : (optional) URL inside phone screen (URL-encode it)
+    phaseA     : ms for OTS-A motion (default 10000)
+    morph      : ms for travel into hold pose (default 1800)
+    baseScale  : preferred overall scale (default 0.82) (will be clamped by fitScale)
+    inset      : hold scale multiplier (default 0.92) (applies on top of fitScale)
+    tilt       : hold rotateX degrees (default 12)
+    yaw        : hold rotateY degrees (default -10)
+    vignette   : 0..1 (default 0.55) [ignored in no-src alpha mode]
+    grain      : 0..1 (default 0.08) [ignored in no-src alpha mode]
+
+    Optional tuning (rarely needed now)
+    ----------------------------------
+    ax, ay      : force OTS-A translate offsets (px). If omitted, adaptive clamps are used.
+                 Example: &ax=120&ay=-90
+  -->
+
+  <style>
+    :root{
+      --bg0: #05060a;
+      --bg1: #070a12;
+      --glow: rgba(120,190,255,0.10);
+      --glow2: rgba(255,120,180,0.06);
+
+      --phaseA: 10000ms;
+      --morph: 1800ms;
+
+      --vignette: 0.55;
+      --grain: 0.08;
+
+      /* Preferred sizing (JS clamps this into --fitScale so it never overflows) */
+      --baseScale: 0.82;
+      --fitScale: 0.82; /* overwritten by JS on load/resize */
+
+      /* Hold target pose */
+      --inset: 0.92;
+      --holdTilt: 12deg;
+      --holdYaw: -10deg;
+
+      /* Phone geometry */
+      --phoneW: 520px;
+      --phoneH: 1126px;
+
+      /* Rounded hierarchy */
+      --phoneRadius: 46px;
+      --bezel: 18px;
+      --bezel2: 10px;
+      --screenRadius: 28px;
+
+      /* Depth */
+      --shadowA: rgba(0,0,0,0.75);
+      --shadowB: rgba(0,0,0,0.45);
+
+      /* Adaptive OTS offsets (original-like placement; prevents running off-screen) */
+      --aX0: clamp(70px, 12vw, 140px);
+      --aY0: clamp(-150px, -10vh, -90px);
+
+      --aX1: clamp(62px, 11vw, 132px);
+      --aY1: clamp(-160px, -11vh, -98px);
+
+      --aX2: clamp(78px, 12.5vw, 148px);
+      --aY2: clamp(-145px, -9.5vh, -88px);
+
+      /* Safe area */
+      --safePad: max(16px, env(safe-area-inset-left));
+    }
+
+    *{ box-sizing:border-box; }
+    html,body{ height:100%; width:100%; margin:0; overflow:hidden; }
+    body{
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      background:#000;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
+
+    /* ---------- stage ---------- */
+    .stage{
+      position:relative;
+      width:100vw;
+      height:100vh;
+      padding: var(--safePad);
+      background:
+        radial-gradient(1200px 700px at 50% 55%, rgba(255,255,255,0.05), transparent 60%),
+        radial-gradient(900px 500px at 40% 40%, var(--glow), transparent 60%),
+        radial-gradient(900px 500px at 60% 65%, var(--glow2), transparent 60%),
+        linear-gradient(180deg, var(--bg0), var(--bg1));
+      transform: translateZ(0);
+    }
+
+    .stage::before{
+      content:"";
+      position:absolute; inset:-2px;
+      pointer-events:none;
+      background:
+        radial-gradient(120% 120% at 50% 55%,
+          rgba(0,0,0,0) 40%,
+          rgba(0,0,0, calc(var(--vignette) * 0.45)) 62%,
+          rgba(0,0,0, calc(var(--vignette) * 0.80)) 82%,
+          rgba(0,0,0, calc(var(--vignette) * 1.00)) 100%);
+      mix-blend-mode:multiply;
+    }
+
+    .grain{
+      position:absolute; inset:-20%;
+      pointer-events:none;
+      opacity: var(--grain);
+      background-image:
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23n)' opacity='.35'/%3E%3C/svg%3E");
+      background-size: 220px 220px;
+      animation: grainMove 3.2s steps(6) infinite;
+      mix-blend-mode: overlay;
+    }
+    @keyframes grainMove{
+      0%{ transform: translate3d(-2%, -2%, 0); }
+      20%{ transform: translate3d(2%, -1%, 0); }
+      40%{ transform: translate3d(-1%, 2%, 0); }
+      60%{ transform: translate3d(2%, 2%, 0); }
+      80%{ transform: translate3d(-2%, 1%, 0); }
+      100%{ transform: translate3d(1%, -2%, 0); }
+    }
+
+    /* ---------- OTS-A backdrop panel ---------- */
+    .otsaBackdrop{
+      position:absolute;
+      width:min(960px, 86vw);
+      height:min(1520px, 86vh);
+      left:50%;
+      top:50%;
+      border-radius: 28px;
+      overflow:hidden;
+      box-shadow:
+        0 30px 90px var(--shadowA),
+        0 10px 30px var(--shadowB);
+      background:
+        radial-gradient(900px 600px at 40% 40%, rgba(255,140,90,0.20), transparent 60%),
+        radial-gradient(900px 600px at 70% 60%, rgba(90,160,255,0.16), transparent 60%),
+        linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.015));
+      transform: translate(-50%,-50%) perspective(1200px) rotateX(1.5deg) rotateY(-2deg);
+      animation:
+        otsaBackdropMove var(--phaseA) ease forwards,
+        otsaBackdropFade var(--morph) ease forwards;
+      animation-delay: 0ms, var(--phaseA);
+    }
+    .otsaBackdrop .silhouette{
+      position:absolute; inset:0;
+      background:
+        radial-gradient(700px 520px at 35% 78%, rgba(0,0,0,0.85), transparent 60%),
+        radial-gradient(520px 420px at 18% 72%, rgba(0,0,0,0.95), transparent 55%),
+        radial-gradient(620px 520px at 18% 95%, rgba(0,0,0,0.95), transparent 60%),
+        radial-gradient(400px 320px at 44% 70%, rgba(0,0,0,0.75), transparent 55%);
+      filter: blur(0.6px);
+      opacity: 0.86;
+      mix-blend-mode: multiply;
+    }
+    @keyframes otsaBackdropMove{
+      0%{ transform: translate(-50%,-50%) perspective(1200px) rotateX(2.0deg) rotateY(-2.8deg) translateY(14px) scale(1.01); filter: brightness(0.97); }
+      55%{ transform: translate(-50%,-50%) perspective(1200px) rotateX(1.6deg) rotateY(-2.0deg) translateY(0px) scale(1.00); filter: brightness(1.0); }
+      100%{ transform: translate(-50%,-50%) perspective(1200px) rotateX(1.45deg) rotateY(-1.9deg) translateY(-5px) scale(0.995); filter: brightness(1.0); }
+    }
+    @keyframes otsaBackdropFade{
+      0%{ opacity:1; }
+      100%{ opacity:0; }
+    }
+
+    /* ---------- ONE phone rig (no cut): A motion -> morph -> breathe ---------- */
+    .phoneRig{
+      position:absolute;
+      left:50%;
+      top:50%;
+      transform-style: preserve-3d;
+      will-change: transform;
+      transform-origin: 50% 50%;
+      filter: drop-shadow(0 34px 110px rgba(0,0,0,0.68));
+      animation:
+        phoneA var(--phaseA) cubic-bezier(.22,.88,.18,1) forwards,
+        phoneMorph var(--morph) cubic-bezier(.16,.92,.16,1) forwards,
+        phoneBreath 6.8s ease-in-out infinite;
+      animation-delay: 0ms, var(--phaseA), calc(var(--phaseA) + var(--morph));
+    }
+
+    /* A: subtle drift while "in hand", using adaptive offsets and fitScale */
+    @keyframes phoneA{
+      0%{
+        transform:
+          translate(-50%,-50%)
+          translate(var(--aX0), var(--aY0))
+          perspective(1100px)
+          rotateY(-16deg)
+          rotateX(9deg)
+          rotateZ(1.4deg)
+          scale(calc(var(--fitScale) * 0.90));
+      }
+      45%{
+        transform:
+          translate(-50%,-50%)
+          translate(var(--aX1), var(--aY1))
+          perspective(1120px)
+          rotateY(-15.2deg)
+          rotateX(8.4deg)
+          rotateZ(1.1deg)
+          scale(calc(var(--fitScale) * 0.905));
+      }
+      100%{
+        transform:
+          translate(-50%,-50%)
+          translate(var(--aX2), var(--aY2))
+          perspective(1100px)
+          rotateY(-16.3deg)
+          rotateX(9.3deg)
+          rotateZ(1.6deg)
+          scale(calc(var(--fitScale) * 0.895));
+      }
+    }
+
+    /* Morph: smoothly travel into hold pose */
+    @keyframes phoneMorph{
+      0%{
+        transform:
+          translate(-50%,-50%)
+          translate(var(--aX2), var(--aY2))
+          perspective(1100px)
+          rotateY(-16.3deg)
+          rotateX(9.3deg)
+          rotateZ(1.6deg)
+          scale(calc(var(--fitScale) * 0.895));
+      }
+      100%{
+        transform:
+          translate(-50%,-50%)
+          perspective(1400px)
+          rotateX(var(--holdTilt))
+          rotateY(var(--holdYaw))
+          rotateZ(0deg)
+          scale(calc(var(--fitScale) * var(--inset)));
+      }
+    }
+
+    /* Breath after settle */
+    @keyframes phoneBreath{
+      0%,100%{
+        transform:
+          translate(-50%,-50%)
+          perspective(1400px)
+          rotateX(var(--holdTilt))
+          rotateY(var(--holdYaw))
+          rotateZ(0deg)
+          scale(calc(var(--fitScale) * var(--inset)))
+          translateY(0px);
+      }
+      50%{
+        transform:
+          translate(-50%,-50%)
+          perspective(1400px)
+          rotateX(calc(var(--holdTilt) - 1.0deg))
+          rotateY(calc(var(--holdYaw) + 0.9deg))
+          rotateZ(0deg)
+          scale(calc(var(--fitScale) * var(--inset)))
+          translateY(-5px);
+      }
+    }
+
+    /* ---------- device visuals (seam-safe) ---------- */
+    .phone{
+      width: var(--phoneW);
+      height: var(--phoneH);
+      position:relative;
+      transform-style: preserve-3d;
+      backface-visibility: hidden;
+      -webkit-backface-visibility: hidden;
+    }
+
+    .phone::after{
+      content:"";
+      position:absolute; inset:0;
+      border-radius: var(--phoneRadius);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.035);
+      pointer-events:none;
+      transform: translateZ(2px);
+    }
+
+    .shell{
+      position:absolute; inset:0;
+      border-radius: var(--phoneRadius);
+      backface-visibility: hidden;
+      -webkit-backface-visibility: hidden;
+      transform: translateZ(1px);
+      background:
+        linear-gradient(160deg, rgba(255,255,255,0.10), rgba(255,255,255,0.03) 35%, rgba(0,0,0,0.10)),
+        radial-gradient(110% 90% at 30% 10%, rgba(255,255,255,0.10), transparent 55%),
+        radial-gradient(120% 110% at 70% 90%, rgba(0,0,0,0.28), transparent 55%);
+      box-shadow:
+        inset 0 0 0 2px rgba(255,255,255,0.10),
+        inset 0 0 0 1px rgba(0,0,0,0.55);
+    }
+
+    .bezel{
+      position:absolute;
+      inset: var(--bezel);
+      border-radius: calc(var(--phoneRadius) - 12px);
+      background: linear-gradient(180deg, rgba(0,0,0,0.92), rgba(0,0,0,0.985));
+      box-shadow:
+        inset 0 0 0 2px rgba(255,255,255,0.06),
+        inset 0 0 0 1px rgba(255,255,255,0.03);
+      backface-visibility: hidden;
+      -webkit-backface-visibility: hidden;
+      transform: translateZ(6px);
+    }
+
+    .screen{
+      position:absolute;
+      inset: calc(var(--bezel) + var(--bezel2) + 0.5px);
+      border-radius: var(--screenRadius);
+      overflow:hidden;
+      background:
+        radial-gradient(120% 120% at 40% 30%, rgba(255,255,255,0.04), transparent 60%),
+        radial-gradient(120% 120% at 60% 70%, rgba(0,0,0,0.55), rgba(0,0,0,0.88)),
+        #000;
+      box-shadow:
+        0 0 0 1px rgba(255,255,255,0.06),
+        inset 0 0 80px rgba(0,0,0,0.55);
+      backface-visibility: hidden;
+      -webkit-backface-visibility: hidden;
+      transform: translateZ(16px);
+    }
+    .screen iframe{
+      width:100%;
+      height:100%;
+      border:0;
+      background:#000;
+    }
+
+    .glass{
+      position:absolute;
+      inset: calc(var(--bezel) + var(--bezel2) + 0.5px);
+      border-radius: var(--screenRadius);
+      pointer-events:none;
+      transform: translateZ(22px);
+      background:
+        radial-gradient(120% 90% at 30% 20%, rgba(255,255,255,0.10), transparent 50%),
+        radial-gradient(120% 90% at 70% 80%, rgba(255,255,255,0.06), transparent 55%),
+        linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.00));
+      mix-blend-mode: screen;
+      opacity: 0.82;
+    }
+
+    .screenMask{
+      position:absolute;
+      inset: calc(var(--bezel) + var(--bezel2) + 0.5px);
+      border-radius: var(--screenRadius);
+      pointer-events:none;
+      transform: translateZ(24px);
+      background:
+        radial-gradient(120% 120% at 50% 45%,
+          rgba(0,0,0,0) 55%,
+          rgba(0,0,0,0.25) 78%,
+          rgba(0,0,0,0.55) 100%);
+      mix-blend-mode:multiply;
+      opacity: 0.68;
+    }
+
+    .island{
+      position:absolute;
+      top: calc(var(--bezel) + var(--bezel2) + 16px);
+      left: 50%;
+      transform: translateX(-50%) translateZ(26px);
+      width: 170px;
+      height: 40px;
+      border-radius: 22px;
+      background: rgba(0,0,0,0.72);
+      box-shadow:
+        0 0 0 1px rgba(255,255,255,0.06),
+        inset 0 0 20px rgba(0,0,0,0.45);
+      opacity: 0.62;
+      pointer-events:none;
+    }
+
+    iframe[data-empty="1"]{ display:none; }
+
+    /* ---------- NO-SRC alpha overlay mode ---------- */
+    html.no-src, html.no-src body{ background: transparent !important; }
+    html.no-src .stage{ background: transparent !important; }
+    html.no-src .stage::before, html.no-src .grain{ display:none !important; }
+    html.no-src .otsaBackdrop{ display:none !important; }
+    html.no-src .phoneRig{ filter: drop-shadow(0 34px 90px rgba(0,0,0,0.70)); }
+  </style>
+</head>
+
+<body>
+  <div class="stage">
+    <div class="grain" aria-hidden="true"></div>
+
+    <div class="otsaBackdrop" aria-hidden="true">
+      <div class="silhouette"></div>
+    </div>
+
+    <div class="phoneRig" id="phoneRig">
+      <div class="phone">
+        <div class="shell" aria-hidden="true"></div>
+        <div class="bezel" aria-hidden="true"></div>
+
+        <div class="screen">
+          <iframe id="iframe" data-empty="1"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+            loading="eager"></iframe>
+        </div>
+
+        <div class="glass" aria-hidden="true"></div>
+        <div class="screenMask" aria-hidden="true"></div>
+        <div class="island" aria-hidden="true"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function qp(name, fallback=null){
+      const u = new URL(window.location.href);
+      const v = u.searchParams.get(name);
+      return (v === null || v === "") ? fallback : v;
+    }
+    function toNum(v, fallback){
+      const n = Number(v);
+      return Number.isFinite(n) ? n : fallback;
+    }
+    function clamp(n, lo, hi){ return Math.max(lo, Math.min(hi, n)); }
+    function setVar(name, value){ document.documentElement.style.setProperty(name, value); }
+
+    // Params
+    const src = qp("src", "");
+    const hasSrc = Boolean(src && String(src).trim() !== "");
+
+    const phaseAms  = toNum(qp("phaseA", "10000"), 10000);
+    const morphMs   = toNum(qp("morph", "1800"), 1800);
+
+    const baseScale = clamp(toNum(qp("baseScale", "0.82"), 0.82), 0.55, 1.0);
+    const inset     = clamp(toNum(qp("inset", "0.92"), 0.92), 0.50, 1.0);
+
+    const tilt      = toNum(qp("tilt", "12"), 12);
+    const yaw       = toNum(qp("yaw", "-10"), -10);
+
+    const grain     = clamp(toNum(qp("grain", "0.08"), 0.08), 0.0, 0.35);
+    const vignette  = clamp(toNum(qp("vignette", "0.55"), 0.55), 0.0, 1.0);
+
+    // Optional manual overrides for OTS offsets (px)
+    const ax = qp("ax", "");
+    const ay = qp("ay", "");
+
+    setVar("--phaseA", `${phaseAms}ms`);
+    setVar("--morph", `${morphMs}ms`);
+    setVar("--baseScale", `${baseScale}`);
+    setVar("--inset", `${inset}`);
+    setVar("--holdTilt", `${tilt}deg`);
+    setVar("--holdYaw", `${yaw}deg`);
+    setVar("--grain", `${grain}`);
+    setVar("--vignette", `${vignette}`);
+
+    if(!hasSrc){
+      document.documentElement.classList.add("no-src");
+    }
+
+    // Fit scale calculation:
+    // We aim to keep the phone (scaled) within ~86% of viewport height and ~86% of viewport width during OTS.
+    // This prevents the "running off-screen" even if CSS clamps behave differently per renderer.
+    function computeFitScale(){
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+
+      // Phone base dimensions
+      const phoneW = 520;
+      const phoneH = 1126;
+
+      // safe bounds
+      const maxW = vw * 0.86;
+      const maxH = vh * 0.86;
+
+      // scale needed to fit inside bounds
+      const sW = maxW / phoneW;
+      const sH = maxH / phoneH;
+
+      // choose smaller, then clamp to baseScale
+      const fit = Math.min(sW, sH, baseScale);
+
+      // keep it reasonable (avoid tiny phone on huge screens)
+      return clamp(fit, 0.55, 1.0);
+    }
+
+    function applyFitScale(){
+      const fit = computeFitScale();
+      setVar("--fitScale", String(fit));
+    }
+
+    applyFitScale();
+    window.addEventListener("resize", applyFitScale, { passive: true });
+
+    // Apply manual offsets if provided (lock to your "original placement" if you want)
+    if(ax !== "" && ay !== ""){
+      const axn = clamp(toNum(ax, 0), -400, 400);
+      const ayn = clamp(toNum(ay, 0), -400, 400);
+
+      // Use the same value across A keyframes for stability if you override
+      setVar("--aX0", `${axn}px`);
+      setVar("--aY0", `${ayn}px`);
+      setVar("--aX1", `${axn}px`);
+      setVar("--aY1", `${ayn}px`);
+      setVar("--aX2", `${axn}px`);
+      setVar("--aY2", `${ayn}px`);
+    }
+
+    // Iframe
+    const iframe = document.getElementById("iframe");
+    if(hasSrc){
+      iframe.dataset.empty = "0";
+      iframe.src = src;
+    } else {
+      iframe.dataset.empty = "1";
+      iframe.removeAttribute("src");
+    }
+  </script>
+</body>
+</html>

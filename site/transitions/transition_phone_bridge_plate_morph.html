@@ -3,31 +3,38 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
-  <title>Transition Plate • Phone Bridge</title>
+  <title>Transition Plate • Phone Bridge (Alpha when no src)</title>
 
   <!--
-    Purpose
-    -------
-    A "bridge plate" that:
-      1) Plays a 10s transition shot (over-the-shoulder vibe) once
-      2) Then holds a 3D iPhone frame indefinitely
-      3) Displays whatever "screen recording page" URL you pass in as an iframe
-      4) Idempotent: change ?src=... and it always shows that page
+    Transition Phone Bridge Plate
+    ----------------------------
+    Behavior (idempotent):
+      - If ?src= is provided:
+          * Renders full cinematic scene
+          * Plays Phase A (transition) once
+          * Then holds the 3D phone with the src page/video inside the phone screen until scene cut
+      - If ?src= is NOT provided:
+          * Renders alpha-transparent background (for overlay use)
+          * Still plays the phone animation/hold, but with empty/glassy screen (no iframe load)
 
     URL Params
     ----------
-    src      : (required) URL of the live screen recording / page you want inside the phone
+    src      : (optional) URL to display inside the phone screen (URL-encode it)
     phaseA   : transition duration ms (default 10000)
     fade     : crossfade ms between phases (default 650)
-    inset    : 0..1 how much the phone fills frame in hold phase (default 0.92)
+    inset    : 0.5..1 how much the phone fills frame in hold phase (default 0.92)
     tilt     : phone 3D tilt degrees (default 12)
     yaw      : phone yaw degrees (default -10)
-    grain    : 0..1 grain opacity (default 0.08)
-    vignette : 0..1 vignette strength (default 0.55)
+    grain    : 0..1 grain opacity (default 0.08) [ignored in no-src alpha mode]
+    vignette : 0..1 vignette strength (default 0.55) [ignored in no-src alpha mode]
 
     Examples
     --------
-    http://<HOST>:8789/overlays/transition_phone_bridge_plate.html?src=http%3A%2F%2F192.168.0.25%3A8789%2Foverlays%2Fcentered_text_segmented_readable.html%3Fs1%3DTHIS%2520VIDEO%2520CONTAINS%2520SENSITIVE%2520MATERIAL.&phaseA=10000
+    (Overlay / alpha)
+      http://<HOST>:8789/overlays/transition_phone_bridge_plate.html
+
+    (Portal / src present)
+      http://<HOST>:8789/overlays/transition_phone_bridge_plate.html?src=http%3A%2F%2F192.168.0.25%3A8789%2Foverlays%2Fcentered_text_segmented_readable.html%3Fs1%3DTHIS%2520VIDEO%2520CONTAINS%2520SENSITIVE%2520MATERIAL.
   -->
 
   <style>
@@ -63,13 +70,14 @@
     }
 
     *{ box-sizing: border-box; }
-    html,body{ height:100%; width:100%; margin:0; background: #000; overflow:hidden; }
+    html,body{ height:100%; width:100%; margin:0; overflow:hidden; }
     body{
       display:flex;
       align-items:center;
       justify-content:center;
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
       color: var(--fg);
+      background: #000;
     }
 
     /* ---------- Stage ---------- */
@@ -146,9 +154,10 @@
         radial-gradient(900px 600px at 70% 60%, rgba(90,160,255,0.18), transparent 60%),
         linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
       transform: perspective(1200px) rotateX(1.5deg) rotateY(-2deg);
+      animation: otsaMove var(--phaseA) ease forwards;
     }
 
-    /* Fake shoulder silhouette + camera mass (abstract, cinematic, not cartoony) */
+    /* Fake shoulder silhouette + camera mass (abstract, cinematic) */
     .otsa .silhouette{
       position:absolute; inset:0;
       background:
@@ -190,7 +199,7 @@
       pointer-events:none;
     }
 
-    /* The "screen content" for Phase A uses same iframe, but heavier stylization */
+    /* Phase A screen (heavier stylization) */
     .otsa .ghostScreen{
       position:absolute;
       inset: 12px;
@@ -198,19 +207,18 @@
       overflow:hidden;
       transform: translateZ(0);
       filter: contrast(0.95) saturate(0.92) brightness(0.92);
+      background:
+        radial-gradient(120% 120% at 40% 30%, rgba(255,255,255,0.05), transparent 60%),
+        linear-gradient(180deg, rgba(0,0,0,0.4), rgba(0,0,0,0.75));
     }
     .otsa .ghostScreen iframe{
       width:100%; height:100%;
       border:0;
       background:#000;
-      transform: scale(1.03); /* slight fill to hide edge */
+      transform: scale(1.03);
       transform-origin: center;
     }
 
-    /* Transition motion: subtle raise + settle */
-    .otsa{
-      animation: otsaMove var(--phaseA) ease forwards;
-    }
     @keyframes otsaMove{
       0%{ transform: perspective(1200px) rotateX(2.2deg) rotateY(-3deg) translateY(18px) scale(1.02); filter: brightness(0.95); }
       55%{ transform: perspective(1200px) rotateX(1.7deg) rotateY(-2deg) translateY(0px) scale(1.00); filter: brightness(1.0); }
@@ -276,7 +284,10 @@
       inset: calc(var(--bezel) + var(--bezel2));
       border-radius: var(--screenRadius);
       overflow:hidden;
-      background:#000;
+      background:
+        radial-gradient(120% 120% at 40% 30%, rgba(255,255,255,0.04), transparent 60%),
+        radial-gradient(120% 120% at 60% 70%, rgba(0,0,0,0.55), rgba(0,0,0,0.85)),
+        #000;
       box-shadow:
         0 0 0 1px rgba(255,255,255,0.06),
         inset 0 0 80px rgba(0,0,0,0.55);
@@ -306,7 +317,7 @@
       opacity: 0.85;
     }
 
-    /* Dynamic shadow mask to keep focus centered */
+    /* Shadow mask */
     .screenMask{
       position:absolute;
       inset: calc(var(--bezel) + var(--bezel2));
@@ -322,7 +333,7 @@
       opacity: 0.7;
     }
 
-    /* Optional "Dynamic Island" hint (subtle) */
+    /* "Dynamic Island" hint */
     .island{
       position:absolute;
       top: calc(var(--bezel) + var(--bezel2) + 14px);
@@ -339,43 +350,57 @@
       pointer-events:none;
     }
 
-    /* Phase labels (optional debugging) */
-    .badge{
-      position:absolute;
-      left: 20px;
-      bottom: 18px;
-      padding: 8px 10px;
-      border-radius: 999px;
-      font-size: 12px;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      background: rgba(0,0,0,0.45);
-      border: 1px solid rgba(255,255,255,0.08);
-      opacity: 0.0; /* keep hidden by default */
-      user-select:none;
+    /* Hide iframes when no src */
+    iframe[data-empty="1"]{ display:none; }
+
+    /* ---------------------------------------------------------
+       NO-SRC MODE: alpha-transparent overlay
+       --------------------------------------------------------- */
+    html.no-src,
+    html.no-src body{
+      background: transparent !important;
+    }
+    html.no-src .stage{
+      background: transparent !important;
+    }
+    html.no-src .stage::before,
+    html.no-src .grain{
+      display: none !important;
+    }
+    /* Keep phone shadows readable over any background */
+    html.no-src .phone3d{
+      filter: drop-shadow(0 34px 90px rgba(0,0,0,0.70));
+    }
+    html.no-src .otsa{
+      box-shadow: none;
+      background: transparent;
+    }
+    html.no-src .otsa .silhouette{
+      opacity: 0.65;
     }
 
-    /* Safe: hide iframes until src is set */
-    iframe[data-empty="1"]{ display:none; }
+    /* Optional: make the transition slightly less “scene-y” when no src */
+    html.no-src .otsa .phoneGhost{
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.10), rgba(255,255,255,0.02));
+    }
   </style>
 </head>
 
 <body>
   <div class="stage" id="stage">
-    <div class="grain"></div>
+    <div class="grain" aria-hidden="true"></div>
 
     <!-- PHASE A -->
     <div class="phase" id="phaseA">
       <div class="otsa">
-        <div class="silhouette"></div>
+        <div class="silhouette" aria-hidden="true"></div>
 
         <div class="phoneGhost">
           <div class="ghostScreen">
             <iframe id="iframeA" data-empty="1" sandbox="allow-scripts allow-same-origin allow-forms allow-popups" loading="eager"></iframe>
           </div>
         </div>
-
-        <div class="badge">bridge • transition</div>
       </div>
     </div>
 
@@ -383,18 +408,16 @@
     <div class="phase hidden" id="phaseB">
       <div class="holdWrap">
         <div class="phone3d" id="phone3d">
-          <div class="shell"></div>
-          <div class="bezel"></div>
+          <div class="shell" aria-hidden="true"></div>
+          <div class="bezel" aria-hidden="true"></div>
 
           <div class="screen">
             <iframe id="iframeB" data-empty="1" sandbox="allow-scripts allow-same-origin allow-forms allow-popups" loading="eager"></iframe>
           </div>
 
-          <div class="glass"></div>
-          <div class="screenMask"></div>
-          <div class="island"></div>
-
-          <div class="badge">bridge • hold</div>
+          <div class="glass" aria-hidden="true"></div>
+          <div class="screenMask" aria-hidden="true"></div>
+          <div class="island" aria-hidden="true"></div>
         </div>
       </div>
     </div>
@@ -417,6 +440,8 @@
 
     // --------- read params ----------
     const src = qp("src", "");
+    const hasSrc = Boolean(src && String(src).trim() !== "");
+
     const phaseAms = toNum(qp("phaseA", "10000"), 10000);
     const fadeMs   = toNum(qp("fade", "650"), 650);
 
@@ -436,38 +461,44 @@
     setVar("--grain", `${grain}`);
     setVar("--vignette", `${vignette}`);
 
+    // If no src, flip into alpha overlay mode
+    if(!hasSrc){
+      document.documentElement.classList.add("no-src");
+    }
+
     // --------- set iframe sources idempotently ----------
     const iframeA = document.getElementById("iframeA");
     const iframeB = document.getElementById("iframeB");
 
     function setSrc(iframe, url){
-      if(!url){ return; }
+      if(!url){
+        iframe.dataset.empty = "1";
+        iframe.removeAttribute("src");
+        return;
+      }
       iframe.dataset.empty = "0";
       iframe.src = url;
     }
 
-    // Same URL for both phases (transition + hold)
-    setSrc(iframeA, src);
-    setSrc(iframeB, src);
+    if(hasSrc){
+      // Same URL for both phases (transition + hold)
+      setSrc(iframeA, src);
+      setSrc(iframeB, src);
+    } else {
+      // No iframe loads in alpha mode
+      setSrc(iframeA, "");
+      setSrc(iframeB, "");
+    }
 
     // --------- phase switching ----------
     const phaseA = document.getElementById("phaseA");
     const phaseB = document.getElementById("phaseB");
-
-    // If no src provided, keep it visually valid but empty
-    if(!src){
-      // Let it run visually anyway; user will see the phone and can still use it as a transition.
-      console.warn("No ?src= provided. Provide a URL-encoded src param to display content in the phone.");
-    }
 
     // Switch to hold after phaseA duration, cross-fade
     window.setTimeout(() => {
       phaseA.classList.add("hidden");
       phaseB.classList.remove("hidden");
     }, phaseAms);
-
-    // Optional: allow hot swapping src while running (reloading plate with new URL already covers this)
-    // If you do want live swap: poll location hash or listen to postMessage - not needed for idempotent use.
   </script>
 </body>
 </html>
