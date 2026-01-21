@@ -1,10 +1,14 @@
 {
   "files": [
     "/index.html",
+    "/overlays/analogue_dust_loop.html",
+    "/overlays/analogue_flicker_loop.html",
+    "/overlays/analogue_static_loop.html",
     "/overlays/center_title_card.html",
     "/overlays/center_title_list_card.html",
     "/overlays/centered_text_segmented.html",
     "/overlays/centered_text_segmented_readable.html",
+    "/overlays/centered_text_segmented_typewriter.html",
     "/overlays/lowerthird_dualfont.html",
     "/overlays/lowerthirds.html",
     "/overlays/lowerthirds_2.html",
@@ -14,6 +18,9 @@
     "/overlays/tap_3d_ping.html",
     "/overlays/tap_3d_ping_blur.html",
     "/overlays/topic_dial.html",
+    "/overlays/topic_dial_custom.html",
+    "/overlays/topic_dial_custom_logic.js",
+    "/overlays/topic_dial_custom_logic.test.js",
     "/plate-default.html",
     "/plate-procedural-enhanced.html",
     "/plate-procedural.html",
@@ -26,6 +33,7 @@
     "/transitions/glitch_wipe_lastframe.html",
     "/transitions/stinger_intro_custom.html",
     "/transitions/stinger_outro_custom.html",
-    "/url-utils.js"
+    "/url-utils.js",
+    "/url-utils.test.js"
   ]
 }

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>analog-static-interference-loop</title>
+<title>analogue-static-loop</title>
 
 <style>
 :root{
@@ -57,16 +57,14 @@ canvas{
 
 <script>
 /**
- * analog_static_interference_loop.html
+ * analogue_static_loop.html
  *
  * PURPOSE:
  *  A constant, stronger static/interference layer to stack with
- *  analog_dust_loop.html — NOT a glitch burst.
+ *  analogue_dust_loop.html — NOT a glitch burst.
  *
- * Default URL:
- *  http://<HOST_IP>:8789/overlays/analog_static_interference_loop.html
- *    ?alpha=0.14&noise=0.75&bands=0.35&flutter=0.45
- *    &speed=1.0&drift=0.6&cool=0.10&loop=7
+ * Default URL (full params):
+ *  http://<HOST_IP>:8789/overlays/analogue_static_loop.html?alpha=0.14&noise=0.75&bands=0.35&flutter=0.45&speed=1.0&drift=0.6&cool=0.10&loop=7
  *
  * Params:
  *  alpha=0..0.4
@@ -95,6 +93,17 @@ document.documentElement.style.setProperty("--alpha", cfg.alpha);
 
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d", { alpha:true });
+
+const tile = 200;
+let noiseTile = null;
+function getNoiseTile(){
+  if (noiseTile) return noiseTile;
+  const c = document.createElement("canvas");
+  c.width = tile;
+  c.height = tile;
+  noiseTile = { canvas: c, ctx: c.getContext("2d", { alpha:true }) };
+  return noiseTile;
+}
 
 let W=0,H=0,DPR=1;
 function resize(){
@@ -127,7 +136,6 @@ function frame(now){
   ctx.clearRect(0,0,W,H);
 
   // --- Base static (fine noise) ---
-  const tile = 200;
   const seed = Math.floor(nT * 100000) >>> 0;
   const rnd = mulberry32(seed);
 
@@ -161,12 +169,17 @@ function frame(now){
     }
   }
 
-  // draw scaled
+  // draw scaled (use an offscreen tile to avoid canvas feedback)
   ctx.save();
   ctx.globalCompositeOperation = "screen";
   ctx.imageSmoothingEnabled = true;
-  ctx.putImageData(img, 0, 0);
-  ctx.drawImage(canvas, 0,0,tile,tile, 0,0,W,H);
+  const tileCtx = getNoiseTile().ctx;
+  tileCtx.putImageData(img, 0, 0);
+  const driftY = cfg.drift > 0.001
+    ? Math.sin(nT * Math.PI*2) * cfg.drift * 6 * DPR
+    : 0;
+  if (driftY) ctx.translate(0, driftY);
+  ctx.drawImage(getNoiseTile().canvas, 0,0,tile,tile, 0,0,W,H);
   ctx.restore();
 
   // --- Flutter (global exposure wobble) ---
@@ -174,12 +187,6 @@ function frame(now){
     const f = 0.85 + 0.15 * Math.sin(nT * Math.PI*2 * (1.8 + cfg.flutter*3));
     ctx.fillStyle = `rgba(255,255,255,${(1-f)*cfg.flutter*0.08})`;
     ctx.fillRect(0,0,W,H);
-  }
-
-  // --- Vertical drift ---
-  if (cfg.drift > 0.001){
-    const dy = Math.sin(nT * Math.PI*2) * cfg.drift * 6 * DPR;
-    ctx.translate(0, dy);
   }
 
   requestAnimationFrame(frame);
