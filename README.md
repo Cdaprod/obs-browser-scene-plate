@@ -68,6 +68,21 @@ This exposes the plate server at:
 
 ---
 
+## Render Output Location
+
+Set a host path for render outputs by copying `.env.example` to `.env` and updating the value.
+If `RENDERS_HOST_PATH` is not set, outputs fall back to `./renders` in the repo.
+
+**Windows (SMB drive):**
+
+`RENDERS_HOST_PATH=B:/Video/Projects/P7-SHARED-Procedurally-Generated/ingest/originals`
+
+**Linux (WSL mount):**
+
+`RENDERS_HOST_PATH=/mnt/b/Video/Projects/P7-SHARED-Procedurally-Generated/ingest/originals`
+
+---
+
 ## Use in OBS
 
 Add a **Browser Source**:

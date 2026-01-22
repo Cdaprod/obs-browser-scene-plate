@@ -10,7 +10,7 @@ services:
     volumes:
       - ./site:/usr/share/nginx/html:rw
       - type: bind
-        source: "B:/Video/Projects/P7-SHARED-Procedurally-Generated/ingest/originals"
+        source: "${RENDERS_HOST_PATH:-./renders}"
         target: /renders
 
   renderer:
@@ -22,7 +22,7 @@ services:
       - obs_plate
     volumes:
       - type: bind
-        source: "B:/Video/Projects/P7-SHARED-Procedurally-Generated/ingest/originals"
+        source: "${RENDERS_HOST_PATH:-./renders}"
         target: /renders
     restart: "no"
 
@@ -35,7 +35,7 @@ services:
       - "8793:8791"
     volumes:
       - type: bind
-        source: "B:/Video/Projects/P7-SHARED-Procedurally-Generated/ingest/originals"
+        source: "${RENDERS_HOST_PATH:-./renders}"
         target: /renders
     restart: unless-stopped
 
