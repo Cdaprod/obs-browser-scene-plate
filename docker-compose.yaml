@@ -9,7 +9,9 @@ services:
       - "8789:80"
     volumes:
       - ./site:/usr/share/nginx/html:rw
-      - ./renders:/renders:rw
+      - type: bind
+        source: "B:/Video/Projects/P7-SHARED-Procedurally-Generated/ingest/originals"
+        target: /renders
 
   renderer:
     build:
@@ -19,7 +21,9 @@ services:
     depends_on:
       - obs_plate
     volumes:
-      - ./renders:/renders
+      - type: bind
+        source: "B:/Video/Projects/P7-SHARED-Procedurally-Generated/ingest/originals"
+        target: /renders
     restart: "no"
 
   render_api:
@@ -30,7 +34,9 @@ services:
     ports:
       - "8793:8791"
     volumes:
-      - ./renders:/renders:rw
+      - type: bind
+        source: "B:/Video/Projects/P7-SHARED-Procedurally-Generated/ingest/originals"
+        target: /renders
     restart: unless-stopped
 
   wall_api:
