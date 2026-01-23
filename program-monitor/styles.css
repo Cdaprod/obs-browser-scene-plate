@@ -44,6 +44,34 @@ button:active {
   padding: 12px;
 }
 
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+
+.previewPanel {
+  position: relative;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--pad);
+}
+
+.mainPanel {
+  min-width: 0;
+}
+
+.pill {
+  background: rgba(76, 195, 255, 0.18);
+  border-color: rgba(76, 195, 255, 0.45);
+  font-weight: 600;
+}
+
+body.preview-collapsed .previewPanel {
+  display: none;
+}
+
 .hdr {
   display: flex;
   justify-content: space-between;
