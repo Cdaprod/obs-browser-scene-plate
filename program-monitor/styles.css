@@ -34,6 +34,12 @@ button {
   cursor: pointer;
 }
 
+.pill {
+  border-radius: 999px;
+  padding: 10px 16px;
+  background: #16283b;
+}
+
 button:active {
   transform: translateY(1px);
 }
@@ -135,15 +141,15 @@ button:active {
 
 .message {
   min-height: 18px;
-  margin-top: 6px;
+  margin: 4px 0 10px;
   font-size: 12px;
   color: var(--accent);
 }
 
-.controls {
+.messageBar {
   display: flex;
-  gap: 10px;
-  margin: 12px 0;
+  align-items: center;
+  min-height: 20px;
 }
 
 .exports {
@@ -171,6 +177,38 @@ button:active {
 
 .exportLink.hidden {
   display: none;
+}
+
+.stageOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 8, 15, 0.6);
+  display: none;
+  align-items: stretch;
+  justify-content: flex-end;
+  z-index: 50;
+}
+
+.stageOverlay.open {
+  display: flex;
+}
+
+.stagePanel {
+  width: min(520px, 92vw);
+  background: #0a121a;
+  border-left: 1px solid var(--line);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: -10px 0 30px rgba(0, 0, 0, 0.4);
+}
+
+.stagePanelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--text);
 }
 
 .nodes {
@@ -260,6 +298,10 @@ textarea {
   .status {
     text-align: left;
     margin-left: 0;
+    width: 100%;
+  }
+
+  .stagePanel {
     width: 100%;
   }
 }

@@ -14,6 +14,9 @@
         <div class="title-sub">Program + Monitor for stacked URL nodes</div>
       </div>
       <div class="row">
+        <button id="btnToggleStage" class="pill" type="button">Preview</button>
+        <button id="btnAdd" type="button">Add Node</button>
+        <button id="btnDelete" type="button">Delete Node</button>
         <button id="btnSave" type="button">Save</button>
         <button id="btnExport" type="button">Export JSON</button>
         <button id="btnImport" type="button">Import JSON</button>
@@ -22,7 +25,28 @@
       </div>
     </header>
 
-    <section class="stage">
+    <section class="messageBar">
+      <div class="message" id="message"></div>
+    </section>
+
+    <section class="exports">
+      <button id="btnExportNode" type="button">Export Node MOV</button>
+      <button id="btnExportTimeline" type="button">Export Timeline MOV</button>
+      <span class="exportStatus" id="exportStatus">Idle</span>
+      <a class="exportLink hidden" id="downloadLink" download>Download MOV</a>
+    </section>
+
+    <section class="nodes">
+      <div id="nodeList"></div>
+    </section>
+  </div>
+
+  <div class="stageOverlay" id="stageOverlay" aria-hidden="true">
+    <aside class="stagePanel" role="dialog" aria-modal="true" aria-label="Video Preview">
+      <div class="stagePanelHeader">
+        <span>Video Preview</span>
+        <button id="btnCloseStage" type="button">Close</button>
+      </div>
       <div class="stageFrame">
         <video id="baseVideo" playsinline preload="metadata"></video>
         <div id="overlayLayer"></div>
@@ -41,24 +65,7 @@
           <div>t: <span id="statT">0.00</span>s / <span id="statDur">0.00</span>s</div>
         </div>
       </div>
-      <div class="message" id="message"></div>
-    </section>
-
-    <section class="controls">
-      <button id="btnAdd" type="button">Add Node</button>
-      <button id="btnDelete" type="button">Delete Node</button>
-    </section>
-
-    <section class="exports">
-      <button id="btnExportNode" type="button">Export Node MOV</button>
-      <button id="btnExportTimeline" type="button">Export Timeline MOV</button>
-      <span class="exportStatus" id="exportStatus">Idle</span>
-      <a class="exportLink hidden" id="downloadLink" download>Download MOV</a>
-    </section>
-
-    <section class="nodes">
-      <div id="nodeList"></div>
-    </section>
+    </aside>
   </div>
 
   <input id="fileImport" type="file" accept="application/json" hidden />

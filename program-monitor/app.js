@@ -104,7 +104,8 @@ const elements = {
   fileImport: $("#fileImport"),
   message: $("#message"),
   exportStatus: $("#exportStatus"),
-  downloadLink: $("#downloadLink")
+  downloadLink: $("#downloadLink"),
+  stageOverlay: $("#stageOverlay")
 };
 
 let overlayVideos = [];
@@ -119,6 +120,8 @@ const renderApiPort = 8793;
 const webPort = window.location.port || 8789;
 const renderApiBase = `http://${host}:${renderApiPort}`;
 const downloadBase = `http://${host}:${webPort}`;
+const stageOverlay = elements.stageOverlay;
+const stagePanel = stageOverlay ? stageOverlay.querySelector(".stagePanel") : null;
 
 function autogrow(el) {
   el.style.height = "auto";
@@ -141,6 +144,14 @@ function setDownloadLink(url) {
   }
   elements.downloadLink.href = url;
   elements.downloadLink.classList.remove("hidden");
+}
+
+function setStageOpen(open) {
+  if (!stageOverlay) {
+    return;
+  }
+  stageOverlay.classList.toggle("open", open);
+  stageOverlay.setAttribute("aria-hidden", open ? "false" : "true");
 }
 
 function saveLocal() {
@@ -756,6 +767,29 @@ $("#btnExportTimeline").addEventListener("click", () => {
     setExportStatus("Error");
   });
 });
+
+const toggleStageButton = $("#btnToggleStage");
+const closeStageButton = $("#btnCloseStage");
+
+if (toggleStageButton) {
+  toggleStageButton.addEventListener("click", () => {
+    setStageOpen(true);
+  });
+}
+
+if (closeStageButton) {
+  closeStageButton.addEventListener("click", () => {
+    setStageOpen(false);
+  });
+}
+
+if (stageOverlay) {
+  stageOverlay.addEventListener("click", (event) => {
+    if (event.target === stageOverlay) {
+      setStageOpen(false);
+    }
+  });
+}
 
 elements.fileImport.addEventListener("change", async () => {
   const file = elements.fileImport.files?.[0];
