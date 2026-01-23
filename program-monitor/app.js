@@ -126,23 +126,26 @@ function setDownloadLink(url) {
 }
 
 function saveLocal() {
-  localStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify({
-      version: 1,
-      nodes: state.nodes,
-      activeIndex: state.activeIndex
-    })
-  );
+  try {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        version: 1,
+        nodes: state.nodes,
+        activeIndex: state.activeIndex
+      })
+    );
+  } catch (error) {
+    console.warn("Failed to persist timeline", error);
+  }
 }
 
 function loadLocal() {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) {
-    return;
-  }
-
   try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) {
+      return;
+    }
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed.nodes) && parsed.nodes.length) {
       state.nodes = parsed.nodes;
@@ -191,6 +194,9 @@ async function importJSONFile(file) {
 }
 
 function renderNodes() {
+  if (!elements.nodeList) {
+    return;
+  }
   elements.nodeList.innerHTML = "";
   elements.statTotal.textContent = String(state.nodes.length);
 
