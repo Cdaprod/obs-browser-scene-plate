@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { classifyUrl, isHttpUrl, parseNodeText } = require("./timeline-utils.js");
+const { classifyUrl, isHttpUrl, parseNodeText, uuid } = require("./timeline-utils.js");
 
 process.on("uncaughtException", (error) => {
   console.error(error);
@@ -48,4 +48,10 @@ test("isHttpUrl checks scheme", () => {
   assert.equal(isHttpUrl("http://host/file.mp4"), true);
   assert.equal(isHttpUrl("https://host/file.mp4"), true);
   assert.equal(isHttpUrl("file.mp4"), false);
+});
+
+test("uuid returns a non-empty string", () => {
+  const value = uuid();
+  assert.equal(typeof value, "string");
+  assert.ok(value.length > 0);
 });

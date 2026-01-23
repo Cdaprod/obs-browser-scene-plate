@@ -54,21 +54,39 @@ const fallbackUtils = (() => {
 
   const isHttpUrl = (url) => /^https?:\/\//i.test(url || "");
 
+  const uuid = () => {
+    if (typeof window !== "undefined" && window.crypto && typeof window.crypto.randomUUID === "function") {
+      return window.crypto.randomUUID();
+    }
+    if (typeof window !== "undefined" && window.crypto && typeof window.crypto.getRandomValues === "function") {
+      const bytes = new Uint8Array(16);
+      window.crypto.getRandomValues(bytes);
+      bytes[6] = (bytes[6] & 0x0f) | 0x40;
+      bytes[8] = (bytes[8] & 0x3f) | 0x80;
+      const hex = Array.from(bytes)
+        .map((value) => value.toString(16).padStart(2, "0"))
+        .join("");
+      return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+    }
+    return `id_${Date.now().toString(16)}_${Math.random().toString(16).slice(2)}`;
+  };
+
   return {
     STORAGE_KEY,
     parseNodeText,
     classifyUrl,
-    isHttpUrl
+    isHttpUrl,
+    uuid
   };
 })();
 
 const programMonitorUtils = window.ProgramMonitorUtils || fallbackUtils;
-const { classifyUrl, isHttpUrl, parseNodeText, STORAGE_KEY } = programMonitorUtils;
+const { classifyUrl, isHttpUrl, parseNodeText, STORAGE_KEY, uuid } = programMonitorUtils;
 
 const $ = (selector) => document.querySelector(selector);
 
 const state = {
-  nodes: [{ id: crypto.randomUUID(), text: "" }],
+  nodes: [{ id: uuid(), text: "" }],
   activeIndex: 0,
   playing: false,
   stopRequested: false,
@@ -668,7 +686,7 @@ $("#btnAdd").addEventListener("click", () => {
   if (state.playing) {
     return;
   }
-  state.nodes.push({ id: crypto.randomUUID(), text: "" });
+  state.nodes.push({ id: uuid(), text: "" });
   state.activeIndex = state.nodes.length - 1;
   state.validationResults = [];
   renderNodes();
@@ -753,7 +771,12 @@ elements.fileImport.addEventListener("change", async () => {
   }
 });
 
-loadLocal();
-renderNodes();
-primeNode(state.activeIndex).catch(() => {});
-setExportStatus("Idle");
+try {
+  loadLocal();
+  renderNodes();
+  primeNode(state.activeIndex).catch(() => {});
+  setExportStatus("Idle");
+} catch (error) {
+  console.error(error);
+  setMessage(`Startup error: ${error?.message || error}`);
+}
