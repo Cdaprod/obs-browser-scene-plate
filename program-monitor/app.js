@@ -3,7 +3,67 @@
  * Usage: open /program-monitor/ in the browser.
  */
 
-const { classifyUrl, isHttpUrl, parseNodeText, STORAGE_KEY } = window.ProgramMonitorUtils;
+const fallbackUtils = (() => {
+  const STORAGE_KEY = "program-monitor.timeline.v1";
+  const audioExt = [".mp3", ".wav", ".m4a", ".aac", ".ogg"];
+  const imageExt = [".png", ".jpg", ".jpeg", ".webp", ".gif"];
+  const videoExt = [".mp4", ".mov", ".webm", ".mkv"];
+
+  const parseNodeText = (text) => {
+    const lines = (text || "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith("//") && !line.startsWith("#"));
+
+    return {
+      baseUrl: lines[0] || "",
+      layers: lines.slice(1),
+      lines
+    };
+  };
+
+  const extractPathname = (url) => {
+    if (!url) {
+      return "";
+    }
+    if (!url.includes("://")) {
+      return url;
+    }
+    try {
+      return new URL(url).pathname.toLowerCase();
+    } catch (error) {
+      return url;
+    }
+  };
+
+  const classifyUrl = (url) => {
+    const lower = (url || "").toLowerCase();
+    const path = extractPathname(lower);
+
+    if (audioExt.some((ext) => path.endsWith(ext))) {
+      return "audio";
+    }
+    if (imageExt.some((ext) => path.endsWith(ext))) {
+      return "image";
+    }
+    if (videoExt.some((ext) => path.endsWith(ext))) {
+      return "video";
+    }
+    return "video";
+  };
+
+  const isHttpUrl = (url) => /^https?:\/\//i.test(url || "");
+
+  return {
+    STORAGE_KEY,
+    parseNodeText,
+    classifyUrl,
+    isHttpUrl
+  };
+})();
+
+const programMonitorUtils = window.ProgramMonitorUtils || fallbackUtils;
+const { classifyUrl, isHttpUrl, parseNodeText, STORAGE_KEY } = programMonitorUtils;
 
 const $ = (selector) => document.querySelector(selector);
 
