@@ -9,6 +9,7 @@ services:
       - "8789:80"
     volumes:
       - ./site:/usr/share/nginx/html:rw
+      - ./program-monitor:/usr/share/nginx/html/program-monitor:ro
       - type: bind
         source: "${RENDERS_HOST_PATH:-./renders}"
         target: /renders
