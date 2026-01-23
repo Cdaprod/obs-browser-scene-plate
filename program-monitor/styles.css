@@ -257,6 +257,26 @@ textarea {
   margin-top: 6px;
 }
 
+.nodeDuration {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.nodeDuration input {
+  width: 160px;
+  max-width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: #06101a;
+  color: var(--text);
+  padding: 6px 8px;
+  font-family: var(--mono);
+}
+
 .nodeCard.active {
   outline: 2px solid rgba(76, 195, 255, 0.5);
 }
