@@ -86,7 +86,7 @@ const { classifyUrl, isHttpUrl, parseNodeText, STORAGE_KEY, uuid } = programMoni
 const $ = (selector) => document.querySelector(selector);
 
 const state = {
-  nodes: [{ id: uuid(), text: "" }],
+  nodes: [{ id: uuid(), text: "", durationOverride: "" }],
   activeIndex: 0,
   playing: false,
   stopRequested: false,
@@ -267,6 +267,23 @@ http://host/ambience.mp3`;
       event.stopPropagation();
     });
 
+    const durationRow = document.createElement("div");
+    durationRow.className = "nodeDuration";
+    durationRow.innerHTML = `
+      <label>Duration override (sec)</label>
+      <input type="number" min="0" step="0.1" placeholder="auto" />
+    `;
+
+    const durationInput = durationRow.querySelector("input");
+    durationInput.value = node.durationOverride || "";
+    durationInput.addEventListener("input", () => {
+      node.durationOverride = durationInput.value;
+      saveLocal();
+      if (!state.playing && index === state.activeIndex) {
+        primeNode(index).catch(() => {});
+      }
+    });
+
     card.addEventListener("click", async () => {
       if (state.playing) {
         return;
@@ -284,6 +301,7 @@ http://host/ambience.mp3`;
     card.appendChild(header);
     card.appendChild(textarea);
     card.appendChild(hint);
+    card.appendChild(durationRow);
 
     const validation = state.validationResults[index];
     if (validation) {
@@ -360,6 +378,7 @@ async function primeNode(index) {
   clearBaseHandlers();
   const node = state.nodes[index];
   const parsed = parseNodeText(node.text);
+  const overrideSeconds = Number(node.durationOverride);
 
   setMessage("");
 
@@ -379,7 +398,15 @@ async function primeNode(index) {
     duration = await loadVideoMeta(elements.baseVideo, parsed.baseUrl);
   } catch (error) {
     duration = 0;
-    setMessage("Base duration unknown. Streaming sources may need overrides.");
+    if (Number.isFinite(overrideSeconds) && overrideSeconds > 0) {
+      setMessage("Using duration override for streaming source.");
+    } else {
+      setMessage("Base duration unknown. Add a duration override to enable playback.");
+    }
+  }
+
+  if (!duration && Number.isFinite(overrideSeconds) && overrideSeconds > 0) {
+    duration = overrideSeconds;
   }
 
   elements.statDur.textContent = duration.toFixed(2);
@@ -450,6 +477,7 @@ async function playActive() {
   state.playing = true;
 
   const index = state.activeIndex;
+  const overrideSeconds = Number(state.nodes[index].durationOverride);
   elements.statNode.textContent = String(index + 1);
 
   await primeNode(index);
@@ -513,7 +541,10 @@ async function playActive() {
     }
 
     const current = elements.baseVideo.currentTime || 0;
-    const duration = elements.baseVideo.duration || 0;
+    let duration = elements.baseVideo.duration || 0;
+    if ((!duration || Number.isNaN(duration)) && Number.isFinite(overrideSeconds) && overrideSeconds > 0) {
+      duration = overrideSeconds;
+    }
 
     elements.statT.textContent = current.toFixed(2);
     elements.statDur.textContent = (Number.isFinite(duration) ? duration : 0).toFixed(2);
@@ -703,7 +734,7 @@ $("#btnAdd").addEventListener("click", () => {
   if (state.playing) {
     return;
   }
-  state.nodes.push({ id: uuid(), text: "" });
+  state.nodes.push({ id: uuid(), text: "", durationOverride: "" });
   state.activeIndex = state.nodes.length - 1;
   state.validationResults = [];
   renderNodes();
