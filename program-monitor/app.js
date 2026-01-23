@@ -19,13 +19,22 @@ const elements = {
   statT: $("#statT"),
   statDur: $("#statDur"),
   fileImport: $("#fileImport"),
-  message: $("#message")
+  message: $("#message"),
+  exportStatus: $("#exportStatus"),
+  downloadLink: $("#downloadLink")
 };
 
 let overlayVideos = [];
 let overlayAudios = [];
 let rafId = null;
 let baseEndedHandler = null;
+let exportPollTimer = null;
+
+const host = window.location.hostname;
+const renderApiPort = 8793;
+const webPort = window.location.port || 8789;
+const renderApiBase = `http://${host}:${renderApiPort}`;
+const downloadBase = `http://${host}:${webPort}`;
 
 function autogrow(el) {
   el.style.height = "auto";
@@ -34,6 +43,20 @@ function autogrow(el) {
 
 function setMessage(text) {
   elements.message.textContent = text || "";
+}
+
+function setExportStatus(text) {
+  elements.exportStatus.textContent = text || "";
+}
+
+function setDownloadLink(url) {
+  if (!url) {
+    elements.downloadLink.classList.add("hidden");
+    elements.downloadLink.removeAttribute("href");
+    return;
+  }
+  elements.downloadLink.href = url;
+  elements.downloadLink.classList.remove("hidden");
 }
 
 function saveLocal() {
@@ -178,6 +201,13 @@ function clearLayers() {
   overlayVideos = [];
   overlayAudios = [];
   elements.overlayLayer.innerHTML = "";
+}
+
+function clearExportPoll() {
+  if (exportPollTimer) {
+    clearInterval(exportPollTimer);
+    exportPollTimer = null;
+  }
 }
 
 function clearBaseHandlers() {
@@ -428,6 +458,123 @@ function validateNodes() {
   renderNodes();
 }
 
+async function pollJobStatus(statusUrl) {
+  const res = await fetch(statusUrl);
+  const data = await res.json();
+  if (!res.ok || !data.ok) {
+    throw new Error(data.error || "status_failed");
+  }
+
+  if (data.state === "ready") {
+    const downloadUrl = data.download_url
+      ? `${downloadBase}${data.download_url}`
+      : null;
+    setExportStatus("Ready");
+    setDownloadLink(downloadUrl);
+    clearExportPoll();
+  } else if (data.state === "error") {
+    setExportStatus("Error");
+    clearExportPoll();
+  } else if (data.state === "encoding") {
+    setExportStatus("Encoding");
+  } else if (data.state === "rendering") {
+    setExportStatus("Rendering");
+  } else {
+    setExportStatus("Queued");
+  }
+}
+
+async function exportNode() {
+  clearExportPoll();
+  setExportStatus("Queued");
+  setDownloadLink("");
+
+  const node = state.nodes[state.activeIndex];
+  if (!node || !node.text.trim()) {
+    setMessage("Add at least one URL line before exporting.");
+    setExportStatus("Idle");
+    return;
+  }
+
+  const res = await fetch(`${renderApiBase}/api/program-monitor/export-node`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      node: { text: node.text },
+      options: { fps: 60, width: 1080, height: 1920 }
+    })
+  });
+
+  const data = await res.json();
+  if (!res.ok || !data.ok) {
+    throw new Error(data.error || "export_failed");
+  }
+
+  if (data.download_url) {
+    setExportStatus("Ready");
+    setDownloadLink(`${downloadBase}${data.download_url}`);
+    return;
+  }
+
+  if (!data.status_url) {
+    throw new Error("missing_status_url");
+  }
+
+  const statusUrl = `${renderApiBase}${data.status_url}`;
+  exportPollTimer = setInterval(() => {
+    pollJobStatus(statusUrl).catch((error) => {
+      console.error(error);
+      setExportStatus("Error");
+      clearExportPoll();
+    });
+  }, 1000);
+}
+
+async function exportTimeline() {
+  clearExportPoll();
+  setExportStatus("Queued");
+  setDownloadLink("");
+
+  if (!state.nodes.length) {
+    setMessage("Add at least one node before exporting.");
+    setExportStatus("Idle");
+    return;
+  }
+
+  const res = await fetch(`${renderApiBase}/api/program-monitor/export-timeline`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      timeline: { version: 1, nodes: state.nodes },
+      options: { fps: 60, width: 1080, height: 1920 }
+    })
+  });
+
+  const data = await res.json();
+  if (!res.ok || !data.ok) {
+    throw new Error(data.error || "export_failed");
+  }
+
+  if (data.download_url) {
+    setExportStatus("Ready");
+    setDownloadLink(`${downloadBase}${data.download_url}`);
+    return;
+  }
+
+  if (!data.status_url) {
+    throw new Error("missing_status_url");
+  }
+
+  const statusUrl = `${renderApiBase}${data.status_url}`;
+  exportPollTimer = setInterval(() => {
+    pollJobStatus(statusUrl).catch((error) => {
+      console.error(error);
+      setExportStatus("Error");
+      clearExportPoll();
+    });
+  }, 1200);
+}
+
 $("#btnAdd").addEventListener("click", () => {
   if (state.playing) {
     return;
@@ -490,6 +637,18 @@ $("#btnExport").addEventListener("click", () => exportJSON());
 $("#btnImport").addEventListener("click", () => elements.fileImport.click());
 $("#btnValidate").addEventListener("click", () => validateNodes());
 $("#btnOpenBase").addEventListener("click", () => openBaseInNewTab());
+$("#btnExportNode").addEventListener("click", () => {
+  exportNode().catch((error) => {
+    console.error(error);
+    setExportStatus("Error");
+  });
+});
+$("#btnExportTimeline").addEventListener("click", () => {
+  exportTimeline().catch((error) => {
+    console.error(error);
+    setExportStatus("Error");
+  });
+});
 
 elements.fileImport.addEventListener("change", async () => {
   const file = elements.fileImport.files?.[0];
@@ -508,3 +667,4 @@ elements.fileImport.addEventListener("change", async () => {
 loadLocal();
 renderNodes();
 primeNode(state.activeIndex).catch(() => {});
+setExportStatus("Idle");

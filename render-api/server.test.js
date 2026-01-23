@@ -9,7 +9,10 @@ const {
   safeName,
   buildFilename,
   listRenderFiles,
-  normalizeRenderUrl
+  normalizeRenderUrl,
+  parseProgramMonitorText,
+  classifyProgramMonitorUrl,
+  buildProgramMonitorFilename
 } = require('./server');
 
 test('safeName sanitizes unsafe characters and trims length', () => {
@@ -88,4 +91,34 @@ test('normalizeRenderUrl accepts relative paths', () => {
     renderOrigin: 'http://obs_plate'
   });
   assert.equal(result, 'http://obs_plate/overlays/title.html?mode=burst');
+});
+
+test('parseProgramMonitorText splits base and layers', () => {
+  const text = [
+    'http://example.com/base.mp4',
+    '# ignore',
+    'http://example.com/overlay.webm'
+  ].join('\n');
+
+  const parsed = parseProgramMonitorText(text);
+  assert.equal(parsed.baseUrl, 'http://example.com/base.mp4');
+  assert.deepEqual(parsed.layers, ['http://example.com/overlay.webm']);
+});
+
+test('classifyProgramMonitorUrl detects audio, image, and video', () => {
+  assert.equal(classifyProgramMonitorUrl('http://example.com/track.mp3'), 'audio');
+  assert.equal(classifyProgramMonitorUrl('http://example.com/frame.png'), 'image');
+  assert.equal(classifyProgramMonitorUrl('http://example.com/clip.mp4'), 'video');
+});
+
+test('buildProgramMonitorFilename is deterministic', () => {
+  const filename = buildProgramMonitorFilename({
+    prefix: 'program-monitor-node',
+    hash: 'abc123',
+    width: 1080,
+    height: 1920,
+    fps: 60,
+    seconds: null
+  });
+  assert.equal(filename, 'program-monitor-node_1080x1920_60fps_auto_abc123.mov');
 });

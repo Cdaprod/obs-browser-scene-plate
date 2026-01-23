@@ -146,6 +146,33 @@ button:active {
   margin: 12px 0;
 }
 
+.exports {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.exportStatus {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.exportLink {
+  text-decoration: none;
+  color: var(--text);
+  border: 1px solid var(--line);
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: #122131;
+  font-size: 12px;
+}
+
+.exportLink.hidden {
+  display: none;
+}
+
 .nodes {
   background: var(--panel);
   border: 1px solid var(--line);

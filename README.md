@@ -91,6 +91,7 @@ Open the Program Monitor UI after the stack is running:
 `http://<HOST_IP>:8789/program-monitor/`
 
 Each node is a multiline list of URLs where the first line is the base video and subsequent lines are overlays/audio.
+Exports use the render-api service to generate MOV outputs.
 
 ## Use in OBS
 

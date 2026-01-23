@@ -24,6 +24,7 @@ A browser-only **Program + Monitor** UI for stacking URL-based media nodes into 
 - **Export / Import JSON**: move timelines between machines.
 - **Validate**: basic checks for missing base URLs and non-http(s) entries.
 - **Open Base**: open the active node base URL in a new tab.
+- **Export Node/Timeline**: send jobs to the render-api service for MOV output.
 
 ## Tests
 
@@ -31,4 +32,10 @@ Run the minimal utility tests:
 
 ```sh
 node --test program-monitor/timeline-utils.test.mjs
+```
+
+Optional render-api tests (from repo root):
+
+```sh
+node --test render-api/server.test.js
 ```
