@@ -24,6 +24,18 @@ curl -X POST http://localhost:8791/api/render \
   -d '{"url":"http://nginx/plate-default.html","name":"plate","seconds":4,"fps":60,"width":1080,"height":1920}'
 ```
 
+Program Monitor exports (node + timeline):
+
+```shell
+curl -X POST http://localhost:8791/api/program-monitor/export-node \
+  -H "Content-Type: application/json" \
+  -d '{"node":{"text":"http://nginx/plate-default.html"},"options":{"fps":60,"width":1080,"height":1920}}'
+
+curl -X POST http://localhost:8791/api/program-monitor/export-timeline \
+  -H "Content-Type: application/json" \
+  -d '{"timeline":{"version":1,"nodes":[{"text":"http://nginx/plate-default.html"}]}}'
+```
+
 If you send a `localhost` URL (or a relative path like `/overlays/...`), the API rewrites
 it to the render origin so the container can resolve it. Configure the origin via
 `RENDER_ORIGIN` (defaults to `http://obs_plate`):

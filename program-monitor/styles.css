@@ -1,0 +1,265 @@
+:root {
+  --bg: #0b1116;
+  --panel: #0f1821;
+  --panel-strong: #0b141d;
+  --text: #e6edf3;
+  --muted: #9fb0bf;
+  --accent: #4cc3ff;
+  --line: #203040;
+  --radius: 16px;
+  --pad: 14px;
+  --stageH: min(46vh, 420px);
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+}
+
+button {
+  background: #122131;
+  color: var(--text);
+  border: 1px solid var(--line);
+  padding: 10px 12px;
+  border-radius: 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+button:active {
+  transform: translateY(1px);
+}
+
+.app {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 12px;
+}
+
+.hdr {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.title {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.title-main {
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+
+.title-sub {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.stageFrame {
+  position: relative;
+  background: #041018;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  height: var(--stageH);
+}
+
+#baseVideo {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #03111a;
+}
+
+#overlayLayer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+#overlayLayer video,
+#overlayLayer img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.stageLabel {
+  position: absolute;
+  left: 12px;
+  bottom: 10px;
+  font-size: 12px;
+  color: var(--muted);
+  background: rgba(0, 0, 0, 0.35);
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.transport {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 0 0;
+  flex-wrap: wrap;
+}
+
+.status {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: right;
+}
+
+.message {
+  min-height: 18px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--accent);
+}
+
+.controls {
+  display: flex;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.exports {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.exportStatus {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.exportLink {
+  text-decoration: none;
+  color: var(--text);
+  border: 1px solid var(--line);
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: #122131;
+  font-size: 12px;
+}
+
+.exportLink.hidden {
+  display: none;
+}
+
+.nodes {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--pad);
+}
+
+.nodeCard {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px;
+  margin-bottom: 12px;
+  background: var(--panel-strong);
+}
+
+.nodeCard:last-child {
+  margin-bottom: 0;
+}
+
+.nodeHdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  gap: 8px;
+}
+
+.nodeHdr .idx {
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.nodeHdr .mini {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+textarea {
+  width: 100%;
+  min-height: 82px;
+  resize: none;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: #06101a;
+  color: var(--text);
+  padding: 10px;
+  font-family: var(--mono);
+  line-height: 1.25;
+}
+
+.nodeHint {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 6px;
+}
+
+.nodeCard.active {
+  outline: 2px solid rgba(76, 195, 255, 0.5);
+}
+
+.nodeValidation {
+  margin-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.nodeValidation ul {
+  margin: 6px 0 6px 18px;
+  padding: 0;
+}
+
+.validationTitle {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.validationMeta {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+@media (max-width: 720px) {
+  .status {
+    text-align: left;
+    margin-left: 0;
+    width: 100%;
+  }
+}
