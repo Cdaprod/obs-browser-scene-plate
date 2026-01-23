@@ -21,6 +21,7 @@ No cloud dependencies. No static file dragging. Just URLs.
 - **URL-driven controls** for video sources, layout fitting, HUD/debug mode, and guides  
 - Optional **rendering services** (`render-api/`) to export plates as MOV assets  
 - Fully **local-first**: runs on your machine or LAN with no cloud dependencies  
+- **Program Monitor** UI (`/program-monitor/`) for sequencing layered URL nodes into a timeline  
 
 ---
 
@@ -82,6 +83,15 @@ If `RENDERS_HOST_PATH` is not set, outputs fall back to `./renders` in the repo.
 `RENDERS_HOST_PATH=/mnt/b/Video/Projects/P7-SHARED-Procedurally-Generated/ingest/originals`
 
 ---
+
+## Program Monitor
+
+Open the Program Monitor UI after the stack is running:
+
+`http://<HOST_IP>:8789/program-monitor/`
+
+Each node is a multiline list of URLs where the first line is the base video and subsequent lines are overlays/audio.
+Exports use the render-api service to generate MOV outputs.
 
 ## Use in OBS
 
