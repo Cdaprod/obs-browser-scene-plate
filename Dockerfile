@@ -1,6 +1,7 @@
 FROM nginx:alpine
 
 COPY site/ /usr/share/nginx/html/
+COPY program-monitor/ /usr/share/nginx/html/program-monitor/
 COPY nginx/nginx.conf /etc/nginx/nginx.conf
 
 # Copy the entrypoint script

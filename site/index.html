@@ -677,6 +677,7 @@
         <div class="right">
             <button class="chip files-toggle" id="filesToggle" type="button" aria-expanded="true">Files</button>
             <div class="chip" id="openBrowse">/browse/</div>
+            <div class="chip" id="openProgramMonitor">Program Monitor</div>
             <div class="chip" id="openDefault">Open Default Plate</div>
         </div>
     </header>
@@ -769,6 +770,7 @@
         const exportModalClose = document.getElementById("exportModalClose");
 
         const openBrowse = document.getElementById("openBrowse");
+        const openProgramMonitor = document.getElementById("openProgramMonitor");
         const openDefault = document.getElementById("openDefault");
         const baseInfo = document.getElementById("baseInfo");
 
@@ -1431,6 +1433,10 @@
 
         openBrowse.onclick = () => {
             window.open("/browse/", "_blank");
+        };
+
+        openProgramMonitor.onclick = () => {
+            window.open("/program-monitor/", "_blank");
         };
 
         openDefault.onclick = () => {
