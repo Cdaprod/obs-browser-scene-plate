@@ -1,4 +1,9 @@
-import { classifyUrl, isHttpUrl, parseNodeText, STORAGE_KEY } from "./timeline-utils.js";
+/**
+ * Program Monitor UI controller.
+ * Usage: open /program-monitor/ in the browser.
+ */
+
+const { classifyUrl, isHttpUrl, parseNodeText, STORAGE_KEY } = window.ProgramMonitorUtils;
 
 const $ = (selector) => document.querySelector(selector);
 

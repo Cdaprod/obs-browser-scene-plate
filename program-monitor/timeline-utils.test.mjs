@@ -5,7 +5,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { classifyUrl, isHttpUrl, parseNodeText } from "./timeline-utils.js";
+import { createRequire } from "node:module";
+
+const require = createRequire(import.meta.url);
+const { classifyUrl, isHttpUrl, parseNodeText } = require("./timeline-utils.js");
 
 process.on("uncaughtException", (error) => {
   console.error(error);
