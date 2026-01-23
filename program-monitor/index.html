@@ -14,6 +14,7 @@
         <div class="title-sub">Program + Monitor for stacked URL nodes</div>
       </div>
       <div class="row">
+        <button id="btnTogglePreview" class="pill" type="button">Preview</button>
         <button id="btnSave" type="button">Save</button>
         <button id="btnExport" type="button">Export JSON</button>
         <button id="btnImport" type="button">Import JSON</button>
@@ -22,43 +23,49 @@
       </div>
     </header>
 
-    <section class="stage">
-      <div class="stageFrame">
-        <video id="baseVideo" playsinline preload="metadata"></video>
-        <div id="overlayLayer"></div>
-        <div class="stageLabel">Video Preview (Stage)</div>
-      </div>
+    <div class="layout">
+      <aside class="previewPanel" id="previewPanel">
+        <div class="stage">
+          <div class="stageFrame">
+            <video id="baseVideo" playsinline preload="metadata"></video>
+            <div id="overlayLayer"></div>
+            <div class="stageLabel">Video Preview (Stage)</div>
+          </div>
 
-      <div class="transport">
-        <button id="btnPrev" type="button">⟵</button>
-        <button id="btnStop" type="button">■</button>
-        <button id="btnPlay" type="button">▶</button>
-        <button id="btnPause" type="button">❚❚</button>
-        <button id="btnNext" type="button">⟶</button>
+          <div class="transport">
+            <button id="btnPrev" type="button">⟵</button>
+            <button id="btnStop" type="button">■</button>
+            <button id="btnPlay" type="button">▶</button>
+            <button id="btnPause" type="button">❚❚</button>
+            <button id="btnNext" type="button">⟶</button>
 
-        <div class="status">
-          <div>Node: <span id="statNode">1</span>/<span id="statTotal">1</span></div>
-          <div>t: <span id="statT">0.00</span>s / <span id="statDur">0.00</span>s</div>
+            <div class="status">
+              <div>Node: <span id="statNode">1</span>/<span id="statTotal">1</span></div>
+              <div>t: <span id="statT">0.00</span>s / <span id="statDur">0.00</span>s</div>
+            </div>
+          </div>
+          <div class="message" id="message"></div>
         </div>
-      </div>
-      <div class="message" id="message"></div>
-    </section>
+      </aside>
 
-    <section class="controls">
-      <button id="btnAdd" type="button">Add Node</button>
-      <button id="btnDelete" type="button">Delete Node</button>
-    </section>
+      <main class="mainPanel">
+        <section class="controls">
+          <button id="btnAdd" type="button">Add Node</button>
+          <button id="btnDelete" type="button">Delete Node</button>
+        </section>
 
-    <section class="exports">
-      <button id="btnExportNode" type="button">Export Node MOV</button>
-      <button id="btnExportTimeline" type="button">Export Timeline MOV</button>
-      <span class="exportStatus" id="exportStatus">Idle</span>
-      <a class="exportLink hidden" id="downloadLink" download>Download MOV</a>
-    </section>
+        <section class="exports">
+          <button id="btnExportNode" type="button">Export Node MOV</button>
+          <button id="btnExportTimeline" type="button">Export Timeline MOV</button>
+          <span class="exportStatus" id="exportStatus">Idle</span>
+          <a class="exportLink hidden" id="downloadLink" download>Download MOV</a>
+        </section>
 
-    <section class="nodes">
-      <div id="nodeList"></div>
-    </section>
+        <section class="nodes">
+          <div id="nodeList"></div>
+        </section>
+      </main>
+    </div>
   </div>
 
   <input id="fileImport" type="file" accept="application/json" hidden />

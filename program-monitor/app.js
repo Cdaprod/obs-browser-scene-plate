@@ -104,7 +104,8 @@ const elements = {
   fileImport: $("#fileImport"),
   message: $("#message"),
   exportStatus: $("#exportStatus"),
-  downloadLink: $("#downloadLink")
+  downloadLink: $("#downloadLink"),
+  togglePreview: $("#btnTogglePreview")
 };
 
 let overlayVideos = [];
@@ -141,6 +142,14 @@ function setDownloadLink(url) {
   }
   elements.downloadLink.href = url;
   elements.downloadLink.classList.remove("hidden");
+}
+
+function setPreviewCollapsed(collapsed) {
+  const isCollapsed = Boolean(collapsed);
+  document.body.classList.toggle("preview-collapsed", isCollapsed);
+  if (elements.togglePreview) {
+    elements.togglePreview.setAttribute("aria-pressed", String(!isCollapsed));
+  }
 }
 
 function saveLocal() {
@@ -765,6 +774,13 @@ $("#btnExportTimeline").addEventListener("click", () => {
   });
 });
 
+if (elements.togglePreview) {
+  elements.togglePreview.addEventListener("click", () => {
+    const isCollapsed = document.body.classList.contains("preview-collapsed");
+    setPreviewCollapsed(!isCollapsed);
+  });
+}
+
 elements.fileImport.addEventListener("change", async () => {
   const file = elements.fileImport.files?.[0];
   if (!file) {
@@ -781,6 +797,7 @@ elements.fileImport.addEventListener("change", async () => {
 
 try {
   loadLocal();
+  setPreviewCollapsed(true);
   renderNodes();
   primeNode(state.activeIndex).catch(() => {});
   setExportStatus("Idle");
