@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>NDI Screen FX</title>
+
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      background: transparent; /* <-- This is your "alpha" in Browser Source */
+      overflow: hidden;
+    }
+
+    :root{
+      /* Master intensity */
+      --o: .40;
+
+      /* Strengths */
+      --vignette: .55;
+      --scan: .10;
+      --grain: .10;
+      --glare: .18;
+
+      /* Scanline tuning */
+      --scan-thickness: 1px;
+      --scan-gap: 5px;
+
+      /* Geometry */
+      --inset: 22px;        /* brackets inset */
+      --radius: 18px;       /* rounded corners */
+      --shadow: 0.25;       /* shadow opacity */
+
+      /* Animation */
+      --glare-secs: 6.8s;
+      --glare-ease: ease-in-out;
+
+      /* Performance */
+      --grain-size: 160;    /* svg noise tile size */
+      --grain-freq: .85;    /* turbulence baseFrequency */
+      --blur: 0.6px;
+    }
+
+    /* Container so we can apply consistent clipping/radius if desired */
+    .fx {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    /* Optional rounding and inner shadow to "seat" the screen */
+    .fx.clip {
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+
+    .fx.clip::after{
+      content:"";
+      position:absolute;
+      inset:0;
+      border-radius: var(--radius);
+      box-shadow:
+        0 18px 40px rgba(0,0,0,var(--shadow)),
+        0 0 0 1px rgba(255,255,255,0.06) inset;
+      opacity: var(--o);
+      pointer-events:none;
+    }
+
+    /* -------------------------
+       BEHIND
+    ------------------------- */
+    .vignette{
+      position:absolute;
+      inset:-2%;
+      opacity: var(--o);
+      filter: blur(0.5px);
+      background:
+        radial-gradient(ellipse at center,
+          rgba(0,0,0,0) 45%,
+          rgba(0,0,0,var(--vignette)) 100%),
+        radial-gradient(circle at 20% 15%,
+          rgba(80,120,255,0.18),
+          rgba(0,0,0,0) 55%),
+        radial-gradient(circle at 80% 75%,
+          rgba(255,80,160,0.12),
+          rgba(0,0,0,0) 58%);
+    }
+
+    /* -------------------------
+       TOP
+    ------------------------- */
+    .scanlines{
+      position:absolute;
+      inset:0;
+      opacity: var(--o);
+      background: repeating-linear-gradient(
+        to bottom,
+        rgba(255,255,255,var(--scan)) 0px,
+        rgba(255,255,255,var(--scan)) var(--scan-thickness),
+        rgba(0,0,0,0) var(--scan-thickness),
+        rgba(0,0,0,0) calc(var(--scan-thickness) + var(--scan-gap))
+      );
+      mix-blend-mode: overlay;
+      transform: translateZ(0);
+      /* helps reduce shimmering on some scales */
+      image-rendering: auto;
+    }
+
+    .glare{
+      position:absolute;
+      inset:-25%;
+      opacity: var(--o);
+      background: linear-gradient(125deg,
+        rgba(255,255,255,0) 40%,
+        rgba(255,255,255,var(--glare)) 50%,
+        rgba(255,255,255,0) 60%);
+      mix-blend-mode: screen;
+      filter: blur(var(--blur));
+      animation: glareMove var(--glare-secs) var(--glare-ease) infinite;
+      transform: translateZ(0);
+    }
+    @keyframes glareMove{
+      0%   { transform: translate(-10%, -10%); }
+      50%  { transform: translate(10%, 12%); }
+      100% { transform: translate(-10%, -10%); }
+    }
+
+    .grain{
+      position:absolute;
+      inset:0;
+      opacity: calc(var(--o) * var(--grain));
+      mix-blend-mode: overlay;
+      transform: translateZ(0);
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='%7B%7D' height='%7B%7D'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.55'/%3E%3C/svg%3E");
+      /* We'll patch this URL at runtime to reflect params. */
+    }
+
+    .brackets{
+      position:absolute;
+      inset:0;
+      opacity: calc(var(--o) * 0.9);
+    }
+    .brackets::before{
+      content:"";
+      position:absolute;
+      inset: var(--inset);
+      border-radius: calc(var(--radius) * 0.65);
+      border: 1px solid rgba(255,255,255,0.15);
+      box-shadow: 0 0 16px rgba(0,0,0,0.25) inset;
+    }
+
+    /* Optional tiny chromatic edge vibe */
+    .aberration{
+      position:absolute;
+      inset:0;
+      opacity: calc(var(--o) * 0.25);
+      mix-blend-mode: screen;
+      filter: blur(0.4px);
+      background:
+        radial-gradient(circle at 20% 20%, rgba(255,0,0,0.18), rgba(0,0,0,0) 45%),
+        radial-gradient(circle at 80% 80%, rgba(0,255,255,0.14), rgba(0,0,0,0) 48%);
+    }
+
+    /* Reduce motion option */
+    @media (prefers-reduced-motion: reduce){
+      .glare { animation: none; }
+    }
+  </style>
+</head>
+
+<body>
+  <!-- We render only what layer needs -->
+  <div id="fx" class="fx"></div>
+
+  <script>
+    const qs = new URLSearchParams(location.search);
+
+    // layer=behind|top|both
+    const layer = (qs.get("layer") || "top").toLowerCase();
+
+    // helper: parse float with default
+    const f = (k, d) => {
+      const v = qs.get(k);
+      if (v === null || v === "") return d;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : d;
+    };
+    const i = (k, d) => {
+      const v = qs.get(k);
+      if (v === null || v === "") return d;
+      const n = parseInt(v, 10);
+      return Number.isFinite(n) ? n : d;
+    };
+
+    // Apply CSS vars from params (short + usable)
+    // o=master opacity
+    document.documentElement.style.setProperty("--o", String(f("o", 0.40)));
+
+    // strengths
+    document.documentElement.style.setProperty("--vignette", String(f("vig", 0.55)));
+    document.documentElement.style.setProperty("--scan", String(f("scan", 0.10)));
+    document.documentElement.style.setProperty("--grain", String(f("grain", 0.10)));
+    document.documentElement.style.setProperty("--glare", String(f("glare", 0.18)));
+
+    // scanline geometry
+    document.documentElement.style.setProperty("--scan-thickness", `${f("st", 1)}px`);
+    document.documentElement.style.setProperty("--scan-gap", `${f("sg", 5)}px`);
+
+    // geometry
+    document.documentElement.style.setProperty("--inset", `${f("inset", 22)}px`);
+    document.documentElement.style.setProperty("--radius", `${f("r", 18)}px`);
+    document.documentElement.style.setProperty("--shadow", String(f("sh", 0.25)));
+
+    // animation
+    document.documentElement.style.setProperty("--glare-secs", `${f("gs", 6.8)}s`);
+
+    // perf-ish
+    document.documentElement.style.setProperty("--blur", `${f("blur", 0.6)}px`);
+
+    // grain tile patch (so you can control noise feel)
+    const grainSize = i("gsize", 160);
+    const grainFreq = f("gf", 0.85);
+
+    function grainDataUrl(size, freq){
+      const svg =
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}">` +
+        `<filter id="n"><feTurbulence type="fractalNoise" baseFrequency="${freq}" numOctaves="2" stitchTiles="stitch"/></filter>` +
+        `<rect width="100%" height="100%" filter="url(#n)" opacity=".55"/></svg>`;
+      return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
+    }
+
+    // Build DOM based on layer
+    const fx = document.getElementById("fx");
+
+    // clip=1 enables rounded clipping + inner shadow "seat"
+    const clip = qs.get("clip") === "1";
+    if (clip) fx.classList.add("clip");
+
+    // ab=1 enables subtle aberration layer
+    const aberration = qs.get("ab") === "1";
+
+    const make = (cls) => {
+      const el = document.createElement("div");
+      el.className = cls;
+      return el;
+    };
+
+    // Render behind
+    if (layer === "behind" || layer === "both"){
+      fx.appendChild(make("vignette"));
+    }
+
+    // Render top
+    if (layer === "top" || layer === "both"){
+      fx.appendChild(make("scanlines"));
+
+      const g = make("grain");
+      g.style.backgroundImage = grainDataUrl(grainSize, grainFreq);
+      fx.appendChild(g);
+
+      fx.appendChild(make("glare"));
+
+      // brackets=1 (default on for top)
+      const brackets = qs.get("br") ?? "1";
+      if (brackets === "1") fx.appendChild(make("brackets"));
+
+      if (aberration) fx.appendChild(make("aberration"));
+    }
+  </script>
+</body>
+</html>
