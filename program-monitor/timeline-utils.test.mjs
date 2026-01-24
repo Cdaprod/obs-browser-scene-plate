@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { classifyUrl, isHttpUrl, parseNodeText, uuid } = require("./timeline-utils.js");
+const { classifyUrl, getDurationHintSeconds, isHttpUrl, parseNodeText, uuid } = require("./timeline-utils.js");
 
 process.on("uncaughtException", (error) => {
   console.error(error);
@@ -49,6 +49,29 @@ test("isHttpUrl checks scheme", () => {
   assert.equal(isHttpUrl("http://host/file.mp4"), true);
   assert.equal(isHttpUrl("https://host/file.mp4"), true);
   assert.equal(isHttpUrl("file.mp4"), false);
+});
+
+test("getDurationHintSeconds reads duration params", () => {
+  assert.equal(getDurationHintSeconds("http://host/base.html?duration=12"), 12);
+  assert.equal(getDurationHintSeconds("http://host/base.html?duration=1200"), 1.2);
+  assert.equal(getDurationHintSeconds("http://host/base.html?ms=4500"), 4.5);
+});
+
+test("getDurationHintSeconds sums component ms params", () => {
+  const url = "http://host/base.html?in=200&out=300&hold=500&gap=250&pause=250";
+  assert.equal(getDurationHintSeconds(url), 1.5);
+});
+
+test("getDurationHintSeconds supports numbered params", () => {
+  const url = "http://host/base.html?hold1=200&hold2=300&hold3=500";
+  assert.equal(getDurationHintSeconds(url), 1);
+});
+
+test("getDurationHintSeconds estimates typewriter timing", () => {
+  const url = "http://host/base.html?s1=Hello&s2=World&cps=10";
+  const estimate = getDurationHintSeconds(url);
+  assert.ok(estimate > 0);
+  assert.ok(estimate > 3);
 });
 
 test("uuid returns a non-empty string", () => {
