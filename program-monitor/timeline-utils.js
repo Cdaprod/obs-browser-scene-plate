@@ -46,6 +46,69 @@
     return "video";
   }
 
+  function getDurationHintSeconds(url) {
+    if (!url) {
+      return 0;
+    }
+
+    let parsed;
+    try {
+      parsed = url.includes("://") ? new URL(url) : new URL(url, "http://localhost");
+    } catch (error) {
+      return 0;
+    }
+
+    const params = parsed.searchParams;
+    if (!params || Array.from(params.keys()).length === 0) {
+      return 0;
+    }
+
+    const secondsKeys = new Set(["duration", "dur", "length", "len", "time", "t", "seconds", "sec", "s"]);
+    const msKeys = new Set(["ms", "msec", "millis", "milliseconds"]);
+    const componentMsKeys = new Set(["in", "out", "hold", "gap", "pause", "delay", "start", "intro", "outro"]);
+
+    for (const key of secondsKeys) {
+      const value = params.get(key);
+      if (!value) {
+        continue;
+      }
+      const parsedValue = Number.parseFloat(value);
+      if (Number.isFinite(parsedValue) && parsedValue > 0) {
+        return parsedValue >= 1000 ? parsedValue / 1000 : parsedValue;
+      }
+    }
+
+    for (const key of msKeys) {
+      const value = params.get(key);
+      if (!value) {
+        continue;
+      }
+      const parsedValue = Number.parseFloat(value);
+      if (Number.isFinite(parsedValue) && parsedValue > 0) {
+        return parsedValue / 1000;
+      }
+    }
+
+    let totalMs = 0;
+    params.forEach((value, rawKey) => {
+      const key = rawKey.toLowerCase();
+      const baseKey = key.replace(/\d+$/, "");
+      if (!componentMsKeys.has(baseKey)) {
+        return;
+      }
+      const parsedValue = Number.parseFloat(value);
+      if (Number.isFinite(parsedValue) && parsedValue > 0) {
+        totalMs += parsedValue;
+      }
+    });
+
+    if (totalMs > 0) {
+      return totalMs / 1000;
+    }
+
+    return 0;
+  }
+
   function isHttpUrl(url) {
     return /^https?:\/\//i.test(url || "");
   }
@@ -88,6 +151,7 @@
   const api = {
     STORAGE_KEY,
     parseNodeText,
+    getDurationHintSeconds,
     classifyUrl,
     isHttpUrl,
     uuid

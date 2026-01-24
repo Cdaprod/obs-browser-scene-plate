@@ -23,6 +23,69 @@ const fallbackUtils = (() => {
     };
   };
 
+  const getDurationHintSeconds = (url) => {
+    if (!url) {
+      return 0;
+    }
+
+    let parsed;
+    try {
+      parsed = url.includes("://") ? new URL(url) : new URL(url, "http://localhost");
+    } catch (error) {
+      return 0;
+    }
+
+    const params = parsed.searchParams;
+    if (!params || Array.from(params.keys()).length === 0) {
+      return 0;
+    }
+
+    const secondsKeys = new Set(["duration", "dur", "length", "len", "time", "t", "seconds", "sec", "s"]);
+    const msKeys = new Set(["ms", "msec", "millis", "milliseconds"]);
+    const componentMsKeys = new Set(["in", "out", "hold", "gap", "pause", "delay", "start", "intro", "outro"]);
+
+    for (const key of secondsKeys) {
+      const value = params.get(key);
+      if (!value) {
+        continue;
+      }
+      const parsedValue = Number.parseFloat(value);
+      if (Number.isFinite(parsedValue) && parsedValue > 0) {
+        return parsedValue >= 1000 ? parsedValue / 1000 : parsedValue;
+      }
+    }
+
+    for (const key of msKeys) {
+      const value = params.get(key);
+      if (!value) {
+        continue;
+      }
+      const parsedValue = Number.parseFloat(value);
+      if (Number.isFinite(parsedValue) && parsedValue > 0) {
+        return parsedValue / 1000;
+      }
+    }
+
+    let totalMs = 0;
+    params.forEach((value, rawKey) => {
+      const key = rawKey.toLowerCase();
+      const baseKey = key.replace(/\d+$/, "");
+      if (!componentMsKeys.has(baseKey)) {
+        return;
+      }
+      const parsedValue = Number.parseFloat(value);
+      if (Number.isFinite(parsedValue) && parsedValue > 0) {
+        totalMs += parsedValue;
+      }
+    });
+
+    if (totalMs > 0) {
+      return totalMs / 1000;
+    }
+
+    return 0;
+  };
+
   const extractPathname = (url) => {
     if (!url) {
       return "";
@@ -78,6 +141,7 @@ const fallbackUtils = (() => {
   return {
     STORAGE_KEY,
     parseNodeText,
+    getDurationHintSeconds,
     classifyUrl,
     isHttpUrl,
     uuid
@@ -85,12 +149,13 @@ const fallbackUtils = (() => {
 })();
 
 const programMonitorUtils = window.ProgramMonitorUtils || fallbackUtils;
-const { classifyUrl, isHttpUrl, parseNodeText, STORAGE_KEY, uuid } = programMonitorUtils;
+const { classifyUrl, getDurationHintSeconds, isHttpUrl, parseNodeText, STORAGE_KEY, uuid } = programMonitorUtils;
 
 const $ = (selector) => document.querySelector(selector);
 
 const state = {
   nodes: [{ id: uuid(), text: "", durationOverride: "" }],
+  selectedIndex: 0,
   activeIndex: 0,
   playing: false,
   stopRequested: false,
@@ -99,6 +164,7 @@ const state = {
 
 const elements = {
   nodeList: $("#nodeList"),
+  mainPanel: document.querySelector(".mainPanel"),
   baseVideo: $("#baseVideo"),
   baseFrame: $("#baseFrame"),
   overlayLayer: $("#overlayLayer"),
@@ -173,7 +239,8 @@ function saveLocal() {
       JSON.stringify({
         version: 1,
         nodes: state.nodes,
-        activeIndex: state.activeIndex
+        activeIndex: state.activeIndex,
+        selectedIndex: state.selectedIndex
       })
     );
   } catch (error) {
@@ -191,6 +258,13 @@ function loadLocal() {
     if (Array.isArray(parsed.nodes) && parsed.nodes.length) {
       state.nodes = parsed.nodes;
       state.activeIndex = Math.min(parsed.activeIndex || 0, state.nodes.length - 1);
+      if (parsed.selectedIndex === null) {
+        state.selectedIndex = null;
+      } else if (Number.isFinite(parsed.selectedIndex)) {
+        state.selectedIndex = Math.min(parsed.selectedIndex, state.nodes.length - 1);
+      } else {
+        state.selectedIndex = state.activeIndex;
+      }
     }
   } catch (error) {
     console.warn("Failed to load saved timeline", error);
@@ -228,6 +302,7 @@ async function importJSONFile(file) {
   }
   state.nodes = payload.nodes;
   state.activeIndex = 0;
+  state.selectedIndex = 0;
   state.validationResults = [];
   renderNodes();
   await primeNode(state.activeIndex);
@@ -243,13 +318,15 @@ function renderNodes() {
 
   state.nodes.forEach((node, index) => {
     const card = document.createElement("div");
-    card.className = "nodeCard" + (index === state.activeIndex ? " active" : "");
+    const isSelected = state.selectedIndex === index;
+    const isPlayingActive = state.playing && index === state.activeIndex;
+    card.className = "nodeCard" + (isSelected || isPlayingActive ? " active" : "");
 
     const header = document.createElement("div");
     header.className = "nodeHdr";
     header.innerHTML = `
       <div class="idx">Node ${index + 1}</div>
-      <div class="mini">${index === state.activeIndex ? "ACTIVE" : "tap to select"}</div>
+      <div class="mini">${isPlayingActive || isSelected ? "ACTIVE" : "tap to select"}</div>
     `;
 
     const textarea = document.createElement("textarea");
@@ -263,6 +340,19 @@ http://host/overlay.webm
 http://host/ambience.mp3`;
     autogrow(textarea);
 
+    const ensureSelected = () => {
+      if (state.playing) {
+        return;
+      }
+      if (state.selectedIndex === index && state.activeIndex === index) {
+        return;
+      }
+      state.selectedIndex = index;
+      state.activeIndex = index;
+      renderNodes();
+      saveLocal();
+    };
+
     textarea.addEventListener("input", () => {
       node.text = textarea.value;
       autogrow(textarea);
@@ -272,6 +362,7 @@ http://host/ambience.mp3`;
         primeNode(index).catch(() => {});
       }
     });
+    textarea.addEventListener("focus", ensureSelected);
 
     textarea.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -297,6 +388,7 @@ http://host/ambience.mp3`;
         primeNode(index).catch(() => {});
       }
     });
+    durationInput.addEventListener("focus", ensureSelected);
     durationInput.addEventListener("click", (event) => {
       event.stopPropagation();
     });
@@ -308,6 +400,7 @@ http://host/ambience.mp3`;
       if (state.playing) {
         return;
       }
+      state.selectedIndex = index;
       state.activeIndex = index;
       renderNodes();
       await primeNode(index);
@@ -346,7 +439,22 @@ http://host/ambience.mp3`;
     elements.nodeList.appendChild(card);
   });
 
-  elements.statNode.textContent = String(state.activeIndex + 1);
+  if (state.playing) {
+    elements.statNode.textContent = String(state.activeIndex + 1);
+  } else if (state.selectedIndex === null || state.selectedIndex === undefined) {
+    elements.statNode.textContent = "—";
+  } else {
+    elements.statNode.textContent = String(state.selectedIndex + 1);
+  }
+}
+
+function clearSelection() {
+  if (state.selectedIndex === null || state.selectedIndex === undefined) {
+    return;
+  }
+  state.selectedIndex = null;
+  renderNodes();
+  saveLocal();
 }
 
 function clearLayers() {
@@ -386,6 +494,19 @@ function clearBaseHandlers() {
   }
 }
 
+function resolveDurationSeconds({ baseKind, baseUrl, overrideSeconds, baseDuration, durationHintSeconds }) {
+  const override = Number.isFinite(overrideSeconds) && overrideSeconds > 0 ? overrideSeconds : 0;
+  const base = Number.isFinite(baseDuration) && baseDuration > 0 ? baseDuration : 0;
+  const hintValue = Number.isFinite(durationHintSeconds) ? durationHintSeconds : getDurationHintSeconds(baseUrl);
+  const hint = Number.isFinite(hintValue) && hintValue > 0 ? hintValue : 0;
+
+  if (baseKind === "page") {
+    return override || hint;
+  }
+
+  return base || override || hint;
+}
+
 function loadVideoMeta(videoEl, url) {
   return new Promise((resolve, reject) => {
     const onLoaded = () => {
@@ -415,6 +536,7 @@ async function primeNode(index) {
   const parsed = parseNodeText(node.text);
   const overrideSeconds = Number(node.durationOverride);
   const baseKind = classifyUrl(parsed.baseUrl);
+  const durationHintSeconds = getDurationHintSeconds(parsed.baseUrl);
 
   setMessage("");
 
@@ -435,7 +557,11 @@ async function primeNode(index) {
   let duration = 0;
   if (baseKind === "page") {
     if (Number.isFinite(overrideSeconds) && overrideSeconds > 0) {
+      duration = overrideSeconds;
       setMessage("Using duration override for HTML source.");
+    } else if (Number.isFinite(durationHintSeconds) && durationHintSeconds > 0) {
+      duration = durationHintSeconds;
+      setMessage("Using duration hint from URL parameters.");
     } else {
       setMessage("Base duration unknown. Add a duration override to enable playback.");
     }
@@ -449,16 +575,25 @@ async function primeNode(index) {
       duration = await loadVideoMeta(elements.baseVideo, parsed.baseUrl);
     } catch (error) {
       duration = 0;
-      if (Number.isFinite(overrideSeconds) && overrideSeconds > 0) {
-        setMessage("Using duration override for streaming source.");
-      } else {
-        setMessage("Base duration unknown. Add a duration override to enable playback.");
-      }
     }
   }
 
-  if (!duration && Number.isFinite(overrideSeconds) && overrideSeconds > 0) {
-    duration = overrideSeconds;
+  duration = resolveDurationSeconds({
+    baseKind,
+    baseUrl: parsed.baseUrl,
+    overrideSeconds,
+    baseDuration: duration,
+    durationHintSeconds
+  });
+
+  if (!duration && baseKind !== "page") {
+    if (Number.isFinite(overrideSeconds) && overrideSeconds > 0) {
+      setMessage("Using duration override for streaming source.");
+    } else if (Number.isFinite(durationHintSeconds) && durationHintSeconds > 0) {
+      setMessage("Using duration hint from URL parameters.");
+    } else {
+      setMessage("Base duration unknown. Add a duration override to enable playback.");
+    }
   }
 
   elements.statDur.textContent = duration.toFixed(2);
@@ -524,6 +659,7 @@ function stopAll() {
   });
 
   elements.statT.textContent = "0.00";
+  renderNodes();
 }
 
 function pauseAll() {
@@ -531,12 +667,23 @@ function pauseAll() {
   elements.baseVideo.pause();
   overlayVideos.forEach((video) => video.pause());
   overlayAudios.forEach((audio) => audio.pause());
+  renderNodes();
 }
 
 async function playActive() {
   state.stopRequested = false;
   state.playing = true;
+  if (rafId) {
+    cancelAnimationFrame(rafId);
+    rafId = null;
+  }
 
+  if (state.selectedIndex === null || state.selectedIndex === undefined) {
+    state.activeIndex = 0;
+  } else {
+    state.activeIndex = state.selectedIndex;
+  }
+  renderNodes();
   const index = state.activeIndex;
   const overrideSeconds = Number(state.nodes[index].durationOverride);
   elements.statNode.textContent = String(index + 1);
@@ -544,6 +691,7 @@ async function playActive() {
   await primeNode(index);
 
   const parsed = parseNodeText(state.nodes[index].text);
+  const durationHintSeconds = getDurationHintSeconds(parsed.baseUrl);
   if (!parsed.baseUrl) {
     state.playing = false;
     return;
@@ -590,6 +738,7 @@ async function playActive() {
       playActive().catch(() => {});
     } else {
       state.playing = false;
+      renderNodes();
     }
   };
 
@@ -611,10 +760,13 @@ async function playActive() {
     const current = activeBaseKind === "page"
       ? (performance.now() - baseStartTime) / 1000
       : (elements.baseVideo.currentTime || 0);
-    let duration = elements.baseVideo.duration || 0;
-    if ((!duration || Number.isNaN(duration)) && Number.isFinite(overrideSeconds) && overrideSeconds > 0) {
-      duration = overrideSeconds;
-    }
+    const duration = resolveDurationSeconds({
+      baseKind: activeBaseKind,
+      baseUrl: parsed.baseUrl,
+      overrideSeconds,
+      baseDuration: elements.baseVideo.duration,
+      durationHintSeconds
+    });
 
     elements.statT.textContent = current.toFixed(2);
     elements.statDur.textContent = (Number.isFinite(duration) ? duration : 0).toFixed(2);
@@ -631,7 +783,8 @@ async function playActive() {
 }
 
 function openBaseInNewTab() {
-  const parsed = parseNodeText(state.nodes[state.activeIndex].text);
+  const index = state.selectedIndex ?? state.activeIndex;
+  const parsed = parseNodeText(state.nodes[index].text);
   if (!parsed.baseUrl) {
     setMessage("No base URL set for this node.");
     return;
@@ -806,6 +959,7 @@ $("#btnAdd").addEventListener("click", () => {
   }
   state.nodes.push({ id: uuid(), text: "", durationOverride: "" });
   state.activeIndex = state.nodes.length - 1;
+  state.selectedIndex = state.activeIndex;
   state.validationResults = [];
   renderNodes();
   saveLocal();
@@ -820,6 +974,7 @@ $("#btnDelete").addEventListener("click", () => {
   }
   state.nodes.splice(state.activeIndex, 1);
   state.activeIndex = Math.max(0, state.activeIndex - 1);
+  state.selectedIndex = state.activeIndex;
   state.validationResults = [];
   renderNodes();
   saveLocal();
@@ -830,6 +985,7 @@ $("#btnPrev").addEventListener("click", async () => {
     return;
   }
   state.activeIndex = Math.max(0, state.activeIndex - 1);
+  state.selectedIndex = state.activeIndex;
   state.validationResults = [];
   renderNodes();
   await primeNode(state.activeIndex);
@@ -841,6 +997,7 @@ $("#btnNext").addEventListener("click", async () => {
     return;
   }
   state.activeIndex = Math.min(state.nodes.length - 1, state.activeIndex + 1);
+  state.selectedIndex = state.activeIndex;
   state.validationResults = [];
   renderNodes();
   await primeNode(state.activeIndex);
@@ -879,6 +1036,21 @@ if (elements.togglePreview) {
   elements.togglePreview.addEventListener("click", () => {
     const isCollapsed = document.body.classList.contains("preview-collapsed");
     setPreviewCollapsed(!isCollapsed);
+  });
+}
+
+if (elements.mainPanel) {
+  elements.mainPanel.addEventListener("click", (event) => {
+    if (state.playing) {
+      return;
+    }
+    if (event.target.closest(".nodeCard")) {
+      return;
+    }
+    if (event.target.closest("button, input, textarea, select, option, a, label")) {
+      return;
+    }
+    clearSelection();
   });
 }
 
