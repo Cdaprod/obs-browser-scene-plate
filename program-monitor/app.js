@@ -155,6 +155,7 @@ const $ = (selector) => document.querySelector(selector);
 
 const state = {
   nodes: [{ id: uuid(), text: "", durationOverride: "" }],
+  selectedIndex: 0,
   activeIndex: 0,
   playing: false,
   stopRequested: false,
@@ -163,6 +164,7 @@ const state = {
 
 const elements = {
   nodeList: $("#nodeList"),
+  mainPanel: document.querySelector(".mainPanel"),
   baseVideo: $("#baseVideo"),
   baseFrame: $("#baseFrame"),
   overlayLayer: $("#overlayLayer"),
@@ -237,7 +239,8 @@ function saveLocal() {
       JSON.stringify({
         version: 1,
         nodes: state.nodes,
-        activeIndex: state.activeIndex
+        activeIndex: state.activeIndex,
+        selectedIndex: state.selectedIndex
       })
     );
   } catch (error) {
@@ -255,6 +258,13 @@ function loadLocal() {
     if (Array.isArray(parsed.nodes) && parsed.nodes.length) {
       state.nodes = parsed.nodes;
       state.activeIndex = Math.min(parsed.activeIndex || 0, state.nodes.length - 1);
+      if (parsed.selectedIndex === null) {
+        state.selectedIndex = null;
+      } else if (Number.isFinite(parsed.selectedIndex)) {
+        state.selectedIndex = Math.min(parsed.selectedIndex, state.nodes.length - 1);
+      } else {
+        state.selectedIndex = state.activeIndex;
+      }
     }
   } catch (error) {
     console.warn("Failed to load saved timeline", error);
@@ -292,6 +302,7 @@ async function importJSONFile(file) {
   }
   state.nodes = payload.nodes;
   state.activeIndex = 0;
+  state.selectedIndex = 0;
   state.validationResults = [];
   renderNodes();
   await primeNode(state.activeIndex);
@@ -307,13 +318,15 @@ function renderNodes() {
 
   state.nodes.forEach((node, index) => {
     const card = document.createElement("div");
-    card.className = "nodeCard" + (index === state.activeIndex ? " active" : "");
+    const isSelected = state.selectedIndex === index;
+    const isPlayingActive = state.playing && index === state.activeIndex;
+    card.className = "nodeCard" + (isSelected || isPlayingActive ? " active" : "");
 
     const header = document.createElement("div");
     header.className = "nodeHdr";
     header.innerHTML = `
       <div class="idx">Node ${index + 1}</div>
-      <div class="mini">${index === state.activeIndex ? "ACTIVE" : "tap to select"}</div>
+      <div class="mini">${isPlayingActive || isSelected ? "ACTIVE" : "tap to select"}</div>
     `;
 
     const textarea = document.createElement("textarea");
@@ -327,6 +340,19 @@ http://host/overlay.webm
 http://host/ambience.mp3`;
     autogrow(textarea);
 
+    const ensureSelected = () => {
+      if (state.playing) {
+        return;
+      }
+      if (state.selectedIndex === index && state.activeIndex === index) {
+        return;
+      }
+      state.selectedIndex = index;
+      state.activeIndex = index;
+      renderNodes();
+      saveLocal();
+    };
+
     textarea.addEventListener("input", () => {
       node.text = textarea.value;
       autogrow(textarea);
@@ -336,6 +362,7 @@ http://host/ambience.mp3`;
         primeNode(index).catch(() => {});
       }
     });
+    textarea.addEventListener("focus", ensureSelected);
 
     textarea.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -361,6 +388,7 @@ http://host/ambience.mp3`;
         primeNode(index).catch(() => {});
       }
     });
+    durationInput.addEventListener("focus", ensureSelected);
     durationInput.addEventListener("click", (event) => {
       event.stopPropagation();
     });
@@ -372,6 +400,7 @@ http://host/ambience.mp3`;
       if (state.playing) {
         return;
       }
+      state.selectedIndex = index;
       state.activeIndex = index;
       renderNodes();
       await primeNode(index);
@@ -410,7 +439,22 @@ http://host/ambience.mp3`;
     elements.nodeList.appendChild(card);
   });
 
-  elements.statNode.textContent = String(state.activeIndex + 1);
+  if (state.playing) {
+    elements.statNode.textContent = String(state.activeIndex + 1);
+  } else if (state.selectedIndex === null || state.selectedIndex === undefined) {
+    elements.statNode.textContent = "—";
+  } else {
+    elements.statNode.textContent = String(state.selectedIndex + 1);
+  }
+}
+
+function clearSelection() {
+  if (state.selectedIndex === null || state.selectedIndex === undefined) {
+    return;
+  }
+  state.selectedIndex = null;
+  renderNodes();
+  saveLocal();
 }
 
 function clearLayers() {
@@ -615,6 +659,7 @@ function stopAll() {
   });
 
   elements.statT.textContent = "0.00";
+  renderNodes();
 }
 
 function pauseAll() {
@@ -622,6 +667,7 @@ function pauseAll() {
   elements.baseVideo.pause();
   overlayVideos.forEach((video) => video.pause());
   overlayAudios.forEach((audio) => audio.pause());
+  renderNodes();
 }
 
 async function playActive() {
@@ -632,6 +678,12 @@ async function playActive() {
     rafId = null;
   }
 
+  if (state.selectedIndex === null || state.selectedIndex === undefined) {
+    state.activeIndex = 0;
+  } else {
+    state.activeIndex = state.selectedIndex;
+  }
+  renderNodes();
   const index = state.activeIndex;
   const overrideSeconds = Number(state.nodes[index].durationOverride);
   elements.statNode.textContent = String(index + 1);
@@ -686,6 +738,7 @@ async function playActive() {
       playActive().catch(() => {});
     } else {
       state.playing = false;
+      renderNodes();
     }
   };
 
@@ -730,7 +783,8 @@ async function playActive() {
 }
 
 function openBaseInNewTab() {
-  const parsed = parseNodeText(state.nodes[state.activeIndex].text);
+  const index = state.selectedIndex ?? state.activeIndex;
+  const parsed = parseNodeText(state.nodes[index].text);
   if (!parsed.baseUrl) {
     setMessage("No base URL set for this node.");
     return;
@@ -905,6 +959,7 @@ $("#btnAdd").addEventListener("click", () => {
   }
   state.nodes.push({ id: uuid(), text: "", durationOverride: "" });
   state.activeIndex = state.nodes.length - 1;
+  state.selectedIndex = state.activeIndex;
   state.validationResults = [];
   renderNodes();
   saveLocal();
@@ -919,6 +974,7 @@ $("#btnDelete").addEventListener("click", () => {
   }
   state.nodes.splice(state.activeIndex, 1);
   state.activeIndex = Math.max(0, state.activeIndex - 1);
+  state.selectedIndex = state.activeIndex;
   state.validationResults = [];
   renderNodes();
   saveLocal();
@@ -929,6 +985,7 @@ $("#btnPrev").addEventListener("click", async () => {
     return;
   }
   state.activeIndex = Math.max(0, state.activeIndex - 1);
+  state.selectedIndex = state.activeIndex;
   state.validationResults = [];
   renderNodes();
   await primeNode(state.activeIndex);
@@ -940,6 +997,7 @@ $("#btnNext").addEventListener("click", async () => {
     return;
   }
   state.activeIndex = Math.min(state.nodes.length - 1, state.activeIndex + 1);
+  state.selectedIndex = state.activeIndex;
   state.validationResults = [];
   renderNodes();
   await primeNode(state.activeIndex);
@@ -978,6 +1036,21 @@ if (elements.togglePreview) {
   elements.togglePreview.addEventListener("click", () => {
     const isCollapsed = document.body.classList.contains("preview-collapsed");
     setPreviewCollapsed(!isCollapsed);
+  });
+}
+
+if (elements.mainPanel) {
+  elements.mainPanel.addEventListener("click", (event) => {
+    if (state.playing) {
+      return;
+    }
+    if (event.target.closest(".nodeCard")) {
+      return;
+    }
+    if (event.target.closest("button, input, textarea, select, option, a, label")) {
+      return;
+    }
+    clearSelection();
   });
 }
 
