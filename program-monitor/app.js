@@ -113,6 +113,7 @@ let overlayAudios = [];
 let rafId = null;
 let baseEndedHandler = null;
 let exportPollTimer = null;
+const PREVIEW_COLLAPSE_KEY = "program-monitor.preview-collapsed";
 
 const isFileProtocol = window.location.protocol === "file:";
 const host = window.location.hostname || "localhost";
@@ -149,6 +150,12 @@ function setPreviewCollapsed(collapsed) {
   document.body.classList.toggle("preview-collapsed", isCollapsed);
   if (elements.togglePreview) {
     elements.togglePreview.setAttribute("aria-pressed", String(!isCollapsed));
+  }
+
+  try {
+    localStorage.setItem(PREVIEW_COLLAPSE_KEY, JSON.stringify(isCollapsed));
+  } catch (error) {
+    console.warn("Failed to persist preview state", error);
   }
 }
 
@@ -282,6 +289,12 @@ http://host/ambience.mp3`;
       if (!state.playing && index === state.activeIndex) {
         primeNode(index).catch(() => {});
       }
+    });
+    durationInput.addEventListener("click", (event) => {
+      event.stopPropagation();
+    });
+    durationInput.addEventListener("touchstart", (event) => {
+      event.stopPropagation();
     });
 
     card.addEventListener("click", async () => {
@@ -828,7 +841,17 @@ elements.fileImport.addEventListener("change", async () => {
 
 try {
   loadLocal();
-  setPreviewCollapsed(true);
+  try {
+    const stored = localStorage.getItem(PREVIEW_COLLAPSE_KEY);
+    if (stored !== null) {
+      setPreviewCollapsed(JSON.parse(stored));
+    } else {
+      setPreviewCollapsed(false);
+    }
+  } catch (error) {
+    console.warn("Failed to load preview state", error);
+    setPreviewCollapsed(false);
+  }
   renderNodes();
   primeNode(state.activeIndex).catch(() => {});
   setExportStatus("Idle");
