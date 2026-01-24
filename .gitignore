@@ -3,3 +3,4 @@ renders/*
 !renders/.gitkeep
 .env
 wall-api/.env
+/program-monitor/localStorage.json
