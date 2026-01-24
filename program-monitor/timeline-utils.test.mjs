@@ -8,7 +8,14 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { classifyUrl, getDurationHintSeconds, isHttpUrl, parseNodeText, uuid } = require("./timeline-utils.js");
+const {
+  classifyUrl,
+  getDurationHintSeconds,
+  getPlaybackStartIndex,
+  isHttpUrl,
+  parseNodeText,
+  uuid
+} = require("./timeline-utils.js");
 
 process.on("uncaughtException", (error) => {
   console.error(error);
@@ -78,4 +85,14 @@ test("uuid returns a non-empty string", () => {
   const value = uuid();
   assert.equal(typeof value, "string");
   assert.ok(value.length > 0);
+});
+
+test("getPlaybackStartIndex defaults to the first node when none is selected", () => {
+  assert.equal(getPlaybackStartIndex(-1, 3), 0);
+  assert.equal(getPlaybackStartIndex(undefined, 3), 0);
+  assert.equal(getPlaybackStartIndex(5, 3), 0);
+});
+
+test("getPlaybackStartIndex returns -1 when no nodes exist", () => {
+  assert.equal(getPlaybackStartIndex(0, 0), -1);
 });

@@ -204,13 +204,27 @@
     return `id_${Date.now().toString(16)}_${Math.random().toString(16).slice(2)}`;
   }
 
+  function getPlaybackStartIndex(activeIndex, totalNodes) {
+    const total = Number.isFinite(totalNodes) ? totalNodes : 0;
+    if (total <= 0) {
+      return -1;
+    }
+
+    if (!Number.isFinite(activeIndex) || activeIndex < 0 || activeIndex >= total) {
+      return 0;
+    }
+
+    return activeIndex;
+  }
+
   const api = {
     STORAGE_KEY,
     parseNodeText,
     getDurationHintSeconds,
     classifyUrl,
     isHttpUrl,
-    uuid
+    uuid,
+    getPlaybackStartIndex
   };
 
   if (typeof module !== "undefined" && module.exports) {
