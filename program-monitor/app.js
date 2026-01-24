@@ -23,6 +23,69 @@ const fallbackUtils = (() => {
     };
   };
 
+  const getDurationHintSeconds = (url) => {
+    if (!url) {
+      return 0;
+    }
+
+    let parsed;
+    try {
+      parsed = url.includes("://") ? new URL(url) : new URL(url, "http://localhost");
+    } catch (error) {
+      return 0;
+    }
+
+    const params = parsed.searchParams;
+    if (!params || Array.from(params.keys()).length === 0) {
+      return 0;
+    }
+
+    const secondsKeys = new Set(["duration", "dur", "length", "len", "time", "t", "seconds", "sec", "s"]);
+    const msKeys = new Set(["ms", "msec", "millis", "milliseconds"]);
+    const componentMsKeys = new Set(["in", "out", "hold", "gap", "pause", "delay", "start", "intro", "outro"]);
+
+    for (const key of secondsKeys) {
+      const value = params.get(key);
+      if (!value) {
+        continue;
+      }
+      const parsedValue = Number.parseFloat(value);
+      if (Number.isFinite(parsedValue) && parsedValue > 0) {
+        return parsedValue >= 1000 ? parsedValue / 1000 : parsedValue;
+      }
+    }
+
+    for (const key of msKeys) {
+      const value = params.get(key);
+      if (!value) {
+        continue;
+      }
+      const parsedValue = Number.parseFloat(value);
+      if (Number.isFinite(parsedValue) && parsedValue > 0) {
+        return parsedValue / 1000;
+      }
+    }
+
+    let totalMs = 0;
+    params.forEach((value, rawKey) => {
+      const key = rawKey.toLowerCase();
+      const baseKey = key.replace(/\d+$/, "");
+      if (!componentMsKeys.has(baseKey)) {
+        return;
+      }
+      const parsedValue = Number.parseFloat(value);
+      if (Number.isFinite(parsedValue) && parsedValue > 0) {
+        totalMs += parsedValue;
+      }
+    });
+
+    if (totalMs > 0) {
+      return totalMs / 1000;
+    }
+
+    return 0;
+  };
+
   const extractPathname = (url) => {
     if (!url) {
       return "";
@@ -78,6 +141,7 @@ const fallbackUtils = (() => {
   return {
     STORAGE_KEY,
     parseNodeText,
+    getDurationHintSeconds,
     classifyUrl,
     isHttpUrl,
     uuid
@@ -85,7 +149,7 @@ const fallbackUtils = (() => {
 })();
 
 const programMonitorUtils = window.ProgramMonitorUtils || fallbackUtils;
-const { classifyUrl, isHttpUrl, parseNodeText, STORAGE_KEY, uuid } = programMonitorUtils;
+const { classifyUrl, getDurationHintSeconds, isHttpUrl, parseNodeText, STORAGE_KEY, uuid } = programMonitorUtils;
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -386,6 +450,19 @@ function clearBaseHandlers() {
   }
 }
 
+function resolveDurationSeconds({ baseKind, baseUrl, overrideSeconds, baseDuration, durationHintSeconds }) {
+  const override = Number.isFinite(overrideSeconds) && overrideSeconds > 0 ? overrideSeconds : 0;
+  const base = Number.isFinite(baseDuration) && baseDuration > 0 ? baseDuration : 0;
+  const hintValue = Number.isFinite(durationHintSeconds) ? durationHintSeconds : getDurationHintSeconds(baseUrl);
+  const hint = Number.isFinite(hintValue) && hintValue > 0 ? hintValue : 0;
+
+  if (baseKind === "page") {
+    return override || hint;
+  }
+
+  return base || override || hint;
+}
+
 function loadVideoMeta(videoEl, url) {
   return new Promise((resolve, reject) => {
     const onLoaded = () => {
@@ -415,6 +492,7 @@ async function primeNode(index) {
   const parsed = parseNodeText(node.text);
   const overrideSeconds = Number(node.durationOverride);
   const baseKind = classifyUrl(parsed.baseUrl);
+  const durationHintSeconds = getDurationHintSeconds(parsed.baseUrl);
 
   setMessage("");
 
@@ -435,7 +513,11 @@ async function primeNode(index) {
   let duration = 0;
   if (baseKind === "page") {
     if (Number.isFinite(overrideSeconds) && overrideSeconds > 0) {
+      duration = overrideSeconds;
       setMessage("Using duration override for HTML source.");
+    } else if (Number.isFinite(durationHintSeconds) && durationHintSeconds > 0) {
+      duration = durationHintSeconds;
+      setMessage("Using duration hint from URL parameters.");
     } else {
       setMessage("Base duration unknown. Add a duration override to enable playback.");
     }
@@ -449,16 +531,25 @@ async function primeNode(index) {
       duration = await loadVideoMeta(elements.baseVideo, parsed.baseUrl);
     } catch (error) {
       duration = 0;
-      if (Number.isFinite(overrideSeconds) && overrideSeconds > 0) {
-        setMessage("Using duration override for streaming source.");
-      } else {
-        setMessage("Base duration unknown. Add a duration override to enable playback.");
-      }
     }
   }
 
-  if (!duration && Number.isFinite(overrideSeconds) && overrideSeconds > 0) {
-    duration = overrideSeconds;
+  duration = resolveDurationSeconds({
+    baseKind,
+    baseUrl: parsed.baseUrl,
+    overrideSeconds,
+    baseDuration: duration,
+    durationHintSeconds
+  });
+
+  if (!duration && baseKind !== "page") {
+    if (Number.isFinite(overrideSeconds) && overrideSeconds > 0) {
+      setMessage("Using duration override for streaming source.");
+    } else if (Number.isFinite(durationHintSeconds) && durationHintSeconds > 0) {
+      setMessage("Using duration hint from URL parameters.");
+    } else {
+      setMessage("Base duration unknown. Add a duration override to enable playback.");
+    }
   }
 
   elements.statDur.textContent = duration.toFixed(2);
@@ -536,6 +627,10 @@ function pauseAll() {
 async function playActive() {
   state.stopRequested = false;
   state.playing = true;
+  if (rafId) {
+    cancelAnimationFrame(rafId);
+    rafId = null;
+  }
 
   const index = state.activeIndex;
   const overrideSeconds = Number(state.nodes[index].durationOverride);
@@ -544,6 +639,7 @@ async function playActive() {
   await primeNode(index);
 
   const parsed = parseNodeText(state.nodes[index].text);
+  const durationHintSeconds = getDurationHintSeconds(parsed.baseUrl);
   if (!parsed.baseUrl) {
     state.playing = false;
     return;
@@ -611,10 +707,13 @@ async function playActive() {
     const current = activeBaseKind === "page"
       ? (performance.now() - baseStartTime) / 1000
       : (elements.baseVideo.currentTime || 0);
-    let duration = elements.baseVideo.duration || 0;
-    if ((!duration || Number.isNaN(duration)) && Number.isFinite(overrideSeconds) && overrideSeconds > 0) {
-      duration = overrideSeconds;
-    }
+    const duration = resolveDurationSeconds({
+      baseKind: activeBaseKind,
+      baseUrl: parsed.baseUrl,
+      overrideSeconds,
+      baseDuration: elements.baseVideo.duration,
+      durationHintSeconds
+    });
 
     elements.statT.textContent = current.toFixed(2);
     elements.statDur.textContent = (Number.isFinite(duration) ? duration : 0).toFixed(2);
