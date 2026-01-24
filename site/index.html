@@ -1247,6 +1247,14 @@
                     baseLocation
                 });
 
+                const resolvedPath = resolvedUrl instanceof URL
+                    ? resolvedUrl.pathname
+                    : new URL(resolvedUrl.toString(), baseLocation.origin).pathname;
+
+                if (resolvedPath !== path) {
+                    return fallback;
+                }
+
                 const merged = window.mergeBaseParams({
                     url: resolvedUrl,
                     baseLocation

@@ -112,11 +112,19 @@ body.preview-collapsed .previewPanel {
   height: var(--stageH);
 }
 
-#baseVideo {
+#baseVideo,
+#baseFrame {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: contain;
   background: #03111a;
+}
+
+#baseFrame {
+  border: 0;
+  display: none;
 }
 
 #overlayLayer {
@@ -126,7 +134,8 @@ body.preview-collapsed .previewPanel {
 }
 
 #overlayLayer video,
-#overlayLayer img {
+#overlayLayer img,
+#overlayLayer iframe {
   position: absolute;
   inset: 0;
   width: 100%;

@@ -41,6 +41,7 @@ test("parseNodeText trims lines and ignores comments", () => {
 test("classifyUrl detects media types", () => {
   assert.equal(classifyUrl("http://host/file.mp3"), "audio");
   assert.equal(classifyUrl("http://host/file.png"), "image");
+  assert.equal(classifyUrl("http://host/file.html"), "page");
   assert.equal(classifyUrl("http://host/file.mp4"), "video");
 });
 

@@ -30,7 +30,7 @@
       overflow: hidden;
     }
 
-    #plate {
+    #loadingPlate {
       position: absolute;
       left: var(--x);
       top: var(--y);
@@ -44,10 +44,17 @@
         0 0 28px color-mix(in srgb, var(--accent) 24%, transparent),
         inset 0 0 0 1px rgba(255, 255, 255, 0.08);
       filter: blur(var(--blur));
+      opacity: 1;
+      transition: opacity 0.6s ease;
     }
 
-    #plate::before,
-    #plate::after {
+    #loadingPlate.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    #loadingPlate::before,
+    #loadingPlate::after {
       content: "";
       position: absolute;
       left: 20px;
@@ -57,11 +64,11 @@
       opacity: 0.7;
     }
 
-    #plate::before {
+    #loadingPlate::before {
       top: 18px;
     }
 
-    #plate::after {
+    #loadingPlate::after {
       bottom: 18px;
     }
 
@@ -118,10 +125,26 @@
         opacity: 0.4;
       }
     }
+
+    iframe {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      border: 0;
+      background: transparent;
+      opacity: 1;
+      transition: opacity 0.6s ease;
+    }
+
+    iframe.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
   </style>
 </head>
 <body>
-  <div id="plate">
+  <div id="loadingPlate">
     <div class="label" id="label"></div>
     <div class="sub" id="sub"></div>
     <div class="indicator" aria-hidden="true">
@@ -130,41 +153,64 @@
       <span></span>
     </div>
   </div>
+  <iframe id="phoneFrame" class="hidden" title="Phone bridge plate variant 3"></iframe>
 
   <script>
     /**
      * transition_phone_bridge_plate_3.html — phone bridge plate (variant 3)
      *
-     * Default URL (full params):
-     * http://<HOST_IP>:8789/transitions/transition_phone_bridge_plate_3.html?label=PHONE%20BRIDGE&sub=LINK%20ESTABLISHED&accent=b07cff&bg=08060e&alpha=0.9&scale=1&x=50&y=50&blur=0
+     * Default URL (full params): http://<HOST_IP>:8789/transitions/transition_phone_bridge_plate_3.html?label=BRIDGING%20PHONE&sub=LINK%20ESTABLISHED&accent=b07cff&bg=08060e&alpha=0.9&scale=1&x=50&y=50&blur=0&loading=3.5&tilt=-12
      *
      * Params:
-     *  label=TEXT      (headline label)
-     *  sub=TEXT        (sub label)
+     *  label=TEXT      (loading headline)
+     *  sub=TEXT        (loading sub label)
      *  accent=HEX      (accent color without #)
-     *  bg=HEX          (background color without #)
-     *  alpha=0..1      (background alpha)
+     *  bg=HEX          (loading plate background without #)
+     *  alpha=0..1      (loading plate background alpha)
      *  scale=0.5..2    (overall scale)
      *  x=0..100        (horizontal position percentage)
      *  y=0..100        (vertical position percentage)
+     *  loading=0..10   (loading duration seconds)
+     *  tilt=-45..45    (rotation angle)
      *  blur=0..20      (blur px)
      */
 
-    const qs = new URLSearchParams(location.search);
-    const label = (qs.get("label") || "PHONE BRIDGE").slice(0, 48);
-    const sub = (qs.get("sub") || "LINK ESTABLISHED").slice(0, 64);
-    const accent = sanitizeHex(qs.get("accent") || "b07cff");
-    const bg = sanitizeHex(qs.get("bg") || "08060e");
-    const alpha = clamp(parseFloat(qs.get("alpha") || "0.9"), 0, 1);
-    const scale = clamp(parseFloat(qs.get("scale") || "1"), 0.5, 2);
-    const x = clamp(parseFloat(qs.get("x") || "50"), 0, 100);
-    const y = clamp(parseFloat(qs.get("y") || "50"), 0, 100);
-    const blur = clamp(parseFloat(qs.get("blur") || "0"), 0, 20);
+    const srcPath = "/transitions/transition_phone_bridge_plate_src.html";
+    const defaults = {
+      label: "BRIDGING PHONE",
+      sub: "LINK ESTABLISHED",
+      accent: "b07cff",
+      bg: "08060e",
+      alpha: "0.9",
+      scale: "1",
+      x: "50",
+      y: "50",
+      loading: "3.5",
+      tilt: "-12",
+      blur: "0"
+    };
 
-    const labelEl = document.getElementById("label");
-    const subEl = document.getElementById("sub");
-    labelEl.textContent = label;
-    subEl.textContent = sub;
+    const params = new URLSearchParams(window.location.search);
+    Object.entries(defaults).forEach(([key, value]) => {
+      if (!params.has(key)) {
+        params.set(key, value);
+      }
+    });
+
+    const label = (params.get("label") || defaults.label).slice(0, 48);
+    const sub = (params.get("sub") || defaults.sub).slice(0, 64);
+    const accent = sanitizeHex(params.get("accent") || defaults.accent);
+    const bg = sanitizeHex(params.get("bg") || defaults.bg);
+    const alpha = clamp(parseFloat(params.get("alpha") || defaults.alpha), 0, 1);
+    const scale = clamp(parseFloat(params.get("scale") || defaults.scale), 0.5, 2);
+    const x = clamp(parseFloat(params.get("x") || defaults.x), 0, 100);
+    const y = clamp(parseFloat(params.get("y") || defaults.y), 0, 100);
+    const blur = clamp(parseFloat(params.get("blur") || defaults.blur), 0, 20);
+    const tilt = clamp(parseFloat(params.get("tilt") || defaults.tilt), -45, 45);
+    const loadingSeconds = clamp(parseFloat(params.get("loading") || defaults.loading), 0, 10);
+
+    document.getElementById("label").textContent = label;
+    document.getElementById("sub").textContent = sub;
 
     const root = document.documentElement;
     root.style.setProperty("--accent", `#${accent}`);
@@ -173,6 +219,41 @@
     root.style.setProperty("--x", `${x}%`);
     root.style.setProperty("--y", `${y}%`);
     root.style.setProperty("--blur", `${blur}px`);
+
+    const body = sanitizeHex(params.get("body") || bg);
+    const glow = sanitizeHex(params.get("glow") || accent);
+    const glowAlpha = clamp(parseFloat(params.get("glowAlpha") || String(alpha)), 0, 1);
+
+    ["label", "sub", "bg", "alpha", "loading"].forEach((key) => params.delete(key));
+    params.set("accent", accent);
+    params.set("body", body);
+    params.set("glow", glow);
+    params.set("glowAlpha", glowAlpha.toString());
+    params.set("scale", scale.toString());
+    params.set("x", x.toString());
+    params.set("y", y.toString());
+    params.set("tilt", tilt.toString());
+    params.set("blur", blur.toString());
+
+    const srcUrl = new URL(srcPath, window.location.origin);
+    srcUrl.search = params.toString();
+    if (window.location.hash && !srcUrl.hash) {
+      srcUrl.hash = window.location.hash;
+    }
+
+    const phoneFrame = document.getElementById("phoneFrame");
+    phoneFrame.src = srcUrl.toString();
+
+    const loadingPlate = document.getElementById("loadingPlate");
+    if (loadingSeconds <= 0) {
+      loadingPlate.classList.add("hidden");
+      phoneFrame.classList.remove("hidden");
+    } else {
+      window.setTimeout(() => {
+        loadingPlate.classList.add("hidden");
+        phoneFrame.classList.remove("hidden");
+      }, loadingSeconds * 1000);
+    }
 
     function sanitizeHex(value) {
       const cleaned = (value || "").replace(/[^0-9a-f]/gi, "").toLowerCase();
