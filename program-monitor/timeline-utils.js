@@ -7,6 +7,7 @@
 (function setupProgramMonitorUtils(globalScope) {
   const AUDIO_EXTENSIONS = [".mp3", ".wav", ".m4a", ".aac", ".ogg"];
   const IMAGE_EXTENSIONS = [".png", ".jpg", ".jpeg", ".webp", ".gif"];
+  const PAGE_EXTENSIONS = [".html", ".htm"];
   const VIDEO_EXTENSIONS = [".mp4", ".mov", ".webm", ".mkv"];
   const STORAGE_KEY = "program-monitor.timeline.v1";
 
@@ -33,6 +34,9 @@
 
     if (IMAGE_EXTENSIONS.some((ext) => path.endsWith(ext))) {
       return "image";
+    }
+    if (PAGE_EXTENSIONS.some((ext) => path.endsWith(ext))) {
+      return "page";
     }
 
     if (VIDEO_EXTENSIONS.some((ext) => path.endsWith(ext))) {

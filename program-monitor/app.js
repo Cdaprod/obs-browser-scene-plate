@@ -7,6 +7,7 @@ const fallbackUtils = (() => {
   const STORAGE_KEY = "program-monitor.timeline.v1";
   const audioExt = [".mp3", ".wav", ".m4a", ".aac", ".ogg"];
   const imageExt = [".png", ".jpg", ".jpeg", ".webp", ".gif"];
+  const pageExt = [".html", ".htm"];
   const videoExt = [".mp4", ".mov", ".webm", ".mkv"];
 
   const parseNodeText = (text) => {
@@ -45,6 +46,9 @@ const fallbackUtils = (() => {
     }
     if (imageExt.some((ext) => path.endsWith(ext))) {
       return "image";
+    }
+    if (pageExt.some((ext) => path.endsWith(ext))) {
+      return "page";
     }
     if (videoExt.some((ext) => path.endsWith(ext))) {
       return "video";
@@ -96,6 +100,7 @@ const state = {
 const elements = {
   nodeList: $("#nodeList"),
   baseVideo: $("#baseVideo"),
+  baseFrame: $("#baseFrame"),
   overlayLayer: $("#overlayLayer"),
   statNode: $("#statNode"),
   statTotal: $("#statTotal"),
@@ -113,6 +118,8 @@ let overlayAudios = [];
 let rafId = null;
 let baseEndedHandler = null;
 let exportPollTimer = null;
+let activeBaseKind = "video";
+let baseStartTime = 0;
 const PREVIEW_COLLAPSE_KEY = "program-monitor.preview-collapsed";
 
 const isFileProtocol = window.location.protocol === "file:";
@@ -350,6 +357,21 @@ function clearLayers() {
   elements.overlayLayer.innerHTML = "";
 }
 
+function setBaseKind(kind, url) {
+  activeBaseKind = kind;
+  if (kind === "page") {
+    elements.baseVideo.pause();
+    elements.baseVideo.removeAttribute("src");
+    elements.baseVideo.style.display = "none";
+    elements.baseFrame.style.display = "block";
+    elements.baseFrame.src = url || "about:blank";
+  } else {
+    elements.baseFrame.removeAttribute("src");
+    elements.baseFrame.style.display = "none";
+    elements.baseVideo.style.display = "block";
+  }
+}
+
 function clearExportPoll() {
   if (exportPollTimer) {
     clearInterval(exportPollTimer);
@@ -392,29 +414,46 @@ async function primeNode(index) {
   const node = state.nodes[index];
   const parsed = parseNodeText(node.text);
   const overrideSeconds = Number(node.durationOverride);
+  const baseKind = classifyUrl(parsed.baseUrl);
 
   setMessage("");
 
   if (!parsed.baseUrl) {
+    setBaseKind("video");
     elements.baseVideo.removeAttribute("src");
+    elements.baseFrame.removeAttribute("src");
     elements.statDur.textContent = "0.00";
     return;
   }
 
-  elements.baseVideo.loop = false;
-  elements.baseVideo.muted = false;
-  elements.baseVideo.playsInline = true;
-  elements.baseVideo.preload = "metadata";
+  if (baseKind === "page") {
+    setBaseKind("page", parsed.baseUrl);
+  } else {
+    setBaseKind("video", parsed.baseUrl);
+  }
 
   let duration = 0;
-  try {
-    duration = await loadVideoMeta(elements.baseVideo, parsed.baseUrl);
-  } catch (error) {
-    duration = 0;
+  if (baseKind === "page") {
     if (Number.isFinite(overrideSeconds) && overrideSeconds > 0) {
-      setMessage("Using duration override for streaming source.");
+      setMessage("Using duration override for HTML source.");
     } else {
       setMessage("Base duration unknown. Add a duration override to enable playback.");
+    }
+  } else {
+    elements.baseVideo.loop = false;
+    elements.baseVideo.muted = false;
+    elements.baseVideo.playsInline = true;
+    elements.baseVideo.preload = "metadata";
+
+    try {
+      duration = await loadVideoMeta(elements.baseVideo, parsed.baseUrl);
+    } catch (error) {
+      duration = 0;
+      if (Number.isFinite(overrideSeconds) && overrideSeconds > 0) {
+        setMessage("Using duration override for streaming source.");
+      } else {
+        setMessage("Base duration unknown. Add a duration override to enable playback.");
+      }
     }
   }
 
@@ -440,6 +479,15 @@ async function primeNode(index) {
       image.src = url;
       image.alt = "";
       elements.overlayLayer.appendChild(image);
+      return;
+    }
+    if (kind === "page") {
+      const frame = document.createElement("iframe");
+      frame.src = url;
+      frame.title = "Overlay URL";
+      frame.loading = "eager";
+      frame.setAttribute("aria-hidden", "true");
+      elements.overlayLayer.appendChild(frame);
       return;
     }
 
@@ -500,6 +548,9 @@ async function playActive() {
     state.playing = false;
     return;
   }
+  const baseKind = classifyUrl(parsed.baseUrl);
+  activeBaseKind = baseKind;
+  baseStartTime = performance.now();
 
   overlayVideos.forEach((video) => {
     video.currentTime = 0;
@@ -510,10 +561,12 @@ async function playActive() {
     audio.play().catch(() => {});
   });
 
-  elements.baseVideo.currentTime = 0;
-  await elements.baseVideo.play().catch(() => {
-    state.playing = false;
-  });
+  if (baseKind !== "page") {
+    elements.baseVideo.currentTime = 0;
+    await elements.baseVideo.play().catch(() => {
+      state.playing = false;
+    });
+  }
 
   let advanced = false;
   const advance = () => {
@@ -541,19 +594,23 @@ async function playActive() {
   };
 
   clearBaseHandlers();
-  baseEndedHandler = () => {
-    if (state.playing) {
-      advance();
-    }
-  };
-  elements.baseVideo.addEventListener("ended", baseEndedHandler);
+  if (baseKind !== "page") {
+    baseEndedHandler = () => {
+      if (state.playing) {
+        advance();
+      }
+    };
+    elements.baseVideo.addEventListener("ended", baseEndedHandler);
+  }
 
   const tick = () => {
     if (!state.playing) {
       return;
     }
 
-    const current = elements.baseVideo.currentTime || 0;
+    const current = activeBaseKind === "page"
+      ? (performance.now() - baseStartTime) / 1000
+      : (elements.baseVideo.currentTime || 0);
     let duration = elements.baseVideo.duration || 0;
     if ((!duration || Number.isNaN(duration)) && Number.isFinite(overrideSeconds) && overrideSeconds > 0) {
       duration = overrideSeconds;

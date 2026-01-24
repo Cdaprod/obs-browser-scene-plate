@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>transition-phone-bridge-plate-src</title>
+  <style>
+    :root {
+      --accent: #b07cff;
+      --body: #0f1118;
+      --glow: rgba(176, 124, 255, 0.45);
+      --scale: 1;
+      --x: 50%;
+      --y: 50%;
+      --tilt: -12deg;
+      --blur: 0px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      height: 100%;
+      margin: 0;
+      background: transparent;
+      overflow: hidden;
+    }
+
+    #phone {
+      position: absolute;
+      left: var(--x);
+      top: var(--y);
+      width: min(46vw, 420px);
+      aspect-ratio: 9 / 19.5;
+      transform: translate(-50%, -50%) scale(var(--scale)) rotate(var(--tilt));
+      background:
+        linear-gradient(160deg, rgba(255, 255, 255, 0.12), rgba(0, 0, 0, 0.35)),
+        var(--body);
+      border-radius: clamp(28px, 4vw, 54px);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      box-shadow:
+        0 28px 60px rgba(0, 0, 0, 0.45),
+        0 0 60px var(--glow);
+      filter: blur(var(--blur));
+    }
+
+    #phone::before {
+      content: "";
+      position: absolute;
+      inset: 8px;
+      border-radius: inherit;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.10), rgba(0, 0, 0, 0.2));
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: inset 0 0 24px rgba(0, 0, 0, 0.35);
+    }
+
+    #phone::after {
+      content: "";
+      position: absolute;
+      top: 14px;
+      left: 50%;
+      width: 36%;
+      height: 6px;
+      transform: translateX(-50%);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.18);
+      box-shadow: 0 0 12px rgba(255, 255, 255, 0.22);
+    }
+
+    .screen {
+      position: absolute;
+      inset: 10% 7%;
+      border-radius: clamp(22px, 3.2vw, 44px);
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(0, 0, 0, 0.3));
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: inset 0 0 18px rgba(0, 0, 0, 0.4);
+    }
+  </style>
+</head>
+<body>
+  <div id="phone" aria-hidden="true">
+    <div class="screen"></div>
+  </div>
+
+  <script>
+    /**
+     * transition_phone_bridge_plate_src.html — phone bridge plate source
+     *
+     * Default URL (full params): http://<HOST_IP>:8789/transitions/transition_phone_bridge_plate_src.html?accent=b07cff&body=0f1118&glow=b07cff&glowAlpha=0.45&scale=1&x=50&y=50&tilt=-12&blur=0
+     *
+     * Params:
+     *  accent=HEX      (glow accent)
+     *  body=HEX        (phone body color)
+     *  glow=HEX        (glow color)
+     *  glowAlpha=0..1  (glow opacity)
+     *  scale=0.5..2    (overall scale)
+     *  x=0..100        (horizontal position percentage)
+     *  y=0..100        (vertical position percentage)
+     *  tilt=-45..45    (rotation angle)
+     *  blur=0..20      (blur px)
+     */
+
+    const qs = new URLSearchParams(location.search);
+    const accent = sanitizeHex(qs.get("accent") || "b07cff");
+    const body = sanitizeHex(qs.get("body") || "0f1118");
+    const glow = sanitizeHex(qs.get("glow") || accent);
+    const glowAlpha = clamp(parseFloat(qs.get("glowAlpha") || "0.45"), 0, 1);
+    const scale = clamp(parseFloat(qs.get("scale") || "1"), 0.5, 2);
+    const x = clamp(parseFloat(qs.get("x") || "50"), 0, 100);
+    const y = clamp(parseFloat(qs.get("y") || "50"), 0, 100);
+    const tilt = clamp(parseFloat(qs.get("tilt") || "-12"), -45, 45);
+    const blur = clamp(parseFloat(qs.get("blur") || "0"), 0, 20);
+
+    const root = document.documentElement;
+    root.style.setProperty("--accent", `#${accent}`);
+    root.style.setProperty("--body", `#${body}`);
+    root.style.setProperty("--glow", `rgba(${hexToRgb(glow).join(", ")}, ${glowAlpha})`);
+    root.style.setProperty("--scale", scale.toString());
+    root.style.setProperty("--x", `${x}%`);
+    root.style.setProperty("--y", `${y}%`);
+    root.style.setProperty("--tilt", `${tilt}deg`);
+    root.style.setProperty("--blur", `${blur}px`);
+
+    function sanitizeHex(value) {
+      const cleaned = (value || "").replace(/[^0-9a-f]/gi, "").toLowerCase();
+      if (cleaned.length === 3) {
+        return cleaned
+          .split("")
+          .map((char) => `${char}${char}`)
+          .join("");
+      }
+      if (cleaned.length >= 6) {
+        return cleaned.slice(0, 6);
+      }
+      return "000000";
+    }
+
+    function hexToRgb(hex) {
+      const safe = sanitizeHex(hex);
+      const r = parseInt(safe.slice(0, 2), 16);
+      const g = parseInt(safe.slice(2, 4), 16);
+      const b = parseInt(safe.slice(4, 6), 16);
+      return [r, g, b];
+    }
+
+    function clamp(value, min, max) {
+      return Math.min(max, Math.max(min, value));
+    }
+  </script>
+</body>
+</html>
