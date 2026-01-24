@@ -194,18 +194,40 @@ const fallbackUtils = (() => {
     return `id_${Date.now().toString(16)}_${Math.random().toString(16).slice(2)}`;
   };
 
+  const getPlaybackStartIndex = (activeIndex, totalNodes) => {
+    const total = Number.isFinite(totalNodes) ? totalNodes : 0;
+    if (total <= 0) {
+      return -1;
+    }
+
+    if (!Number.isFinite(activeIndex) || activeIndex < 0 || activeIndex >= total) {
+      return 0;
+    }
+
+    return activeIndex;
+  };
+
   return {
     STORAGE_KEY,
     parseNodeText,
     getDurationHintSeconds,
     classifyUrl,
     isHttpUrl,
-    uuid
+    uuid,
+    getPlaybackStartIndex
   };
 })();
 
 const programMonitorUtils = window.ProgramMonitorUtils || fallbackUtils;
-const { classifyUrl, getDurationHintSeconds, isHttpUrl, parseNodeText, STORAGE_KEY, uuid } = programMonitorUtils;
+const {
+  classifyUrl,
+  getDurationHintSeconds,
+  getPlaybackStartIndex,
+  isHttpUrl,
+  parseNodeText,
+  STORAGE_KEY,
+  uuid
+} = programMonitorUtils;
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -310,7 +332,12 @@ function loadLocal() {
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed.nodes) && parsed.nodes.length) {
       state.nodes = parsed.nodes;
-      state.activeIndex = Math.min(parsed.activeIndex || 0, state.nodes.length - 1);
+      const storedIndex = Number.isFinite(parsed.activeIndex) ? parsed.activeIndex : 0;
+      if (storedIndex === -1) {
+        state.activeIndex = -1;
+      } else {
+        state.activeIndex = Math.min(Math.max(storedIndex, 0), state.nodes.length - 1);
+      }
     }
   } catch (error) {
     console.warn("Failed to load saved timeline", error);
@@ -360,16 +387,17 @@ function renderNodes() {
   }
   elements.nodeList.innerHTML = "";
   elements.statTotal.textContent = String(state.nodes.length);
+  const hasActive = Number.isFinite(state.activeIndex) && state.activeIndex >= 0;
 
   state.nodes.forEach((node, index) => {
     const card = document.createElement("div");
-    card.className = "nodeCard" + (index === state.activeIndex ? " active" : "");
+    card.className = "nodeCard" + (hasActive && index === state.activeIndex ? " active" : "");
 
     const header = document.createElement("div");
     header.className = "nodeHdr";
     header.innerHTML = `
       <div class="idx">Node ${index + 1}</div>
-      <div class="mini">${index === state.activeIndex ? "ACTIVE" : "tap to select"}</div>
+      <div class="mini">${hasActive && index === state.activeIndex ? "ACTIVE" : "tap to select"}</div>
     `;
 
     const textarea = document.createElement("textarea");
@@ -466,7 +494,7 @@ http://host/ambience.mp3`;
     elements.nodeList.appendChild(card);
   });
 
-  elements.statNode.textContent = String(state.activeIndex + 1);
+  elements.statNode.textContent = hasActive ? String(state.activeIndex + 1) : "—";
 }
 
 function clearLayers() {
@@ -506,17 +534,36 @@ function clearBaseHandlers() {
   }
 }
 
-function resolveDurationSeconds({ baseKind, baseUrl, overrideSeconds, baseDuration, durationHintSeconds }) {
+function resolveDurationInfo({ baseKind, baseUrl, overrideSeconds, baseDuration, durationHintSeconds }) {
   const override = Number.isFinite(overrideSeconds) && overrideSeconds > 0 ? overrideSeconds : 0;
   const base = Number.isFinite(baseDuration) && baseDuration > 0 ? baseDuration : 0;
   const hintValue = Number.isFinite(durationHintSeconds) ? durationHintSeconds : getDurationHintSeconds(baseUrl);
   const hint = Number.isFinite(hintValue) && hintValue > 0 ? hintValue : 0;
 
   if (baseKind === "page") {
-    return override || hint;
+    if (override) {
+      return { duration: override, source: "override" };
+    }
+    if (hint) {
+      return { duration: hint, source: "hint" };
+    }
+    return { duration: 0, source: "none" };
   }
 
-  return base || override || hint;
+  if (override) {
+    return { duration: override, source: "override" };
+  }
+  if (base) {
+    return { duration: base, source: "base" };
+  }
+  if (hint) {
+    return { duration: hint, source: "hint" };
+  }
+  return { duration: 0, source: "none" };
+}
+
+function resolveDurationSeconds(details) {
+  return resolveDurationInfo(details).duration;
 }
 
 function loadVideoMeta(videoEl, url) {
@@ -545,6 +592,13 @@ async function primeNode(index) {
   clearLayers();
   clearBaseHandlers();
   const node = state.nodes[index];
+  if (!node) {
+    setBaseKind("video");
+    elements.baseVideo.removeAttribute("src");
+    elements.baseFrame.removeAttribute("src");
+    elements.statDur.textContent = "0.00";
+    return;
+  }
   const parsed = parseNodeText(node.text);
   const overrideSeconds = Number(node.durationOverride);
   const baseKind = classifyUrl(parsed.baseUrl);
@@ -670,7 +724,11 @@ function stopAll() {
     audio.currentTime = 0;
   });
 
+  state.activeIndex = -1;
+  renderNodes();
+  saveLocal();
   elements.statT.textContent = "0.00";
+  elements.statDur.textContent = "0.00";
 }
 
 function pauseAll() {
@@ -686,6 +744,19 @@ async function playActive() {
   if (rafId) {
     cancelAnimationFrame(rafId);
     rafId = null;
+  }
+
+  const startIndex = getPlaybackStartIndex(state.activeIndex, state.nodes.length);
+  if (startIndex === -1) {
+    state.playing = false;
+    setMessage("Add at least one node before playing.");
+    return;
+  }
+
+  if (startIndex !== state.activeIndex) {
+    state.activeIndex = startIndex;
+    renderNodes();
+    saveLocal();
   }
 
   const index = state.activeIndex;
@@ -763,7 +834,7 @@ async function playActive() {
     const current = activeBaseKind === "page"
       ? (performance.now() - baseStartTime) / 1000
       : (elements.baseVideo.currentTime || 0);
-    const duration = resolveDurationSeconds({
+    const durationInfo = resolveDurationInfo({
       baseKind: activeBaseKind,
       baseUrl: parsed.baseUrl,
       overrideSeconds,
@@ -771,10 +842,14 @@ async function playActive() {
       durationHintSeconds
     });
 
+    const duration = durationInfo.duration;
     elements.statT.textContent = current.toFixed(2);
     elements.statDur.textContent = (Number.isFinite(duration) ? duration : 0).toFixed(2);
 
-    if (duration && current >= duration - 0.05) {
+    const shouldAdvanceOnDuration = duration > 0
+      && (activeBaseKind === "page" || durationInfo.source === "override");
+
+    if (shouldAdvanceOnDuration && current >= duration - 0.05) {
       advance();
       return;
     }
@@ -786,7 +861,12 @@ async function playActive() {
 }
 
 function openBaseInNewTab() {
-  const parsed = parseNodeText(state.nodes[state.activeIndex].text);
+  const node = state.nodes[state.activeIndex];
+  if (!node) {
+    setMessage("No node selected.");
+    return;
+  }
+  const parsed = parseNodeText(node.text);
   if (!parsed.baseUrl) {
     setMessage("No base URL set for this node.");
     return;
@@ -984,7 +1064,11 @@ $("#btnPrev").addEventListener("click", async () => {
   if (state.playing) {
     return;
   }
-  state.activeIndex = Math.max(0, state.activeIndex - 1);
+  if (!Number.isFinite(state.activeIndex) || state.activeIndex < 0) {
+    state.activeIndex = 0;
+  } else {
+    state.activeIndex = Math.max(0, state.activeIndex - 1);
+  }
   state.validationResults = [];
   renderNodes();
   await primeNode(state.activeIndex);
@@ -995,7 +1079,11 @@ $("#btnNext").addEventListener("click", async () => {
   if (state.playing) {
     return;
   }
-  state.activeIndex = Math.min(state.nodes.length - 1, state.activeIndex + 1);
+  if (!Number.isFinite(state.activeIndex) || state.activeIndex < 0) {
+    state.activeIndex = 0;
+  } else {
+    state.activeIndex = Math.min(state.nodes.length - 1, state.activeIndex + 1);
+  }
   state.validationResults = [];
   renderNodes();
   await primeNode(state.activeIndex);
