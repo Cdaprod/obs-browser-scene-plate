@@ -362,8 +362,12 @@ textarea {
   font-family: var(--mono);
 }
 
-.nodeCard.active {
-  outline: 2px solid rgba(76, 195, 255, 0.5);
+.nodeCard.selected {
+  outline: 2px solid rgba(122, 200, 255, 0.6);
+}
+
+.nodeCard.playing-all {
+  outline: 2px solid rgba(140, 230, 170, 0.6);
 }
 
 .nodeValidation {
