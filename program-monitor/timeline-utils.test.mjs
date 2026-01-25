@@ -12,6 +12,7 @@ const {
   classifyUrl,
   getDurationHintSeconds,
   getPlaybackStartIndex,
+  resolvePlaybackScope,
   isHttpUrl,
   parseNodeText,
   uuid,
@@ -99,6 +100,19 @@ test("getPlaybackStartIndex defaults to the first node when none is selected", (
 
 test("getPlaybackStartIndex returns -1 when no nodes exist", () => {
   assert.equal(getPlaybackStartIndex(0, 0), -1);
+});
+
+test("resolvePlaybackScope prefers selected nodes when valid", () => {
+  assert.deepEqual(resolvePlaybackScope(2, 5), { mode: "node", startIndex: 2 });
+});
+
+test("resolvePlaybackScope defaults to timeline when selection is missing", () => {
+  assert.deepEqual(resolvePlaybackScope(null, 4), { mode: "timeline", startIndex: 0 });
+  assert.deepEqual(resolvePlaybackScope(10, 4), { mode: "timeline", startIndex: 0 });
+});
+
+test("resolvePlaybackScope returns empty when there are no nodes", () => {
+  assert.deepEqual(resolvePlaybackScope(0, 0), { mode: "empty", startIndex: -1 });
 });
 
 test("buildNodeDescriptor categorizes overlays vs ambient", () => {

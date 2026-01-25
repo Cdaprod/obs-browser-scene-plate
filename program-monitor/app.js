@@ -207,6 +207,19 @@ const fallbackUtils = (() => {
     return activeIndex;
   };
 
+  const resolvePlaybackScope = (selectedIndex, totalNodes) => {
+    const total = Number.isFinite(totalNodes) ? totalNodes : 0;
+    if (total <= 0) {
+      return { mode: "empty", startIndex: -1 };
+    }
+
+    if (Number.isFinite(selectedIndex) && selectedIndex >= 0 && selectedIndex < total) {
+      return { mode: "node", startIndex: selectedIndex };
+    }
+
+    return { mode: "timeline", startIndex: 0 };
+  };
+
   const buildNodeDescriptor = (node) => {
     const text = node && node.text ? String(node.text) : "";
     const parsed = parseNodeText(text);
@@ -299,6 +312,7 @@ const fallbackUtils = (() => {
     isHttpUrl,
     uuid,
     getPlaybackStartIndex,
+    resolvePlaybackScope,
     buildNodeDescriptor,
     buildTimelineDescriptor,
     encodeTimelinePayload,
@@ -316,6 +330,7 @@ const {
   buildNodeDescriptor,
   buildTimelineDescriptor,
   encodeTimelinePayload,
+  resolvePlaybackScope,
   STORAGE_KEY,
   uuid
 } = programMonitorUtils;
@@ -325,9 +340,11 @@ const $ = (selector) => document.querySelector(selector);
 const state = {
   nodes: [{ id: uuid(), text: "", durationOverride: "" }],
   activeIndex: 0,
+  selectedIndex: null,
   playing: false,
   stopRequested: false,
-  validationResults: []
+  validationResults: [],
+  durationInfo: { duration: 0, source: "none" }
 };
 
 const PROJECTS_KEY = "program-monitor.projects.v1";
@@ -342,6 +359,8 @@ const elements = {
   statTotal: $("#statTotal"),
   statT: $("#statT"),
   statDur: $("#statDur"),
+  statMode: $("#statMode"),
+  statDurSource: $("#statDurSource"),
   fileImport: $("#fileImport"),
   message: $("#message"),
   exportStatus: $("#exportStatus"),
@@ -392,6 +411,45 @@ function setDownloadLink(url) {
   }
   elements.downloadLink.href = url;
   elements.downloadLink.classList.remove("hidden");
+}
+
+function getSelectedIndex() {
+  return Number.isFinite(state.selectedIndex) ? state.selectedIndex : null;
+}
+
+function getPlaybackModeLabel() {
+  const isSelected = getSelectedIndex() !== null;
+  return isSelected ? "Selected Node" : "All Nodes";
+}
+
+function getDurationSourceLabel(source) {
+  switch (source) {
+    case "override":
+      return "override";
+    case "base":
+      return "media";
+    case "hint":
+      return "url hint";
+    default:
+      return "auto";
+  }
+}
+
+function updateStatusDisplay() {
+  const selectedIndex = getSelectedIndex();
+  const modeLabel = getPlaybackModeLabel();
+  const modeText = state.playing ? `${modeLabel} (playing)` : `${modeLabel} (stopped)`;
+  const displayIndex = state.playing
+    ? state.activeIndex
+    : (selectedIndex !== null ? selectedIndex : null);
+
+  elements.statNode.textContent = displayIndex !== null ? String(displayIndex + 1) : "—";
+  if (elements.statMode) {
+    elements.statMode.textContent = modeText;
+  }
+  if (elements.statDurSource) {
+    elements.statDurSource.textContent = getDurationSourceLabel(state.durationInfo?.source);
+  }
 }
 
 function buildStagePreviewUrl(timeline, name) {
@@ -463,6 +521,7 @@ function loadLocal() {
       } else {
         state.activeIndex = Math.min(Math.max(storedIndex, 0), state.nodes.length - 1);
       }
+      state.selectedIndex = null;
     }
   } catch (error) {
     console.warn("Failed to load saved timeline", error);
@@ -553,6 +612,7 @@ function renderProjects() {
       }
       state.nodes = timeline.nodes;
       state.activeIndex = Number.isFinite(timeline.activeIndex) ? timeline.activeIndex : 0;
+      state.selectedIndex = null;
       state.validationResults = [];
       renderNodes();
       await primeNode(state.activeIndex);
@@ -577,6 +637,7 @@ function renderProjects() {
       }
       state.nodes = timeline.nodes;
       state.activeIndex = Number.isFinite(timeline.activeIndex) ? timeline.activeIndex : 0;
+      state.selectedIndex = null;
       state.validationResults = [];
       renderNodes();
       await primeNode(state.activeIndex);
@@ -648,6 +709,7 @@ async function importJSONFile(file) {
   }
   state.nodes = payload.nodes;
   state.activeIndex = 0;
+  state.selectedIndex = null;
   state.validationResults = [];
   renderNodes();
   await primeNode(state.activeIndex);
@@ -660,17 +722,34 @@ function renderNodes() {
   }
   elements.nodeList.innerHTML = "";
   elements.statTotal.textContent = String(state.nodes.length);
-  const hasActive = Number.isFinite(state.activeIndex) && state.activeIndex >= 0;
+  const selectedIndex = getSelectedIndex();
 
   state.nodes.forEach((node, index) => {
     const card = document.createElement("div");
-    card.className = "nodeCard" + (hasActive && index === state.activeIndex ? " active" : "");
+    const isSelected = selectedIndex !== null && index === selectedIndex;
+    const isPlayingAll = state.playing && selectedIndex === null && index === state.activeIndex;
+    const classes = ["nodeCard"];
+    if (isSelected) {
+      classes.push("selected");
+    }
+    if (isPlayingAll) {
+      classes.push("playing-all");
+    }
+    card.className = classes.join(" ");
 
     const header = document.createElement("div");
     header.className = "nodeHdr";
+    let statusText = "tap to select";
+    if (isPlayingAll) {
+      statusText = "PLAYING ALL";
+    } else if (isSelected && state.playing) {
+      statusText = "PLAYING NODE";
+    } else if (isSelected) {
+      statusText = "SELECTED";
+    }
     header.innerHTML = `
       <div class="idx">Node ${index + 1}</div>
-      <div class="mini">${hasActive && index === state.activeIndex ? "ACTIVE" : "tap to select"}</div>
+      <div class="mini">${statusText}</div>
     `;
 
     const textarea = document.createElement("textarea");
@@ -725,10 +804,12 @@ http://host/ambience.mp3`;
       event.stopPropagation();
     });
 
-    card.addEventListener("click", async () => {
+    card.addEventListener("click", async (event) => {
+      event.stopPropagation();
       if (state.playing) {
         return;
       }
+      state.selectedIndex = index;
       state.activeIndex = index;
       renderNodes();
       await primeNode(index);
@@ -767,7 +848,26 @@ http://host/ambience.mp3`;
     elements.nodeList.appendChild(card);
   });
 
-  elements.statNode.textContent = hasActive ? String(state.activeIndex + 1) : "—";
+  updateStatusDisplay();
+}
+
+function clearSelection({ resetActive = false } = {}) {
+  if (state.playing) {
+    return;
+  }
+  state.selectedIndex = null;
+  if (resetActive) {
+    state.activeIndex = state.nodes.length ? 0 : -1;
+  }
+  renderNodes();
+  saveLocal();
+  if (state.nodes.length && state.activeIndex >= 0) {
+    primeNode(state.activeIndex).catch(() => {});
+  } else {
+    state.durationInfo = { duration: 0, source: "none" };
+    elements.statDur.textContent = "0.00";
+    updateStatusDisplay();
+  }
 }
 
 function clearLayers() {
@@ -835,10 +935,6 @@ function resolveDurationInfo({ baseKind, baseUrl, overrideSeconds, baseDuration,
   return { duration: 0, source: "none" };
 }
 
-function resolveDurationSeconds(details) {
-  return resolveDurationInfo(details).duration;
-}
-
 function loadVideoMeta(videoEl, url) {
   return new Promise((resolve, reject) => {
     const onLoaded = () => {
@@ -870,6 +966,8 @@ async function primeNode(index) {
     elements.baseVideo.removeAttribute("src");
     elements.baseFrame.removeAttribute("src");
     elements.statDur.textContent = "0.00";
+    state.durationInfo = { duration: 0, source: "none" };
+    updateStatusDisplay();
     return;
   }
   const parsed = parseNodeText(node.text);
@@ -884,6 +982,8 @@ async function primeNode(index) {
     elements.baseVideo.removeAttribute("src");
     elements.baseFrame.removeAttribute("src");
     elements.statDur.textContent = "0.00";
+    state.durationInfo = { duration: 0, source: "none" };
+    updateStatusDisplay();
     return;
   }
 
@@ -917,13 +1017,16 @@ async function primeNode(index) {
     }
   }
 
-  duration = resolveDurationSeconds({
+  const durationInfo = resolveDurationInfo({
     baseKind,
     baseUrl: parsed.baseUrl,
     overrideSeconds,
     baseDuration: duration,
     durationHintSeconds
   });
+
+  duration = durationInfo.duration;
+  state.durationInfo = durationInfo;
 
   if (!duration && baseKind !== "page") {
     if (Number.isFinite(overrideSeconds) && overrideSeconds > 0) {
@@ -936,6 +1039,7 @@ async function primeNode(index) {
   }
 
   elements.statDur.textContent = duration.toFixed(2);
+  updateStatusDisplay();
 
   parsed.layers.forEach((url) => {
     const kind = classifyUrl(url);
@@ -997,11 +1101,18 @@ function stopAll() {
     audio.currentTime = 0;
   });
 
-  state.activeIndex = -1;
+  elements.statT.textContent = "0.00";
+  state.durationInfo = { duration: 0, source: "none" };
+  elements.statDur.textContent = "0.00";
+  state.selectedIndex = null;
+  state.activeIndex = state.nodes.length ? 0 : -1;
   renderNodes();
   saveLocal();
-  elements.statT.textContent = "0.00";
-  elements.statDur.textContent = "0.00";
+  if (state.nodes.length && state.activeIndex >= 0) {
+    primeNode(state.activeIndex).catch(() => {});
+  } else {
+    updateStatusDisplay();
+  }
 }
 
 function pauseAll() {
@@ -1009,6 +1120,7 @@ function pauseAll() {
   elements.baseVideo.pause();
   overlayVideos.forEach((video) => video.pause());
   overlayAudios.forEach((audio) => audio.pause());
+  updateStatusDisplay();
 }
 
 async function playActive() {
@@ -1019,18 +1131,20 @@ async function playActive() {
     rafId = null;
   }
 
-  const startIndex = getPlaybackStartIndex(state.activeIndex, state.nodes.length);
+  const selectedIndex = getSelectedIndex();
+  const playbackScope = resolvePlaybackScope(selectedIndex, state.nodes.length);
+  const startIndex = playbackScope.startIndex;
   if (startIndex === -1) {
     state.playing = false;
     setMessage("Add at least one node before playing.");
+    updateStatusDisplay();
     return;
   }
 
-  if (startIndex !== state.activeIndex) {
-    state.activeIndex = startIndex;
-    renderNodes();
-    saveLocal();
-  }
+  state.activeIndex = startIndex;
+  renderNodes();
+  saveLocal();
+  setMessage(playbackScope.mode === "node" ? "Playing selected node." : "Playing full timeline.");
 
   const index = state.activeIndex;
   const overrideSeconds = Number(state.nodes[index].durationOverride);
@@ -1064,6 +1178,7 @@ async function playActive() {
     });
   }
 
+  const playSingle = playbackScope.mode === "node";
   let advanced = false;
   const advance = () => {
     if (advanced) {
@@ -1077,6 +1192,13 @@ async function playActive() {
 
     if (state.stopRequested) {
       state.playing = false;
+      updateStatusDisplay();
+      return;
+    }
+
+    if (playSingle) {
+      state.playing = false;
+      updateStatusDisplay();
       return;
     }
 
@@ -1086,6 +1208,8 @@ async function playActive() {
       playActive().catch(() => {});
     } else {
       state.playing = false;
+      setMessage("Reached end of timeline.");
+      updateStatusDisplay();
     }
   };
 
@@ -1107,15 +1231,8 @@ async function playActive() {
     const current = activeBaseKind === "page"
       ? (performance.now() - baseStartTime) / 1000
       : (elements.baseVideo.currentTime || 0);
-    const durationInfo = resolveDurationInfo({
-      baseKind: activeBaseKind,
-      baseUrl: parsed.baseUrl,
-      overrideSeconds,
-      baseDuration: elements.baseVideo.duration,
-      durationHintSeconds
-    });
-
-    const duration = durationInfo.duration;
+    const durationInfo = state.durationInfo || { duration: 0, source: "none" };
+    const duration = Number.isFinite(durationInfo.duration) ? durationInfo.duration : 0;
     elements.statT.textContent = current.toFixed(2);
     elements.statDur.textContent = (Number.isFinite(duration) ? duration : 0).toFixed(2);
 
@@ -1134,7 +1251,9 @@ async function playActive() {
 }
 
 function openBaseInNewTab() {
-  const node = state.nodes[state.activeIndex];
+  const selectedIndex = getSelectedIndex();
+  const index = selectedIndex !== null ? selectedIndex : state.activeIndex;
+  const node = state.nodes[index];
   if (!node) {
     setMessage("No node selected.");
     return;
@@ -1344,8 +1463,10 @@ $("#btnAdd").addEventListener("click", () => {
   }
   state.nodes.push({ id: uuid(), text: "", durationOverride: "" });
   state.activeIndex = state.nodes.length - 1;
+  state.selectedIndex = state.activeIndex;
   state.validationResults = [];
   renderNodes();
+  primeNode(state.activeIndex).catch(() => {});
   saveLocal();
 });
 
@@ -1358,8 +1479,10 @@ $("#btnDelete").addEventListener("click", () => {
   }
   state.nodes.splice(state.activeIndex, 1);
   state.activeIndex = Math.max(0, state.activeIndex - 1);
+  state.selectedIndex = state.nodes.length ? state.activeIndex : null;
   state.validationResults = [];
   renderNodes();
+  primeNode(state.activeIndex).catch(() => {});
   saveLocal();
 });
 
@@ -1372,6 +1495,7 @@ $("#btnPrev").addEventListener("click", async () => {
   } else {
     state.activeIndex = Math.max(0, state.activeIndex - 1);
   }
+  state.selectedIndex = state.activeIndex;
   state.validationResults = [];
   renderNodes();
   await primeNode(state.activeIndex);
@@ -1387,6 +1511,7 @@ $("#btnNext").addEventListener("click", async () => {
   } else {
     state.activeIndex = Math.min(state.nodes.length - 1, state.activeIndex + 1);
   }
+  state.selectedIndex = state.activeIndex;
   state.validationResults = [];
   renderNodes();
   await primeNode(state.activeIndex);
@@ -1445,6 +1570,19 @@ if (elements.togglePreview) {
   elements.togglePreview.addEventListener("click", () => {
     const isCollapsed = document.body.classList.contains("preview-collapsed");
     setPreviewCollapsed(!isCollapsed);
+  });
+}
+
+if (elements.nodeList) {
+  const nodesPanel = elements.nodeList.closest(".nodes") || elements.nodeList;
+  nodesPanel.addEventListener("click", (event) => {
+    if (state.playing) {
+      return;
+    }
+    if (event.target.closest(".nodeCard")) {
+      return;
+    }
+    clearSelection();
   });
 }
 

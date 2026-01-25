@@ -217,6 +217,19 @@
     return activeIndex;
   }
 
+  function resolvePlaybackScope(selectedIndex, totalNodes) {
+    const total = Number.isFinite(totalNodes) ? totalNodes : 0;
+    if (total <= 0) {
+      return { mode: "empty", startIndex: -1 };
+    }
+
+    if (Number.isFinite(selectedIndex) && selectedIndex >= 0 && selectedIndex < total) {
+      return { mode: "node", startIndex: selectedIndex };
+    }
+
+    return { mode: "timeline", startIndex: 0 };
+  }
+
   function buildNodeDescriptor(node) {
     const text = node && node.text ? String(node.text) : "";
     const parsed = parseNodeText(text);
@@ -309,6 +322,7 @@
     isHttpUrl,
     uuid,
     getPlaybackStartIndex,
+    resolvePlaybackScope,
     buildNodeDescriptor,
     buildTimelineDescriptor,
     encodeTimelinePayload,
