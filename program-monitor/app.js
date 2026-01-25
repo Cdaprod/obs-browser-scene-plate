@@ -207,6 +207,90 @@ const fallbackUtils = (() => {
     return activeIndex;
   };
 
+  const buildNodeDescriptor = (node) => {
+    const text = node && node.text ? String(node.text) : "";
+    const parsed = parseNodeText(text);
+    const baseUrl = parsed.baseUrl || "";
+    const baseKind = baseUrl ? classifyUrl(baseUrl) : "unknown";
+    const overlays = [];
+    const ambient = [];
+
+    parsed.layers.forEach((url) => {
+      const kind = classifyUrl(url);
+      if (kind === "audio") {
+        ambient.push({ url, kind });
+        return;
+      }
+      overlays.push({ url, kind });
+    });
+
+    return {
+      id: node && node.id ? node.id : "",
+      text,
+      durationOverride: node && node.durationOverride ? node.durationOverride : "",
+      base: { url: baseUrl, kind: baseKind },
+      overlays,
+      ambient
+    };
+  };
+
+  const buildTimelineDescriptor = (timeline) => {
+    const safeTimeline = timeline || { nodes: [], activeIndex: 0 };
+    const nodes = Array.isArray(safeTimeline.nodes) ? safeTimeline.nodes : [];
+    const activeIndex = Number.isFinite(safeTimeline.activeIndex) ? safeTimeline.activeIndex : 0;
+
+    return {
+      version: Number.isFinite(safeTimeline.version) ? safeTimeline.version : 1,
+      activeIndex,
+      nodes,
+      nodesStructured: nodes.map((node) => buildNodeDescriptor(node))
+    };
+  };
+
+  const encodeTimelinePayload = (payload) => {
+    if (payload === undefined) {
+      return "";
+    }
+    try {
+      const json = JSON.stringify(payload);
+      if (typeof Buffer !== "undefined") {
+        return Buffer.from(json, "utf8").toString("base64");
+      }
+      if (typeof window !== "undefined" && typeof window.btoa === "function") {
+        const encoder = new TextEncoder();
+        const bytes = encoder.encode(json);
+        let binary = "";
+        bytes.forEach((value) => {
+          binary += String.fromCharCode(value);
+        });
+        return window.btoa(binary);
+      }
+      return "";
+    } catch (error) {
+      return "";
+    }
+  };
+
+  const decodeTimelinePayload = (value) => {
+    if (!value) {
+      return null;
+    }
+    try {
+      let json = "";
+      if (typeof Buffer !== "undefined") {
+        json = Buffer.from(value, "base64").toString("utf8");
+      } else if (typeof window !== "undefined" && typeof window.atob === "function") {
+        const binary = window.atob(value);
+        const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+        const decoder = new TextDecoder("utf-8");
+        json = decoder.decode(bytes);
+      }
+      return json ? JSON.parse(json) : null;
+    } catch (error) {
+      return null;
+    }
+  };
+
   return {
     STORAGE_KEY,
     parseNodeText,
@@ -214,7 +298,11 @@ const fallbackUtils = (() => {
     classifyUrl,
     isHttpUrl,
     uuid,
-    getPlaybackStartIndex
+    getPlaybackStartIndex,
+    buildNodeDescriptor,
+    buildTimelineDescriptor,
+    encodeTimelinePayload,
+    decodeTimelinePayload
   };
 })();
 
@@ -225,6 +313,9 @@ const {
   getPlaybackStartIndex,
   isHttpUrl,
   parseNodeText,
+  buildNodeDescriptor,
+  buildTimelineDescriptor,
+  encodeTimelinePayload,
   STORAGE_KEY,
   uuid
 } = programMonitorUtils;
@@ -239,6 +330,9 @@ const state = {
   validationResults: []
 };
 
+const PROJECTS_KEY = "program-monitor.projects.v1";
+const PROJECTS_LIMIT = 20;
+
 const elements = {
   nodeList: $("#nodeList"),
   baseVideo: $("#baseVideo"),
@@ -252,7 +346,13 @@ const elements = {
   message: $("#message"),
   exportStatus: $("#exportStatus"),
   downloadLink: $("#downloadLink"),
-  togglePreview: $("#btnTogglePreview")
+  togglePreview: $("#btnTogglePreview"),
+  projectToolbar: $("#projectToolbar"),
+  projectName: $("#projectName"),
+  projectList: $("#projectList"),
+  projectsToggle: $("#btnProjects"),
+  projectSave: $("#projectSave"),
+  openStage: $("#btnOpenStage")
 };
 
 let overlayVideos = [];
@@ -294,6 +394,31 @@ function setDownloadLink(url) {
   elements.downloadLink.classList.remove("hidden");
 }
 
+function buildStagePreviewUrl(timeline, name) {
+  if (!encodeTimelinePayload) {
+    setMessage("Stage preview encoding is unavailable.");
+    return "";
+  }
+  const payload = buildTimelineDescriptor(
+    timeline || {
+      version: 1,
+      nodes: state.nodes,
+      activeIndex: state.activeIndex
+    }
+  );
+  const encoded = encodeTimelinePayload(payload);
+  if (!encoded) {
+    setMessage("Failed to encode timeline for stage preview.");
+    return "";
+  }
+  const url = new URL("/program-monitor/staged-preview.html", window.location.origin);
+  url.searchParams.set("data", encoded);
+  if (name) {
+    url.searchParams.set("name", name);
+  }
+  return url.toString();
+}
+
 function setPreviewCollapsed(collapsed) {
   const isCollapsed = Boolean(collapsed);
   document.body.classList.toggle("preview-collapsed", isCollapsed);
@@ -312,11 +437,11 @@ function saveLocal() {
   try {
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({
+      JSON.stringify(buildTimelineDescriptor({
         version: 1,
         nodes: state.nodes,
         activeIndex: state.activeIndex
-      })
+      }))
     );
   } catch (error) {
     console.warn("Failed to persist timeline", error);
@@ -342,6 +467,154 @@ function loadLocal() {
   } catch (error) {
     console.warn("Failed to load saved timeline", error);
   }
+}
+
+function loadProjects() {
+  try {
+    const raw = localStorage.getItem(PROJECTS_KEY);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw);
+    const entries = Array.isArray(parsed.entries) ? parsed.entries : [];
+    return entries
+      .filter((entry) => entry && entry.name && entry.timeline && Array.isArray(entry.timeline.nodes))
+      .map((entry) => ({
+        ...entry,
+        timeline: buildTimelineDescriptor(entry.timeline),
+        id: entry.id || uuid()
+      }));
+  } catch (error) {
+    console.warn("Failed to load saved projects", error);
+    return [];
+  }
+}
+
+function saveProjects(entries) {
+  const index = entries.reduce((acc, entry) => {
+    if (entry && entry.name) {
+      acc[entry.name] = entry.id || "";
+    }
+    return acc;
+  }, {});
+  try {
+    localStorage.setItem(
+      PROJECTS_KEY,
+      JSON.stringify({
+        version: 1,
+        entries,
+        index
+      })
+    );
+  } catch (error) {
+    console.warn("Failed to save projects", error);
+  }
+}
+
+function setProjectToolbarOpen(isOpen) {
+  const open = Boolean(isOpen);
+  if (elements.projectToolbar) {
+    elements.projectToolbar.classList.toggle("hidden", !open);
+    elements.projectToolbar.setAttribute("aria-hidden", String(!open));
+  }
+  if (elements.projectsToggle) {
+    elements.projectsToggle.setAttribute("aria-expanded", String(open));
+  }
+}
+
+function renderProjects() {
+  if (!elements.projectList) {
+    return;
+  }
+  const entries = loadProjects();
+  elements.projectList.innerHTML = "";
+
+  if (!entries.length) {
+    const empty = document.createElement("div");
+    empty.className = "projectItem";
+    empty.innerHTML = `<div class=\"projectItemName\">No saved projects yet.</div>`;
+    elements.projectList.appendChild(empty);
+    return;
+  }
+
+  entries.forEach((entry) => {
+    const item = document.createElement("div");
+    item.className = "projectItem";
+
+    const name = document.createElement("div");
+    name.className = "projectItemName";
+    name.textContent = entry.name;
+    name.title = "Click to load this project";
+    name.addEventListener("click", async () => {
+      const timeline = entry.timeline;
+      if (!timeline || !Array.isArray(timeline.nodes) || !timeline.nodes.length) {
+        setMessage("Saved project is empty.");
+        return;
+      }
+      state.nodes = timeline.nodes;
+      state.activeIndex = Number.isFinite(timeline.activeIndex) ? timeline.activeIndex : 0;
+      state.validationResults = [];
+      renderNodes();
+      await primeNode(state.activeIndex);
+      saveLocal();
+      if (elements.projectName) {
+        elements.projectName.value = entry.name;
+      }
+      setMessage(`Loaded project: ${entry.name}`);
+    });
+
+    const actions = document.createElement("div");
+    actions.className = "projectActions";
+
+    const loadBtn = document.createElement("button");
+    loadBtn.type = "button";
+    loadBtn.textContent = "Load";
+    loadBtn.addEventListener("click", async () => {
+      const timeline = entry.timeline;
+      if (!timeline || !Array.isArray(timeline.nodes) || !timeline.nodes.length) {
+        setMessage("Saved project is empty.");
+        return;
+      }
+      state.nodes = timeline.nodes;
+      state.activeIndex = Number.isFinite(timeline.activeIndex) ? timeline.activeIndex : 0;
+      state.validationResults = [];
+      renderNodes();
+      await primeNode(state.activeIndex);
+      saveLocal();
+      if (elements.projectName) {
+        elements.projectName.value = entry.name;
+      }
+      setMessage(`Loaded project: ${entry.name}`);
+    });
+
+    const stageBtn = document.createElement("button");
+    stageBtn.type = "button";
+    stageBtn.textContent = "Open Stage";
+    stageBtn.addEventListener("click", () => {
+      const url = buildStagePreviewUrl(entry.timeline, entry.name);
+      if (url) {
+        window.open(url, "_blank", "noopener");
+      }
+    });
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.textContent = "Delete";
+    deleteBtn.addEventListener("click", () => {
+      const next = loadProjects().filter((itemEntry) => itemEntry.name !== entry.name);
+      saveProjects(next);
+      renderProjects();
+    });
+
+    actions.appendChild(loadBtn);
+    actions.appendChild(stageBtn);
+    actions.appendChild(deleteBtn);
+
+    item.appendChild(name);
+    item.appendChild(actions);
+
+    elements.projectList.appendChild(item);
+  });
 }
 
 function assertExportReady() {
@@ -874,6 +1147,36 @@ function openBaseInNewTab() {
   window.open(parsed.baseUrl, "_blank", "noopener");
 }
 
+function saveProject() {
+  const rawName = elements.projectName ? elements.projectName.value : "";
+  const name = (rawName || "").trim();
+  if (!name) {
+    setMessage("Name the project before saving.");
+    return;
+  }
+
+  const timeline = buildTimelineDescriptor({
+    version: 1,
+    nodes: state.nodes,
+    activeIndex: state.activeIndex
+  });
+
+  const existing = loadProjects();
+  const current = existing.find((entry) => entry.name === name);
+  const entries = existing.filter((entry) => entry.name !== name);
+  entries.unshift({
+    id: current ? current.id : uuid(),
+    name,
+    savedAt: Date.now(),
+    timeline
+  });
+
+  const trimmed = entries.slice(0, PROJECTS_LIMIT);
+  saveProjects(trimmed);
+  renderProjects();
+  setMessage(`Saved project: ${name}`);
+}
+
 function validateNodes() {
   state.validationResults = state.nodes.map((node) => {
     const parsed = parseNodeText(node.text);
@@ -1105,6 +1408,26 @@ $("#btnExport").addEventListener("click", () => exportJSON());
 $("#btnImport").addEventListener("click", () => elements.fileImport.click());
 $("#btnValidate").addEventListener("click", () => validateNodes());
 $("#btnOpenBase").addEventListener("click", () => openBaseInNewTab());
+if (elements.projectSave) {
+  elements.projectSave.addEventListener("click", () => saveProject());
+}
+if (elements.projectsToggle) {
+  elements.projectsToggle.addEventListener("click", () => {
+    const isHidden = elements.projectToolbar?.classList.contains("hidden");
+    setProjectToolbarOpen(isHidden);
+    if (isHidden) {
+      renderProjects();
+    }
+  });
+}
+if (elements.openStage) {
+  elements.openStage.addEventListener("click", () => {
+    const url = buildStagePreviewUrl();
+    if (url) {
+      window.open(url, "_blank", "noopener");
+    }
+  });
+}
 $("#btnExportNode").addEventListener("click", () => {
   exportNode().catch((error) => {
     console.error(error);
@@ -1155,6 +1478,8 @@ try {
   renderNodes();
   primeNode(state.activeIndex).catch(() => {});
   setExportStatus("Idle");
+  setProjectToolbarOpen(false);
+  renderProjects();
 } catch (error) {
   console.error(error);
   setMessage(`Startup error: ${error?.message || error}`);

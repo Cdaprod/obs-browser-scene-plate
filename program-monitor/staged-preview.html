@@ -1,0 +1,502 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Program Monitor Stage Preview</title>
+  <link rel="stylesheet" href="./styles.css" />
+  <style>
+    body {
+      padding: 12px;
+    }
+
+    .stageApp {
+      max-width: 980px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .stageHeader {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .stageTitle {
+      font-weight: 700;
+    }
+
+    .stageMeta {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    .stageControls {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .stageFrame {
+      height: min(72vh, 560px);
+    }
+
+    .stageStatus {
+      font-size: 12px;
+      color: var(--accent);
+      min-height: 18px;
+    }
+  </style>
+</head>
+<body>
+  <div class="stageApp">
+    <header class="stageHeader">
+      <div>
+        <div class="stageTitle">Program Monitor Stage Preview</div>
+        <div class="stageMeta" id="stageMeta">Loading timeline…</div>
+      </div>
+      <div class="stageControls">
+        <button id="btnPlay" class="pill" type="button">Play</button>
+        <button id="btnPause" type="button">Pause</button>
+        <button id="btnStop" type="button">Stop</button>
+        <button id="btnRestart" type="button">Restart</button>
+      </div>
+    </header>
+
+    <div class="stageFrame">
+      <video id="baseVideo" playsinline preload="metadata"></video>
+      <iframe id="baseFrame" title="Base URL Preview" loading="eager"></iframe>
+      <div id="overlayLayer"></div>
+    </div>
+
+    <div class="status">
+      <div>Node: <span id="statNode">—</span>/<span id="statTotal">—</span></div>
+      <div>t: <span id="statT">0.00</span>s / <span id="statDur">0.00</span>s</div>
+    </div>
+    <div class="stageStatus" id="stageStatus"></div>
+  </div>
+
+  <script src="./timeline-utils.js"></script>
+  <script>
+    const {
+      classifyUrl,
+      decodeTimelinePayload,
+      getDurationHintSeconds,
+      getPlaybackStartIndex,
+      parseNodeText
+    } = window.ProgramMonitorUtils || {};
+
+    const elements = {
+      baseVideo: document.getElementById("baseVideo"),
+      baseFrame: document.getElementById("baseFrame"),
+      overlayLayer: document.getElementById("overlayLayer"),
+      statNode: document.getElementById("statNode"),
+      statTotal: document.getElementById("statTotal"),
+      statT: document.getElementById("statT"),
+      statDur: document.getElementById("statDur"),
+      stageMeta: document.getElementById("stageMeta"),
+      stageStatus: document.getElementById("stageStatus")
+    };
+
+    const state = {
+      nodes: [],
+      activeIndex: 0,
+      playing: false,
+      stopRequested: false
+    };
+
+    let overlayVideos = [];
+    let overlayAudios = [];
+    let rafId = null;
+    let baseEndedHandler = null;
+    let activeBaseKind = "video";
+    let baseStartTime = 0;
+
+    function setStatus(text) {
+      elements.stageStatus.textContent = text || "";
+    }
+
+    function setBaseKind(kind, url) {
+      activeBaseKind = kind;
+      if (kind === "page") {
+        elements.baseVideo.pause();
+        elements.baseVideo.removeAttribute("src");
+        elements.baseVideo.style.display = "none";
+        elements.baseFrame.style.display = "block";
+        elements.baseFrame.src = url || "about:blank";
+      } else {
+        elements.baseFrame.removeAttribute("src");
+        elements.baseFrame.style.display = "none";
+        elements.baseVideo.style.display = "block";
+      }
+    }
+
+    function clearLayers() {
+      overlayVideos.forEach((video) => video.pause());
+      overlayAudios.forEach((audio) => audio.pause());
+      overlayVideos = [];
+      overlayAudios = [];
+      elements.overlayLayer.innerHTML = "";
+    }
+
+    function clearBaseHandlers() {
+      if (baseEndedHandler) {
+        elements.baseVideo.removeEventListener("ended", baseEndedHandler);
+        baseEndedHandler = null;
+      }
+    }
+
+    function loadVideoMeta(videoEl, url) {
+      return new Promise((resolve, reject) => {
+        const onLoaded = () => {
+          cleanup();
+          resolve(videoEl.duration || 0);
+        };
+        const onErr = () => {
+          cleanup();
+          reject(new Error(`Failed to load video metadata: ${url}`));
+        };
+        const cleanup = () => {
+          videoEl.removeEventListener("loadedmetadata", onLoaded);
+          videoEl.removeEventListener("error", onErr);
+        };
+
+        videoEl.addEventListener("loadedmetadata", onLoaded, { once: true });
+        videoEl.addEventListener("error", onErr, { once: true });
+        videoEl.src = url;
+        videoEl.load();
+      });
+    }
+
+    function resolveDurationInfo({ baseKind, baseUrl, overrideSeconds, baseDuration, durationHintSeconds }) {
+      const override = Number.isFinite(overrideSeconds) && overrideSeconds > 0 ? overrideSeconds : 0;
+      const base = Number.isFinite(baseDuration) && baseDuration > 0 ? baseDuration : 0;
+      const hintValue = Number.isFinite(durationHintSeconds) ? durationHintSeconds : getDurationHintSeconds(baseUrl);
+      const hint = Number.isFinite(hintValue) && hintValue > 0 ? hintValue : 0;
+
+      if (baseKind === "page") {
+        if (override) {
+          return { duration: override, source: "override" };
+        }
+        if (hint) {
+          return { duration: hint, source: "hint" };
+        }
+        return { duration: 0, source: "none" };
+      }
+
+      if (override) {
+        return { duration: override, source: "override" };
+      }
+      if (base) {
+        return { duration: base, source: "base" };
+      }
+      if (hint) {
+        return { duration: hint, source: "hint" };
+      }
+      return { duration: 0, source: "none" };
+    }
+
+    async function primeNode(index) {
+      clearLayers();
+      clearBaseHandlers();
+
+      const node = state.nodes[index];
+      if (!node) {
+        setBaseKind("video");
+        elements.baseVideo.removeAttribute("src");
+        elements.baseFrame.removeAttribute("src");
+        elements.statDur.textContent = "0.00";
+        return;
+      }
+
+      const parsed = parseNodeText(node.text);
+      const overrideSeconds = Number(node.durationOverride);
+      const baseKind = classifyUrl(parsed.baseUrl);
+      const durationHintSeconds = getDurationHintSeconds(parsed.baseUrl);
+
+      if (!parsed.baseUrl) {
+        setBaseKind("video");
+        elements.baseVideo.removeAttribute("src");
+        elements.baseFrame.removeAttribute("src");
+        elements.statDur.textContent = "0.00";
+        return;
+      }
+
+      if (baseKind === "page") {
+        setBaseKind("page", parsed.baseUrl);
+      } else {
+        setBaseKind("video", parsed.baseUrl);
+      }
+
+      let duration = 0;
+      if (baseKind !== "page") {
+        elements.baseVideo.loop = false;
+        elements.baseVideo.muted = false;
+        elements.baseVideo.playsInline = true;
+        elements.baseVideo.preload = "metadata";
+
+        try {
+          duration = await loadVideoMeta(elements.baseVideo, parsed.baseUrl);
+        } catch (error) {
+          duration = 0;
+        }
+      }
+
+      duration = resolveDurationInfo({
+        baseKind,
+        baseUrl: parsed.baseUrl,
+        overrideSeconds,
+        baseDuration: duration,
+        durationHintSeconds
+      }).duration;
+
+      elements.statDur.textContent = duration.toFixed(2);
+
+      parsed.layers.forEach((url) => {
+        const kind = classifyUrl(url);
+        if (kind === "audio") {
+          const audio = document.createElement("audio");
+          audio.src = url;
+          audio.loop = true;
+          audio.preload = "auto";
+          overlayAudios.push(audio);
+          return;
+        }
+
+        if (kind === "image") {
+          const image = document.createElement("img");
+          image.src = url;
+          image.alt = "";
+          elements.overlayLayer.appendChild(image);
+          return;
+        }
+
+        if (kind === "page") {
+          const frame = document.createElement("iframe");
+          frame.src = url;
+          frame.title = "Overlay URL";
+          frame.loading = "eager";
+          frame.setAttribute("aria-hidden", "true");
+          elements.overlayLayer.appendChild(frame);
+          return;
+        }
+
+        const video = document.createElement("video");
+        video.src = url;
+        video.loop = true;
+        video.muted = true;
+        video.playsInline = true;
+        video.preload = "auto";
+        elements.overlayLayer.appendChild(video);
+        overlayVideos.push(video);
+      });
+    }
+
+    function stopAll() {
+      state.stopRequested = true;
+      state.playing = false;
+      if (rafId) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+      clearBaseHandlers();
+      elements.baseVideo.pause();
+      elements.baseVideo.currentTime = 0;
+      overlayVideos.forEach((video) => {
+        video.pause();
+        video.currentTime = 0;
+      });
+      overlayAudios.forEach((audio) => {
+        audio.pause();
+        audio.currentTime = 0;
+      });
+      elements.statT.textContent = "0.00";
+      elements.statDur.textContent = "0.00";
+      elements.statNode.textContent = "—";
+    }
+
+    function pauseAll() {
+      state.playing = false;
+      elements.baseVideo.pause();
+      overlayVideos.forEach((video) => video.pause());
+      overlayAudios.forEach((audio) => audio.pause());
+    }
+
+    async function playActive() {
+      state.stopRequested = false;
+      state.playing = true;
+      if (rafId) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+
+      const startIndex = getPlaybackStartIndex(state.activeIndex, state.nodes.length);
+      if (startIndex === -1) {
+        state.playing = false;
+        setStatus("No nodes available.");
+        return;
+      }
+
+      if (startIndex !== state.activeIndex) {
+        state.activeIndex = startIndex;
+      }
+
+      const index = state.activeIndex;
+      const overrideSeconds = Number(state.nodes[index].durationOverride);
+      elements.statNode.textContent = String(index + 1);
+
+      await primeNode(index);
+
+      const parsed = parseNodeText(state.nodes[index].text);
+      const durationHintSeconds = getDurationHintSeconds(parsed.baseUrl);
+      if (!parsed.baseUrl) {
+        state.playing = false;
+        setStatus("Missing base URL in this node.");
+        return;
+      }
+
+      const baseKind = classifyUrl(parsed.baseUrl);
+      activeBaseKind = baseKind;
+      baseStartTime = performance.now();
+
+      overlayVideos.forEach((video) => {
+        video.currentTime = 0;
+        video.play().catch(() => {});
+      });
+      overlayAudios.forEach((audio) => {
+        audio.currentTime = 0;
+        audio.play().catch(() => {});
+      });
+
+      if (baseKind !== "page") {
+        elements.baseVideo.currentTime = 0;
+        await elements.baseVideo.play().catch(() => {
+          state.playing = false;
+        });
+      }
+
+      let advanced = false;
+      const advance = () => {
+        if (advanced) {
+          return;
+        }
+        advanced = true;
+
+        overlayVideos.forEach((video) => video.pause());
+        overlayAudios.forEach((audio) => audio.pause());
+        elements.baseVideo.pause();
+
+        if (state.stopRequested) {
+          state.playing = false;
+          return;
+        }
+
+        if (state.activeIndex < state.nodes.length - 1) {
+          state.activeIndex += 1;
+          playActive().catch(() => {});
+        } else {
+          state.playing = false;
+          setStatus("Reached end of timeline.");
+        }
+      };
+
+      clearBaseHandlers();
+      if (baseKind !== "page") {
+        baseEndedHandler = () => {
+          if (state.playing) {
+            advance();
+          }
+        };
+        elements.baseVideo.addEventListener("ended", baseEndedHandler);
+      }
+
+      const tick = () => {
+        if (!state.playing) {
+          return;
+        }
+
+        const current = activeBaseKind === "page"
+          ? (performance.now() - baseStartTime) / 1000
+          : (elements.baseVideo.currentTime || 0);
+
+        const durationInfo = resolveDurationInfo({
+          baseKind: activeBaseKind,
+          baseUrl: parsed.baseUrl,
+          overrideSeconds,
+          baseDuration: elements.baseVideo.duration,
+          durationHintSeconds
+        });
+
+        const duration = durationInfo.duration;
+        elements.statT.textContent = current.toFixed(2);
+        elements.statDur.textContent = (Number.isFinite(duration) ? duration : 0).toFixed(2);
+
+        const shouldAdvanceOnDuration = duration > 0
+          && (activeBaseKind === "page" || durationInfo.source === "override");
+
+        if (shouldAdvanceOnDuration && current >= duration - 0.05) {
+          advance();
+          return;
+        }
+
+        rafId = requestAnimationFrame(tick);
+      };
+
+      rafId = requestAnimationFrame(tick);
+    }
+
+    function loadTimeline() {
+      const params = new URLSearchParams(window.location.search);
+      const data = params.get("data");
+      const name = params.get("name");
+      const payload = decodeTimelinePayload ? decodeTimelinePayload(data) : null;
+      let fallback = null;
+      try {
+        const stored = window.localStorage.getItem("program-monitor.timeline.v1");
+        fallback = stored ? JSON.parse(stored) : null;
+      } catch (error) {
+        fallback = null;
+      }
+      const timeline = payload && Array.isArray(payload.nodes) ? payload : fallback;
+
+      if (!timeline || !Array.isArray(timeline.nodes) || !timeline.nodes.length) {
+        elements.stageMeta.textContent = "No timeline data provided.";
+        setStatus("Missing timeline payload. Provide ?data= in the URL.");
+        return;
+      }
+
+      state.nodes = timeline.nodes;
+      state.activeIndex = 0;
+      elements.statTotal.textContent = String(state.nodes.length);
+      elements.stageMeta.textContent = name ? `Project: ${name}` : `Nodes: ${state.nodes.length}`;
+    }
+
+    document.getElementById("btnPlay").addEventListener("click", () => {
+      if (!state.playing) {
+        playActive().catch(() => {});
+      }
+    });
+
+    document.getElementById("btnPause").addEventListener("click", () => pauseAll());
+    document.getElementById("btnStop").addEventListener("click", () => stopAll());
+    document.getElementById("btnRestart").addEventListener("click", () => {
+      stopAll();
+      state.activeIndex = 0;
+      playActive().catch(() => {});
+    });
+
+    loadTimeline();
+
+    if (state.nodes.length) {
+      primeNode(0).catch(() => {});
+      playActive().catch(() => {});
+      setStatus("Playing timeline preview.");
+    }
+  </script>
+</body>
+</html>
