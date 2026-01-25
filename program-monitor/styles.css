@@ -103,6 +103,82 @@ body.preview-collapsed .previewPanel {
   flex-wrap: wrap;
 }
 
+.projectToolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--pad);
+  margin-bottom: 12px;
+}
+
+.projectToolbar.hidden {
+  display: none;
+}
+
+.projectRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.projectRow label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.projectRow input {
+  min-width: 220px;
+  flex: 1 1 220px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: #06101a;
+  color: var(--text);
+  padding: 8px 10px;
+  font-family: var(--mono);
+}
+
+.projectLabel {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.projectList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.projectItem {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 8px 10px;
+}
+
+.projectItemName {
+  font-size: 12px;
+  color: var(--text);
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projectActions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .stageFrame {
   position: relative;
   background: #041018;

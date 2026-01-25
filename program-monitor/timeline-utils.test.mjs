@@ -14,7 +14,11 @@ const {
   getPlaybackStartIndex,
   isHttpUrl,
   parseNodeText,
-  uuid
+  uuid,
+  encodeTimelinePayload,
+  decodeTimelinePayload,
+  buildNodeDescriptor,
+  buildTimelineDescriptor
 } = require("./timeline-utils.js");
 
 process.on("uncaughtException", (error) => {
@@ -95,4 +99,48 @@ test("getPlaybackStartIndex defaults to the first node when none is selected", (
 
 test("getPlaybackStartIndex returns -1 when no nodes exist", () => {
   assert.equal(getPlaybackStartIndex(0, 0), -1);
+});
+
+test("buildNodeDescriptor categorizes overlays vs ambient", () => {
+  const node = {
+    id: "n1",
+    text: [
+      "http://host/base.mp4",
+      "http://host/overlay.webm",
+      "http://host/cover.png",
+      "http://host/ambience.mp3"
+    ].join("\n"),
+    durationOverride: "3"
+  };
+  const descriptor = buildNodeDescriptor(node);
+  assert.equal(descriptor.base.url, "http://host/base.mp4");
+  assert.equal(descriptor.base.kind, "video");
+  assert.equal(descriptor.overlays.length, 2);
+  assert.equal(descriptor.ambient.length, 1);
+});
+
+test("buildTimelineDescriptor adds structured nodes", () => {
+  const timeline = buildTimelineDescriptor({
+    version: 1,
+    nodes: [{ id: "n1", text: "http://host/base.html?dur=4", durationOverride: "" }],
+    activeIndex: 0
+  });
+  assert.equal(timeline.nodesStructured.length, 1);
+  assert.equal(timeline.nodesStructured[0].base.kind, "page");
+});
+
+test("encode/decode timeline payload round-trips", () => {
+  const payload = {
+    version: 1,
+    nodes: [{ id: "a", text: "http://host/base.mp4", durationOverride: "3" }],
+    activeIndex: 0
+  };
+  const encoded = encodeTimelinePayload(payload);
+  assert.ok(encoded);
+  const decoded = decodeTimelinePayload(encoded);
+  assert.deepEqual(decoded, payload);
+});
+
+test("decodeTimelinePayload returns null on bad input", () => {
+  assert.equal(decodeTimelinePayload("not-base64"), null);
 });

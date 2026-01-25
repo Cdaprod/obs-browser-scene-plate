@@ -21,6 +21,8 @@ A browser-only **Program + Monitor** UI for stacking URL-based media nodes into 
 - **Add Node / Delete Node**: manage the timeline.
 - **Transport**: preview the timeline in sequence.
 - **Save**: persist to localStorage.
+- **Projects**: save/load named timelines (stored in localStorage) with structured base/overlay/ambient metadata for reuse without the UI.
+- **Open Stage**: open a standalone timeline preview tab from the current nodes.
 - **Export / Import JSON**: move timelines between machines.
 - **Validate**: basic checks for missing base URLs and non-http(s) entries.
 - **Open Base**: open the active node base URL in a new tab.

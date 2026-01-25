@@ -217,6 +217,90 @@
     return activeIndex;
   }
 
+  function buildNodeDescriptor(node) {
+    const text = node && node.text ? String(node.text) : "";
+    const parsed = parseNodeText(text);
+    const baseUrl = parsed.baseUrl || "";
+    const baseKind = baseUrl ? classifyUrl(baseUrl) : "unknown";
+    const overlays = [];
+    const ambient = [];
+
+    parsed.layers.forEach((url) => {
+      const kind = classifyUrl(url);
+      if (kind === "audio") {
+        ambient.push({ url, kind });
+        return;
+      }
+      overlays.push({ url, kind });
+    });
+
+    return {
+      id: node && node.id ? node.id : "",
+      text,
+      durationOverride: node && node.durationOverride ? node.durationOverride : "",
+      base: { url: baseUrl, kind: baseKind },
+      overlays,
+      ambient
+    };
+  }
+
+  function buildTimelineDescriptor(timeline) {
+    const safeTimeline = timeline || { nodes: [], activeIndex: 0 };
+    const nodes = Array.isArray(safeTimeline.nodes) ? safeTimeline.nodes : [];
+    const activeIndex = Number.isFinite(safeTimeline.activeIndex) ? safeTimeline.activeIndex : 0;
+
+    return {
+      version: Number.isFinite(safeTimeline.version) ? safeTimeline.version : 1,
+      activeIndex,
+      nodes,
+      nodesStructured: nodes.map((node) => buildNodeDescriptor(node))
+    };
+  }
+
+  function encodeTimelinePayload(payload) {
+    if (payload === undefined) {
+      return "";
+    }
+    try {
+      const json = JSON.stringify(payload);
+      if (typeof Buffer !== "undefined") {
+        return Buffer.from(json, "utf8").toString("base64");
+      }
+      if (globalScope && typeof globalScope.btoa === "function") {
+        const encoder = new TextEncoder();
+        const bytes = encoder.encode(json);
+        let binary = "";
+        bytes.forEach((value) => {
+          binary += String.fromCharCode(value);
+        });
+        return globalScope.btoa(binary);
+      }
+      return "";
+    } catch (error) {
+      return "";
+    }
+  }
+
+  function decodeTimelinePayload(value) {
+    if (!value) {
+      return null;
+    }
+    try {
+      let json = "";
+      if (typeof Buffer !== "undefined") {
+        json = Buffer.from(value, "base64").toString("utf8");
+      } else if (globalScope && typeof globalScope.atob === "function") {
+        const binary = globalScope.atob(value);
+        const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+        const decoder = new TextDecoder("utf-8");
+        json = decoder.decode(bytes);
+      }
+      return json ? JSON.parse(json) : null;
+    } catch (error) {
+      return null;
+    }
+  }
+
   const api = {
     STORAGE_KEY,
     parseNodeText,
@@ -224,7 +308,11 @@
     classifyUrl,
     isHttpUrl,
     uuid,
-    getPlaybackStartIndex
+    getPlaybackStartIndex,
+    buildNodeDescriptor,
+    buildTimelineDescriptor,
+    encodeTimelinePayload,
+    decodeTimelinePayload
   };
 
   if (typeof module !== "undefined" && module.exports) {
