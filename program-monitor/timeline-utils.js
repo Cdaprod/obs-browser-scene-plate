@@ -12,14 +12,37 @@
   const STORAGE_KEY = "program-monitor.timeline.v1";
 
   function parseNodeText(text) {
-    const lines = (text || "")
+    const rawLines = (text || "")
       .split("\n")
       .map((line) => line.trim())
       .filter((line) => line && !line.startsWith("//") && !line.startsWith("#"));
 
+    const explicitBaseIndex = rawLines.findIndex((line) => /^base\s*:/i.test(line));
+    const lines = rawLines.map((line, index) => {
+      if (index === explicitBaseIndex) {
+        return line.replace(/^base\s*:/i, "").trim();
+      }
+      return line;
+    });
+
+    let baseIndex = 0;
+    if (explicitBaseIndex >= 0) {
+      baseIndex = explicitBaseIndex;
+    } else if (lines.length > 1) {
+      const nonAudioLines = lines.filter((line) => classifyUrl(line) !== "audio");
+      const overlayLike = (line) => /\/overlays?\//i.test(line);
+      const nonOverlayLines = nonAudioLines.filter((line) => !overlayLike(line));
+      if (nonOverlayLines.length && lines.some(overlayLike)) {
+        baseIndex = lines.lastIndexOf(nonOverlayLines[nonOverlayLines.length - 1]);
+      }
+    }
+
+    const baseUrl = lines[baseIndex] || "";
+    const layers = lines.filter((_, index) => index !== baseIndex);
+
     return {
-      baseUrl: lines[0] || "",
-      layers: lines.slice(1),
+      baseUrl,
+      layers,
       lines
     };
   }

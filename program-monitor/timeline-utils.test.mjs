@@ -50,6 +50,32 @@ test("parseNodeText trims lines and ignores comments", () => {
   ]);
 });
 
+test("parseNodeText supports explicit base line overrides", () => {
+  const input = [
+    "http://example.com/overlay.webm",
+    "base: http://example.com/base.mp4",
+    "http://example.com/track.mp3"
+  ].join("\n");
+
+  const parsed = parseNodeText(input);
+  assert.equal(parsed.baseUrl, "http://example.com/base.mp4");
+  assert.deepEqual(parsed.layers, [
+    "http://example.com/overlay.webm",
+    "http://example.com/track.mp3"
+  ]);
+});
+
+test("parseNodeText prefers non-overlay base when overlay line comes first", () => {
+  const input = [
+    "http://example.com/overlays/glow.html",
+    "http://example.com/base.mp4"
+  ].join("\n");
+
+  const parsed = parseNodeText(input);
+  assert.equal(parsed.baseUrl, "http://example.com/base.mp4");
+  assert.deepEqual(parsed.layers, ["http://example.com/overlays/glow.html"]);
+});
+
 test("classifyUrl detects media types", () => {
   assert.equal(classifyUrl("http://host/file.mp3"), "audio");
   assert.equal(classifyUrl("http://host/file.png"), "image");
