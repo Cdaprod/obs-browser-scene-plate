@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>Plate: Procedural (9:19) ACTIVE</title>
+  <!--
+    Default URL (full params):
+    http://<HOST_IP>:8789/plate-procedural-active-9x19.html?hud=off&seed=7&speed=1.15&activity=1.35&drift=1.0&bokeh=1.0&sweeps=1.0&scan=1.0
+  -->
+
+  <style>
+    :root{
+      --w: 9;
+      --h: 19;
+
+      /* Look knobs (all 0..2 unless noted) */
+      --vignette: 0.46;          /* 0..1 */
+      --grain: 0.12;             /* 0..1 */
+      --hudOpacity: 0.0;         /* 0=off; enable via ?hud=on */
+
+      /* Motion knobs */
+      --speed: 1.15;             /* base time scale */
+      --activity: 1.35;          /* overall motion energy */
+      --drift: 1.0;              /* camera drift intensity */
+      --bokeh: 1.0;              /* bokeh density */
+      --sweeps: 1.0;             /* light sweeps intensity */
+      --scan: 1.0;               /* scanline movement intensity */
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #000;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
+
+    .stage {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      display: grid;
+      place-items: center;
+      background: #000;
+    }
+
+    .frame {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      aspect-ratio: var(--w) / var(--h);
+      max-width: 100%;
+      max-height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
+
+    canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    /* Grain overlay (CSS-only, lightweight) */
+    .grain {
+      position: absolute;
+      inset: 0;
+      opacity: var(--grain);
+      mix-blend-mode: overlay;
+      pointer-events: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='.55'/%3E%3C/svg%3E");
+      background-size: 220px 220px;
+      animation: grainMove 1.2s steps(2) infinite;
+    }
+    @keyframes grainMove {
+      0% { transform: translate(0,0); }
+      25% { transform: translate(-10px,7px); }
+      50% { transform: translate(8px,-12px); }
+      75% { transform: translate(-6px,-8px); }
+      100% { transform: translate(0,0); }
+    }
+
+    /* Subtle scanlines (more active than before, still tasteful) */
+    .scanlines{
+      position:absolute; inset:0;
+      pointer-events:none;
+      opacity: calc(0.10 * var(--scan));
+      mix-blend-mode: soft-light;
+      background:
+        repeating-linear-gradient(
+          to bottom,
+          rgba(255,255,255,0.10) 0px,
+          rgba(255,255,255,0.10) 1px,
+          rgba(0,0,0,0.00) 2px,
+          rgba(0,0,0,0.00) 5px
+        );
+      animation: scanDrift 3.2s linear infinite;
+    }
+    @keyframes scanDrift{
+      0% { transform: translateY(0); }
+      100% { transform: translateY(24px); }
+    }
+
+    /* Vignette */
+    .vignette {
+      position: absolute;
+      inset: -2%;
+      pointer-events: none;
+      background: radial-gradient(circle at 50% 45%,
+        rgba(0,0,0,0) 44%,
+        rgba(0,0,0,var(--vignette)) 100%);
+    }
+
+    /* HUD */
+    .hud {
+      position: absolute;
+      left: 18px;
+      right: 18px;
+      top: 18px;
+      opacity: var(--hudOpacity);
+      pointer-events: none;
+    }
+
+    .card {
+      padding: 12px 14px;
+      border-radius: 14px;
+      background: rgba(0,0,0,0.60);
+      border: 1px solid rgba(255,255,255,0.12);
+      backdrop-filter: blur(8px);
+    }
+
+    .title {
+      color: #FFFFFF;
+      font-weight: 700;
+      font-size: 14px;
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.65);
+    }
+
+    .sub {
+      margin-top: 6px;
+      color: rgba(255,255,255,0.70);
+      font-size: 12px;
+      line-height: 1.4;
+      word-break: break-word;
+    }
+
+    .sub code {
+      color: #E6F0FF;
+      background: rgba(255,255,255,0.10);
+      padding: 2px 6px;
+      border-radius: 6px;
+      margin-right: 4px;
+      font-size: 11px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="stage">
+    <div class="frame">
+      <canvas id="c"></canvas>
+      <div class="scanlines"></div>
+      <div class="grain"></div>
+      <div class="vignette"></div>
+
+      <div class="hud" id="hud">
+        <div class="card">
+          <div class="title">Procedural Plate (Active)</div>
+          <div class="sub">
+            Controls:
+            <code>?hud=on</code>
+            <code>&amp;seed=7</code>
+            <code>&amp;speed=1.15</code>
+            <code>&amp;activity=1.35</code>
+            <code>&amp;drift=1.0</code>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var params = new URLSearchParams(window.location.search);
+
+      // URL controls
+      var hudOn = params.get("hud") === "on";
+      var seed = parseInt(params.get("seed") || "7", 10);
+
+      function clamp(n, a, b){ return Math.max(a, Math.min(b, n)); }
+
+      var speed    = clamp(parseFloat(params.get("speed") || "1.15"), 0.1, 3.0);
+      var activity = clamp(parseFloat(params.get("activity") || "1.35"), 0.0, 2.5);
+      var drift    = clamp(parseFloat(params.get("drift") || "1.0"), 0.0, 2.0);
+      var bokehK   = clamp(parseFloat(params.get("bokeh") || "1.0"), 0.0, 2.0);
+      var sweepsK  = clamp(parseFloat(params.get("sweeps") || "1.0"), 0.0, 2.0);
+      var scanK    = clamp(parseFloat(params.get("scan") || "1.0"), 0.0, 2.0);
+
+      // expose as CSS vars (so overlays match)
+      document.documentElement.style.setProperty("--speed", String(speed));
+      document.documentElement.style.setProperty("--activity", String(activity));
+      document.documentElement.style.setProperty("--drift", String(drift));
+      document.documentElement.style.setProperty("--bokeh", String(bokehK));
+      document.documentElement.style.setProperty("--sweeps", String(sweepsK));
+      document.documentElement.style.setProperty("--scan", String(scanK));
+
+      if (hudOn) document.documentElement.style.setProperty("--hudOpacity", "0.92");
+
+      // Seeded RNG
+      function mulberry32(a) {
+        return function () {
+          var t = a += 0x6D2B79F5;
+          t = Math.imul(t ^ (t >>> 15), t | 1);
+          t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+      }
+      var rand = mulberry32(seed);
+
+      var canvas = document.getElementById("c");
+      var ctx = canvas.getContext("2d", { alpha: false });
+
+      function resize() {
+        var dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+        var rect = canvas.getBoundingClientRect();
+        canvas.width = Math.floor(rect.width * dpr);
+        canvas.height = Math.floor(rect.height * dpr);
+      }
+      window.addEventListener("resize", resize);
+      resize();
+
+      // --- Layers -------------------------------------------------------------
+
+      // Parallax bokeh: two layers (near + far)
+      var bokehFar = [];
+      var bokehNear = [];
+
+      function makeBokeh(list, count, rMin, rMax, vMin, vMax, aMin, aMax){
+        list.length = 0;
+        for (var i = 0; i < count; i++) {
+          list.push({
+            x: rand(),
+            y: rand(),
+            r: rMin + rand() * (rMax - rMin),
+            a: aMin + rand() * (aMax - aMin),
+            vx: (vMin + rand() * (vMax - vMin)) * (rand() < 0.5 ? -1 : 1),
+            vy: (vMin + rand() * (vMax - vMin)) * (rand() < 0.5 ? -1 : 1),
+            ph: rand() * Math.PI * 2
+          });
+        }
+      }
+
+      // density scales with bokehK
+      makeBokeh(bokehFar,  Math.floor(55 * (0.6 + 0.4 * bokehK)),  10, 42, 0.02, 0.10, 0.015, 0.055);
+      makeBokeh(bokehNear, Math.floor(18 * (0.6 + 0.4 * bokehK)),  60, 140,0.08, 0.22, 0.010, 0.040);
+
+      // Light sweeps
+      var sweeps = [];
+      var sweepCount = Math.floor(3 + 3 * sweepsK);
+      for (var s = 0; s < sweepCount; s++){
+        sweeps.push({
+          p: rand(),
+          w: 0.18 + rand()*0.22,
+          sp: 0.10 + rand()*0.25,
+          a: (0.05 + rand()*0.10) * sweepsK,
+          tilt: (-0.35 + rand()*0.70)
+        });
+      }
+
+      // micro pulse (rare)
+      var pulse = { t: 0, a: 0 };
+      function maybePulse(tt){
+        // about every ~10-18 seconds depending on activity
+        if (pulse.a <= 0 && (Math.sin(tt * 0.22 + seed) > 0.9992)) {
+          pulse.t = 0;
+          pulse.a = 0.22 * activity;
+        }
+        if (pulse.a > 0){
+          pulse.t += 0.016;
+          pulse.a *= 0.965; // decay
+        }
+      }
+
+      // Helper: soft circle
+      function softCircle(x,y,r,alpha){
+        var g = ctx.createRadialGradient(x,y,0,x,y,r);
+        g.addColorStop(0.0, "rgba(255,255,255," + alpha + ")");
+        g.addColorStop(1.0, "rgba(255,255,255,0)");
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(x,y,r,0,Math.PI*2);
+        ctx.fill();
+      }
+
+      // -----------------------------------------------------------------------
+
+      function draw(t) {
+        var w = canvas.width;
+        var h = canvas.height;
+
+        var tt = (t * 0.001) * speed;      // seconds, scaled
+        var act = activity;
+
+        maybePulse(tt);
+
+        // subtle camera drift (micro parallax)
+        // keep it tasteful: drift moves the "world" not the overlay
+        var dx = (Math.sin(tt * 0.55) * 0.008 + Math.sin(tt * 1.21) * 0.004) * drift;
+        var dy = (Math.cos(tt * 0.48) * 0.010 + Math.cos(tt * 1.37) * 0.004) * drift;
+
+        // Base gradient (more alive: add mild oscillation + drift offsets)
+        var gx = 0.5 + Math.sin(tt * 0.90) * 0.10 + dx;
+        var gy = 0.35 + Math.cos(tt * 0.80) * 0.10 + dy;
+
+        var grad = ctx.createRadialGradient(w * gx, h * gy, 20, w * 0.5, h * 0.5, Math.max(w, h));
+        grad.addColorStop(0.0, "rgb(16, 24, 46)");
+        grad.addColorStop(0.40, "rgb(10, 10, 18)");
+        grad.addColorStop(1.0, "rgb(0, 0, 0)");
+
+        ctx.globalCompositeOperation = "source-over";
+        ctx.globalAlpha = 1.0;
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, w, h);
+
+        // Warm + cool washes with slight motion (more presence)
+        ctx.globalCompositeOperation = "screen";
+
+        ctx.globalAlpha = (0.10 + pulse.a * 0.25);
+        var warm = ctx.createRadialGradient(w * (0.25 + dx*0.6), h * (0.72 + dy*0.6), 20, w * 0.25, h * 0.72, Math.max(w, h));
+        warm.addColorStop(0.0, "rgb(255, 110, 60)");
+        warm.addColorStop(1.0, "rgba(0,0,0,0)");
+        ctx.fillStyle = warm;
+        ctx.fillRect(0, 0, w, h);
+
+        ctx.globalAlpha = (0.08 + pulse.a * 0.20);
+        var cool = ctx.createRadialGradient(w * (0.78 - dx*0.7), h * (0.38 - dy*0.7), 20, w * 0.78, h * 0.38, Math.max(w, h));
+        cool.addColorStop(0.0, "rgb(60, 170, 255)");
+        cool.addColorStop(1.0, "rgba(0,0,0,0)");
+        ctx.fillStyle = cool;
+        ctx.fillRect(0, 0, w, h);
+
+        // Light sweeps (cinematic streaks, moving across)
+        ctx.globalCompositeOperation = "lighter";
+        for (var i = 0; i < sweeps.length; i++){
+          var sw = sweeps[i];
+          var p = (sw.p + tt * sw.sp * (0.55 + 0.65*act)) % 1.35 - 0.18;
+          var x0 = w * p;
+          var y0 = h * (0.20 + 0.60 * (0.5 + 0.5*Math.sin(tt*0.22 + i)));
+          var ww = w * sw.w;
+          var hh = h * (0.08 + 0.10*act);
+
+          ctx.save();
+          ctx.translate(x0, y0);
+          ctx.rotate(sw.tilt);
+          var g2 = ctx.createLinearGradient(-ww, 0, ww, 0);
+          g2.addColorStop(0.0, "rgba(0,0,0,0)");
+          g2.addColorStop(0.45, "rgba(140,220,255," + (sw.a*0.55).toFixed(4) + ")");
+          g2.addColorStop(0.55, "rgba(255,140,90,"  + (sw.a*0.55).toFixed(4) + ")");
+          g2.addColorStop(1.0, "rgba(0,0,0,0)");
+          ctx.globalAlpha = 1.0;
+          ctx.fillStyle = g2;
+          ctx.fillRect(-ww, -hh, ww*2, hh*2);
+          ctx.restore();
+        }
+
+        // Bokeh FAR (more active, parallax drift)
+        ctx.globalCompositeOperation = "lighter";
+        for (var f = 0; f < bokehFar.length; f++){
+          var b = bokehFar[f];
+          // speed scales with activity
+          b.x += b.vx * 0.00035 * (0.9 + 1.3*act);
+          b.y += b.vy * 0.00028 * (0.9 + 1.3*act);
+
+          if (b.x < -0.15) b.x = 1.15;
+          if (b.x >  1.15) b.x = -0.15;
+          if (b.y < -0.15) b.y = 1.15;
+          if (b.y >  1.15) b.y = -0.15;
+
+          var shimmer = 0.55 + 0.45 * Math.sin(tt * (1.2 + 0.6*act) + b.ph);
+          var alpha = b.a * shimmer;
+
+          var x = (b.x + dx*0.55) * w;
+          var y = (b.y + dy*0.55) * h;
+
+          softCircle(x, y, b.r, alpha.toFixed(4));
+        }
+
+        // Bokeh NEAR (bigger, faster, very subtle)
+        ctx.globalCompositeOperation = "screen";
+        for (var n = 0; n < bokehNear.length; n++){
+          var bn = bokehNear[n];
+          bn.x += bn.vx * 0.00055 * (0.85 + 1.6*act);
+          bn.y += bn.vy * 0.00045 * (0.85 + 1.6*act);
+
+          if (bn.x < -0.25) bn.x = 1.25;
+          if (bn.x >  1.25) bn.x = -0.25;
+          if (bn.y < -0.25) bn.y = 1.25;
+          if (bn.y >  1.25) bn.y = -0.25;
+
+          var shimmer2 = 0.55 + 0.45 * Math.sin(tt * (0.9 + 0.6*act) + bn.ph);
+          var alpha2 = bn.a * shimmer2;
+
+          var x2 = (bn.x + dx*1.1) * w;
+          var y2 = (bn.y + dy*1.1) * h;
+
+          softCircle(x2, y2, bn.r, alpha2.toFixed(4));
+        }
+
+        // Gentle “alive” pulse (barely-there)
+        if (pulse.a > 0.002){
+          ctx.globalCompositeOperation = "screen";
+          ctx.globalAlpha = clamp(pulse.a, 0, 0.18);
+          ctx.fillStyle = "rgba(120,200,255,0.18)";
+          ctx.fillRect(0,0,w,h);
+          ctx.globalAlpha = 1.0;
+        }
+
+        ctx.globalCompositeOperation = "source-over";
+        requestAnimationFrame(draw);
+      }
+
+      requestAnimationFrame(draw);
+    })();
+  </script>
+</body>
+</html>
