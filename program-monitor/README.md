@@ -2,7 +2,7 @@
 
 A browser-only **Program + Monitor** UI for stacking URL-based media nodes into a timeline. Each node is a multiline textbox:
 
-- **Line 1**: base video URL (duration source)
+- **Line 1**: base video URL (duration source). Alternatively, prefix any line with `base:` to mark it as the base.
 - **Lines 2+**: overlay videos/images/audio that loop and are clipped to the base duration
 
 ## Usage
