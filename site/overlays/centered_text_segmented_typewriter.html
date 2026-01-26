@@ -278,6 +278,7 @@ const wrapEl  = document.getElementById("wrap");
 let audioCtx = null;
 let masterGain = null;
 let audioReady = false;
+let clickBuffer = null;
 let rng = Math.random;
 
 if (AUDIO_SEED != null && AUDIO_SEED !== ""){
@@ -335,6 +336,7 @@ function audioInit(){
 
   masterGain.connect(masterFilter);
   masterFilter.connect(audioCtx.destination);
+  clickBuffer = makeClickBuffer(audioCtx);
   audioReady = true;
 }
 
@@ -347,7 +349,7 @@ async function audioResume(){
 }
 
 function playKeySound(kind){
-  if (!AUDIO_ON || !audioReady || !audioCtx) return;
+  if (!AUDIO_ON || !audioReady || !audioCtx || !clickBuffer) return;
   if (audioCtx.state !== "running"){
     audioResume();
     return;
@@ -355,67 +357,42 @@ function playKeySound(kind){
 
   const t0 = audioCtx.currentTime;
   const r1 = rng();
-  const r2 = rng();
 
   const g = audioCtx.createGain();
-  const base = (kind === "punct") ? 0.14 : (kind === "return" ? 0.16 : 0.12);
-  const vol = base * (0.9 + 0.25 * r1);
+  const base = (kind === "punct") ? 0.18 : (kind === "return" ? 0.2 : 0.14);
+  const vol = base * (0.85 + 0.2 * r1);
   g.gain.setValueAtTime(0.0001, t0);
-  g.gain.exponentialRampToValueAtTime(vol, t0 + 0.0015);
-  g.gain.exponentialRampToValueAtTime(0.0001, t0 + (kind === "punct" ? 0.04 : 0.03));
+  g.gain.exponentialRampToValueAtTime(vol, t0 + 0.0012);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + (kind === "punct" ? 0.032 : 0.026));
 
-  const panner = audioCtx.createStereoPanner();
-  panner.pan.setValueAtTime((r2 - 0.5) * 0.12, t0);
+  const src = audioCtx.createBufferSource();
+  src.buffer = clickBuffer;
+  src.playbackRate.setValueAtTime(0.95 + 0.1 * r1, t0);
+  src.connect(g);
+  g.connect(masterGain);
 
-  const noise = makeNoiseNode(audioCtx, 0.05);
-  const noiseGain = audioCtx.createGain();
-  noiseGain.gain.setValueAtTime(0.0001, t0);
-  noiseGain.gain.exponentialRampToValueAtTime(1.0, t0 + 0.0012);
-  noiseGain.gain.exponentialRampToValueAtTime(0.0001, t0 + (kind === "punct" ? 0.022 : 0.016));
+  const stopAt = t0 + (kind === "punct" ? 0.05 : 0.045);
+  src.start(t0);
+  src.stop(stopAt);
 
-  const bp = audioCtx.createBiquadFilter();
-  bp.type = "bandpass";
-  const center =
-    kind === "punct" ? (2400 + 900 * r1) :
-    kind === "return" ? (2000 + 800 * r1) :
-    (2200 + 900 * r1);
-  bp.frequency.setValueAtTime(center, t0);
-  bp.Q.setValueAtTime(9.0 + 2.0 * rng(), t0);
-
-  noise.connect(bp);
-  bp.connect(noiseGain);
-
-  const sum = audioCtx.createGain();
-  noiseGain.connect(sum);
-
-  sum.connect(g);
-  g.connect(panner);
-  panner.connect(masterGain);
-
-  const stopAt = t0 + (kind === "punct" ? 0.06 : 0.05);
-  noise.start(t0);
-  noise.stop(stopAt);
-
-  setTimeout(() => {
+  src.addEventListener("ended", () => {
     try {
-      noise.disconnect(); bp.disconnect(); noiseGain.disconnect();
-      sum.disconnect(); g.disconnect(); panner.disconnect();
+      src.disconnect();
+      g.disconnect();
     } catch {}
-  }, Math.ceil((stopAt - t0) * 1000) + 20);
+  });
 }
 
-function makeNoiseNode(ctx, seconds){
+function makeClickBuffer(ctx){
   const sr = ctx.sampleRate;
-  const len = Math.max(1, Math.floor(sr * seconds));
+  const len = Math.floor(sr * 0.03);
   const buf = ctx.createBuffer(1, len, sr);
   const data = buf.getChannelData(0);
   for (let i = 0; i < len; i++){
-    data[i] = ((rng() * 2) - 1) * 0.85;
+    const decay = Math.pow(1 - i / len, 3);
+    data[i] = ((Math.random() * 2) - 1) * decay;
   }
-  const src = ctx.createBufferSource();
-  src.buffer = buf;
-  src.loop = true;
-  return src;
+  return buf;
 }
 
 function requestAudioUnlock(){
@@ -425,19 +402,6 @@ function requestAudioUnlock(){
 
 function isAudioPlayable(){
   return AUDIO_ON && audioCtx && audioCtx.state === "running";
-}
-
-function waitForAudioReady(onReady){
-  if (!AUDIO_ON){
-    onReady();
-    return;
-  }
-  if (isAudioPlayable()){
-    onReady();
-    return;
-  }
-  requestAudioUnlock();
-  activeTimer = setTimeout(() => waitForAudioReady(onReady), 120);
 }
 
 /* Typewriter engine */
@@ -566,9 +530,12 @@ function start(){
     requestAudioUnlock();
   }
   activeTimer = setTimeout(() => {
-    waitForAudioReady(() => {
-      play();
-    });
+    if (AUDIO_ON && !isAudioPlayable()){
+      requestAudioUnlock();
+      activeTimer = setTimeout(play, 120);
+      return;
+    }
+    play();
   }, START);
 }
 
