@@ -10,6 +10,7 @@ services:
     volumes:
       - ./site:/usr/share/nginx/html:rw
       - ./program-monitor:/usr/share/nginx/html/program-monitor:ro
+      - ./lan-dashboard:/usr/share/nginx/html/lan-dashboard:ro
       - type: bind
         source: "${RENDERS_HOST_PATH:-./renders}"
         target: /renders
