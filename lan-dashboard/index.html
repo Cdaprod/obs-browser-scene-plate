@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>LAN Control Panel</title>
+  <style>
+    :root{
+      --bg: #0b0f14;
+      --panel: #111827;
+      --panel2:#0f172a;
+      --border:#1f2937;
+      --text:#e5e7eb;
+      --muted:#9ca3af;
+      --accent:#38bdf8;
+      --good:#22c55e;
+      --warn:#f59e0b;
+      --bad:#ef4444;
+
+      --radius: 14px;
+      --gap: 12px;
+      --shadow: 0 10px 30px rgba(0,0,0,.35);
+      --safeTop: env(safe-area-inset-top, 0px);
+      --safeBot: env(safe-area-inset-bottom, 0px);
+      --safeLeft: env(safe-area-inset-left, 0px);
+      --safeRight: env(safe-area-inset-right, 0px);
+
+      --iframeH_mobile: 44vh;
+      --iframeH_desktop: 56vh;
+    }
+
+    *{ box-sizing:border-box; }
+    html,body{ height:100%; }
+    body{
+      margin:0;
+      background: radial-gradient(1200px 700px at 20% 0%, rgba(56,189,248,.10), transparent 55%),
+                  radial-gradient(900px 600px at 90% 20%, rgba(168,85,247,.10), transparent 60%),
+                  var(--bg);
+      color:var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+      padding: calc(12px + var(--safeTop)) calc(12px + var(--safeRight)) calc(12px + var(--safeBot)) calc(12px + var(--safeLeft));
+    }
+
+    header{
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      backdrop-filter: blur(10px);
+      background: color-mix(in srgb, var(--bg) 78%, transparent);
+      border: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
+      border-radius: var(--radius);
+      padding: 12px;
+      box-shadow: var(--shadow);
+      margin-bottom: var(--gap);
+    }
+
+    .hdr-row{
+      display:flex;
+      gap:10px;
+      align-items:center;
+      justify-content:space-between;
+      flex-wrap:wrap;
+    }
+
+    .title{
+      display:flex;
+      flex-direction:column;
+      gap:2px;
+      min-width: 220px;
+    }
+    .title h1{
+      margin:0;
+      font-size: 16px;
+      letter-spacing:.2px;
+    }
+    .title p{
+      margin:0;
+      color:var(--muted);
+      font-size: 12px;
+    }
+
+    .actions{
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+      justify-content:flex-end;
+    }
+
+    button, .pill{
+      appearance:none;
+      border:1px solid var(--border);
+      background: linear-gradient(180deg, color-mix(in srgb, var(--panel) 92%, #000), var(--panel2));
+      color:var(--text);
+      border-radius: 999px;
+      padding: 8px 10px;
+      font-size: 13px;
+      line-height: 1;
+      cursor:pointer;
+      transition: transform .08s ease, border-color .12s ease, background .12s ease;
+      user-select:none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    button:active{ transform: scale(.98); }
+    button:hover{ border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); }
+
+    .pill{
+      display:inline-flex;
+      gap:6px;
+      align-items:center;
+      padding: 8px 12px;
+      cursor: default;
+      color: var(--muted);
+    }
+
+    .grid{
+      display:grid;
+      gap: var(--gap);
+      grid-template-columns: 1fr;
+    }
+
+    @media (min-width: 720px){
+      .grid{ grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (min-width: 1100px){
+      .grid{ grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
+
+    .card{
+      border: 1px solid var(--border);
+      background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.01));
+      border-radius: var(--radius);
+      overflow:hidden;
+      box-shadow: var(--shadow);
+      display:flex;
+      flex-direction:column;
+      min-height: 120px;
+    }
+
+    .card-head{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      padding: 10px 10px 10px 12px;
+      border-bottom: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+      background: color-mix(in srgb, var(--panel) 65%, transparent);
+    }
+
+    .left{
+      display:flex;
+      flex-direction:column;
+      gap:2px;
+      min-width: 0;
+    }
+    .name{
+      display:flex;
+      align-items:center;
+      gap:8px;
+      font-weight: 650;
+      font-size: 13px;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    .url{
+      color:var(--muted);
+      font-size: 11px;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+
+    .dot{
+      width: 9px;
+      height: 9px;
+      border-radius: 99px;
+      background: color-mix(in srgb, var(--muted) 45%, transparent);
+      box-shadow: 0 0 0 3px rgba(255,255,255,.03) inset;
+      flex: 0 0 auto;
+    }
+    .dot.on{ background: color-mix(in srgb, var(--good) 92%, #000); }
+    .dot.off{ background: color-mix(in srgb, var(--bad) 88%, #000); }
+
+    .btns{
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+      justify-content:flex-end;
+    }
+    .btn-open{ border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
+    .btn-embed{ }
+    .btn-unembed{ opacity: .85; }
+
+    .frame-wrap{
+      position: relative;
+      width: 100%;
+      background: #000;
+      display:none;
+    }
+
+    .frame-wrap.on{ display:block; }
+
+    iframe{
+      width:100%;
+      height: var(--iframeH_mobile);
+      border:0;
+      display:block;
+      background:#000;
+    }
+    @media (min-width: 900px){
+      iframe{ height: var(--iframeH_desktop); }
+    }
+
+    .hint{
+      padding: 12px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .kbd{
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      border:1px solid var(--border);
+      border-bottom-width: 3px;
+      border-radius: 8px;
+      padding: 1px 6px;
+      color: var(--text);
+      background: color-mix(in srgb, var(--panel) 85%, #000);
+      font-size: 12px;
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <div class="hdr-row">
+      <div class="title">
+        <h1>LAN Control Panel</h1>
+        <p>One URL. Everything else is a click. Mobile-first.</p>
+      </div>
+
+      <div class="actions">
+        <span class="pill" id="ipPill">Host: 192.168.0.25</span>
+        <button id="btnLoadAll" title="Embed all iframes (heavier on mobile)">Load All</button>
+        <button id="btnUnloadAll" title="Unload all iframes (lightweight)">Unload All</button>
+      </div>
+    </div>
+  </header>
+
+  <section class="grid" id="grid"></section>
+
+  <script>
+    // ====== CONFIG (single place to edit) ======
+    const APPS = [
+      { id: "media_sync",     name: "Media Sync",      url: "http://192.168.0.25:8787/public/explorer.html" },
+      { id: "overlay_plates", name: "Overlay Plates",  url: "http://192.168.0.25:8789/" },
+      { id: "program_monitor",name: "Program Monitor", url: "http://192.168.0.25:8789/program-monitor/index.html" },
+      { id: "captioner_3d",   name: "3D Captioner",    url: "http://192.168.0.25:8791/" },
+      { id: "teleprompter",   name: "Teleprompter",    url: "http://192.168.0.25:8798/" },
+    ];
+
+    // ====== STATE ======
+    const LS_KEY = "lan_panel_embed_state_v1";
+    const grid = document.getElementById("grid");
+    const btnLoadAll = document.getElementById("btnLoadAll");
+    const btnUnloadAll = document.getElementById("btnUnloadAll");
+
+    function loadState(){
+      try { return JSON.parse(localStorage.getItem(LS_KEY) || "{}"); }
+      catch { return {}; }
+    }
+
+    function saveState(state){
+      localStorage.setItem(LS_KEY, JSON.stringify(state));
+    }
+
+    const state = loadState();
+
+    // ====== RENDER ======
+    function mkCard(app){
+      const card = document.createElement("div");
+      card.className = "card";
+      card.dataset.appId = app.id;
+
+      const dot = document.createElement("span");
+      dot.className = "dot"; // we’ll flip it to "on" once embedded (not a true health check)
+      dot.title = "Embed status";
+
+      const head = document.createElement("div");
+      head.className = "card-head";
+
+      const left = document.createElement("div");
+      left.className = "left";
+
+      const name = document.createElement("div");
+      name.className = "name";
+      name.appendChild(dot);
+      name.appendChild(document.createTextNode(app.name));
+
+      const url = document.createElement("div");
+      url.className = "url";
+      url.textContent = app.url;
+
+      left.appendChild(name);
+      left.appendChild(url);
+
+      const btns = document.createElement("div");
+      btns.className = "btns";
+
+      const openBtn = document.createElement("button");
+      openBtn.className = "btn-open";
+      openBtn.textContent = "Open ↗";
+      openBtn.onclick = () => window.open(app.url, "_blank", "noopener,noreferrer");
+
+      const embedBtn = document.createElement("button");
+      embedBtn.className = "btn-embed";
+      embedBtn.textContent = "Embed";
+      embedBtn.onclick = () => setEmbedded(app.id, true);
+
+      const unembedBtn = document.createElement("button");
+      unembedBtn.className = "btn-unembed";
+      unembedBtn.textContent = "Unload";
+      unembedBtn.onclick = () => setEmbedded(app.id, false);
+
+      btns.append(openBtn, embedBtn, unembedBtn);
+
+      head.append(left, btns);
+
+      const frameWrap = document.createElement("div");
+      frameWrap.className = "frame-wrap";
+      frameWrap.id = `wrap_${app.id}`;
+
+      const hint = document.createElement("div");
+      hint.className = "hint";
+      hint.innerHTML = `
+        Tip: On mobile, keep most apps <b>unloaded</b> and only embed what you’re actively using.
+        Keyboard: <span class="kbd">/</span> focuses the browser address bar (desktop) — then type this page URL once and you're home.
+      `;
+
+      // If embedded, we create iframe dynamically (so "Unload" actually frees resources)
+      card.append(head, frameWrap, hint);
+
+      // Initial embed state
+      if (state[app.id]?.embedded) setTimeout(() => setEmbedded(app.id, true, {silent:true}), 0);
+
+      return card;
+    }
+
+    function render(){
+      grid.innerHTML = "";
+      for (const app of APPS) grid.appendChild(mkCard(app));
+    }
+
+    // ====== EMBED CONTROL ======
+    function setEmbedded(appId, embedded, opts = {}){
+      const app = APPS.find(a => a.id === appId);
+      if (!app) return;
+
+      const card = document.querySelector(`.card[data-app-id="${appId}"]`);
+      if (!card) return;
+
+      const wrap = card.querySelector(`#wrap_${appId}`);
+      const dot  = card.querySelector(".dot");
+
+      if (embedded){
+        // create iframe if not exists
+        if (!wrap.querySelector("iframe")){
+          const iframe = document.createElement("iframe");
+          iframe.src = app.url;
+          iframe.loading = "lazy";
+          iframe.referrerPolicy = "no-referrer";
+          wrap.appendChild(iframe);
+        }
+        wrap.classList.add("on");
+        dot.classList.add("on");
+        dot.classList.remove("off");
+      } else {
+        // destroy iframe to free resources
+        const iframe = wrap.querySelector("iframe");
+        if (iframe) iframe.remove();
+        wrap.classList.remove("on");
+        dot.classList.remove("on");
+        dot.classList.add("off");
+      }
+
+      state[appId] = { embedded: !!embedded };
+      if (!opts.silent) saveState(state);
+      else saveState(state);
+    }
+
+    // ====== BULK ======
+    btnLoadAll.onclick = () => {
+      for (const app of APPS) setEmbedded(app.id, true);
+    };
+    btnUnloadAll.onclick = () => {
+      for (const app of APPS) setEmbedded(app.id, false);
+    };
+
+    // ====== INIT ======
+    render();
+  </script>
+</body>
+</html>
