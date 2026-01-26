@@ -38,3 +38,7 @@ standardization checklist below.
   ```sh
   node --test site/url-utils.test.js
   ```
+* Overlay default URL doc tests:
+  ```sh
+  node --test site/overlays/centered_text_segmented_typewriter.test.js
+  ```
