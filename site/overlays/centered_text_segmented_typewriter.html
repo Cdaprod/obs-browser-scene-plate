@@ -212,6 +212,7 @@ body.micro #text{
  *   cps=22        characters-per-second (global)
  *   pause=650     pause after typing finishes before hold starts (ms)
  *   chunk=1..6    characters per tick (default auto based on cps)
+ *                (forced to 1 when audio=1 to keep 1 click per character)
  *
  * Optional per-sentence overrides:
  *   cps1=18&cps2=26&cps3=20
@@ -221,7 +222,7 @@ body.micro #text{
  * Audio (procedural, no files):
  *   audio=0|1    enable typewriter audio
  *   vol=0..1     master volume
- *   rate=tick|char  play per tick or per character
+ *   rate=tick|char  (legacy, audio always plays per character)
  *   space=0|1    include spaces
  *   unlock=auto|gesture  audio unlock strategy
  *   seed=string  deterministic randomness
@@ -253,7 +254,6 @@ const CHUNK = clampInt(parseInt(qs.get("chunk") || "0", 10), 0, 12); // 0 => aut
 /* Audio tuning (procedural) */
 const AUDIO_ON = (qs.get("audio") || "0") === "1";
 const AUDIO_VOL = clampFloat(parseFloat(qs.get("vol") || "0.65"), 0, 1);
-const AUDIO_RATE = (qs.get("rate") || "tick").toLowerCase(); // tick | char
 const AUDIO_SPACE = (qs.get("space") || "0") === "1";
 const AUDIO_UNLOCK = (qs.get("unlock") || "auto").toLowerCase();
 const AUDIO_AUTOUNLOCK = AUDIO_UNLOCK !== "gesture";
@@ -358,71 +358,47 @@ function playKeySound(kind){
   const r2 = rng();
 
   const g = audioCtx.createGain();
-  const base = (kind === "punct") ? 0.16 : (kind === "return" ? 0.2 : 0.13);
-  const vol = base * (0.85 + 0.35 * r1);
+  const base = (kind === "punct") ? 0.14 : (kind === "return" ? 0.16 : 0.12);
+  const vol = base * (0.9 + 0.25 * r1);
   g.gain.setValueAtTime(0.0001, t0);
-  g.gain.exponentialRampToValueAtTime(vol, t0 + 0.002);
-  g.gain.exponentialRampToValueAtTime(0.0001, t0 + (kind === "punct" ? 0.06 : 0.045));
+  g.gain.exponentialRampToValueAtTime(vol, t0 + 0.0015);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + (kind === "punct" ? 0.04 : 0.03));
 
   const panner = audioCtx.createStereoPanner();
-  panner.pan.setValueAtTime((r2 - 0.5) * 0.18, t0);
+  panner.pan.setValueAtTime((r2 - 0.5) * 0.12, t0);
 
-  const noise = makeNoiseNode(audioCtx, 0.07);
+  const noise = makeNoiseNode(audioCtx, 0.05);
   const noiseGain = audioCtx.createGain();
   noiseGain.gain.setValueAtTime(0.0001, t0);
-  noiseGain.gain.exponentialRampToValueAtTime(1.0, t0 + 0.0015);
-  noiseGain.gain.exponentialRampToValueAtTime(0.0001, t0 + (kind === "punct" ? 0.03 : 0.02));
+  noiseGain.gain.exponentialRampToValueAtTime(1.0, t0 + 0.0012);
+  noiseGain.gain.exponentialRampToValueAtTime(0.0001, t0 + (kind === "punct" ? 0.022 : 0.016));
 
   const bp = audioCtx.createBiquadFilter();
   bp.type = "bandpass";
   const center =
-    kind === "punct" ? (1900 + 900 * r1) :
-    kind === "return" ? (1400 + 700 * r1) :
-    (1600 + 800 * r1);
+    kind === "punct" ? (2400 + 900 * r1) :
+    kind === "return" ? (2000 + 800 * r1) :
+    (2200 + 900 * r1);
   bp.frequency.setValueAtTime(center, t0);
-  bp.Q.setValueAtTime(6.5 + 2.0 * rng(), t0);
-
-  const osc = audioCtx.createOscillator();
-  const og = audioCtx.createGain();
-  osc.type = "triangle";
-  const f0 =
-    kind === "punct" ? (260 + 70 * rng()) :
-    kind === "return" ? (180 + 50 * rng()) :
-    (210 + 60 * rng());
-  osc.frequency.setValueAtTime(f0, t0);
-
-  og.gain.setValueAtTime(0.0001, t0);
-  og.gain.exponentialRampToValueAtTime(0.12, t0 + 0.003);
-  og.gain.exponentialRampToValueAtTime(0.0001, t0 + (kind === "punct" ? 0.08 : 0.055));
-
-  const bodyLP = audioCtx.createBiquadFilter();
-  bodyLP.type = "lowpass";
-  bodyLP.frequency.setValueAtTime(900 + 400 * rng(), t0);
+  bp.Q.setValueAtTime(9.0 + 2.0 * rng(), t0);
 
   noise.connect(bp);
   bp.connect(noiseGain);
 
-  osc.connect(bodyLP);
-  bodyLP.connect(og);
-
   const sum = audioCtx.createGain();
   noiseGain.connect(sum);
-  og.connect(sum);
 
   sum.connect(g);
   g.connect(panner);
   panner.connect(masterGain);
 
-  const stopAt = t0 + (kind === "punct" ? 0.11 : 0.08);
+  const stopAt = t0 + (kind === "punct" ? 0.06 : 0.05);
   noise.start(t0);
-  osc.start(t0);
   noise.stop(stopAt);
-  osc.stop(stopAt);
 
   setTimeout(() => {
     try {
       noise.disconnect(); bp.disconnect(); noiseGain.disconnect();
-      osc.disconnect(); og.disconnect(); bodyLP.disconnect();
       sum.disconnect(); g.disconnect(); panner.disconnect();
     } catch {}
   }, Math.ceil((stopAt - t0) * 1000) + 20);
@@ -447,6 +423,23 @@ function requestAudioUnlock(){
   audioResume();
 }
 
+function isAudioPlayable(){
+  return AUDIO_ON && audioCtx && audioCtx.state === "running";
+}
+
+function waitForAudioReady(onReady){
+  if (!AUDIO_ON){
+    onReady();
+    return;
+  }
+  if (isAudioPlayable()){
+    onReady();
+    return;
+  }
+  requestAudioUnlock();
+  activeTimer = setTimeout(() => waitForAudioReady(onReady), 120);
+}
+
 /* Typewriter engine */
 function typeSentence(fullText, cps, onDone){
   // Reset output
@@ -469,7 +462,9 @@ function typeSentence(fullText, cps, onDone){
   }
 
   // tick interval and chunk sizing
-  const chunk = (CHUNK > 0) ? CHUNK : Math.max(1, Math.round(cps / 18)); // auto: faster cps => bigger chunk
+  const chunk = AUDIO_ON
+    ? 1
+    : (CHUNK > 0) ? CHUNK : Math.max(1, Math.round(cps / 18)); // auto: faster cps => bigger chunk
   const intervalMs = Math.max(16, Math.round(1000 / cps) * chunk);
 
   let i = 0;
@@ -481,24 +476,13 @@ function typeSentence(fullText, cps, onDone){
     i += chunk;
 
     if (AUDIO_ON){
-      if (AUDIO_RATE === "char"){
-        for (const ch of next){
-          if (!AUDIO_SPACE && ch === " ") continue;
-          const kind =
-            ch === "\n" ? "return" :
-            /[.,;:!?]/.test(ch) ? "punct" :
-            (ch === " " ? "space" : "normal");
-          setTimeout(() => playKeySound(kind), Math.floor(rng() * 14));
-        }
-      } else {
-        const last = next[next.length - 1] || "";
-        if (AUDIO_SPACE || last !== " "){
-          const kind =
-            last === "\n" ? "return" :
-            /[.,;:!?]/.test(last) ? "punct" :
-            (last === " " ? "space" : "normal");
-          playKeySound(kind);
-        }
+      const ch = next;
+      if (AUDIO_SPACE || ch !== " "){
+        const kind =
+          ch === "\n" ? "return" :
+          /[.,;:!?]/.test(ch) ? "punct" :
+          (ch === " " ? "space" : "normal");
+        playKeySound(kind);
       }
     }
 
@@ -581,7 +565,11 @@ function start(){
   if (AUDIO_AUTOUNLOCK){
     requestAudioUnlock();
   }
-  activeTimer = setTimeout(play, START);
+  activeTimer = setTimeout(() => {
+    waitForAudioReady(() => {
+      play();
+    });
+  }, START);
 }
 
 /* Helpers */
