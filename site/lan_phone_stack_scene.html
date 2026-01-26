@@ -1,0 +1,732 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <!-- No pinch zoom required; keep the scene locked and framed -->
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
+  <title>LAN Phone Stack Scene</title>
+
+  <style>
+    :root{
+      --bg:#000;
+
+      /* Safe areas */
+      --safeTop: env(safe-area-inset-top, 0px);
+      --safeBot: env(safe-area-inset-bottom, 0px);
+      --safeLeft: env(safe-area-inset-left, 0px);
+      --safeRight: env(safe-area-inset-right, 0px);
+
+      /* Design phone size (design px) */
+      --phoneW: 300;
+      --phoneH: 533; /* 300 * 16/9 */
+
+      /* Motion */
+      --dur: 560ms;
+      --durRail: 720ms;
+      --ease: cubic-bezier(.18,.92,.14,1);
+
+      /* Glow */
+      --glowA: rgba(56,189,248,.55);
+      --glowB: rgba(168,85,247,.38);
+      --stroke: rgba(255,255,255,.14);
+    }
+
+    *{ box-sizing:border-box; }
+    html,body{
+      margin:0;
+      width:100%;
+      height:100%;
+      overflow:hidden;
+      overscroll-behavior:none;
+      touch-action: manipulation;
+      background: var(--bg);
+      -webkit-text-size-adjust: 100%;
+    }
+
+    body{
+      background:
+        radial-gradient(1200px 900px at 18% 0%, rgba(56,189,248,.12), transparent 56%),
+        radial-gradient(1000px 700px at 88% 20%, rgba(168,85,247,.10), transparent 64%),
+        radial-gradient(1200px 900px at 45% 110%, rgba(255,255,255,.05), transparent 55%),
+        var(--bg);
+    }
+
+    /* Locked visible box (we set width/height via visualViewport in JS) */
+    #viewport{
+      position: fixed;
+      left: 0; top: 0;
+      overflow: hidden;
+      padding:
+        calc(10px + var(--safeTop))
+        calc(10px + var(--safeRight))
+        calc(10px + var(--safeBot))
+        calc(10px + var(--safeLeft));
+    }
+
+    /* Vignette + subtle dotted texture (optional) */
+    #viewport::before{
+      content:"";
+      position:absolute; inset:0;
+      background:
+        radial-gradient(1200px 1200px at 50% 30%, rgba(0,0,0,0) 0%, rgba(0,0,0,.25) 55%, rgba(0,0,0,.70) 100%),
+        radial-gradient(circle at 1px 1px, rgba(255,255,255,.06) 1px, transparent 1px);
+      background-size: auto, 18px 18px;
+      opacity: .55;
+      pointer-events:none;
+      mix-blend-mode: multiply;
+    }
+
+    /* World: fixed design canvas scaled DOWN to fit */
+    #world{
+      position:absolute;
+      left: 50%;
+      top: 50%;
+      width: 1080px;
+      height: 1920px;
+      transform-origin: 50% 50%;
+      transform: translate(-50%,-50%) scale(.5);
+      perspective: 1400px;
+      transform-style: preserve-3d;
+    }
+
+    /* Phone shell (outer transform happens here) */
+    .phone{
+      position:absolute;
+      width: calc(var(--phoneW) * 1px);
+      height: calc(var(--phoneH) * 1px);
+      border-radius: 24px;
+      overflow:hidden;
+      background: rgba(255,255,255,.02);
+      transform-style: preserve-3d;
+      will-change: transform, filter, opacity;
+      transition:
+        transform var(--dur) var(--ease),
+        filter var(--dur) var(--ease),
+        opacity var(--dur) var(--ease);
+      user-select:none;
+      -webkit-tap-highlight-color: transparent;
+      cursor:pointer;
+
+      outline: 1px solid var(--stroke);
+      box-shadow:
+        0 22px 70px rgba(0,0,0,.60),
+        0 0 0 1px rgba(255,255,255,.04) inset;
+    }
+
+    /* Rail cards feel a hair heavier */
+    .phone[data-dim="1"]{
+      transition-duration: var(--durRail);
+      opacity: .86;
+    }
+
+    /* Thin gradient border + bloom */
+    .phone::before{
+      content:"";
+      position:absolute;
+      inset:-1px;
+      border-radius: 26px;
+      padding: 1px;
+      background: linear-gradient(135deg, var(--glowA), var(--glowB), rgba(255,255,255,.10));
+      -webkit-mask:
+        linear-gradient(#000 0 0) content-box,
+        linear-gradient(#000 0 0);
+      -webkit-mask-composite: xor;
+              mask-composite: exclude;
+      opacity: .55;
+      pointer-events:none;
+      filter: blur(.25px);
+      z-index: 5;
+    }
+    .phone::after{
+      content:"";
+      position:absolute;
+      inset:-14px;
+      border-radius: 36px;
+      background:
+        radial-gradient(closest-side at 20% 25%, rgba(56,189,248,.22), transparent 70%),
+        radial-gradient(closest-side at 80% 20%, rgba(168,85,247,.16), transparent 72%),
+        radial-gradient(closest-side at 50% 90%, rgba(255,255,255,.08), transparent 70%);
+      opacity: .40;
+      pointer-events:none;
+      filter: blur(10px);
+      z-index:-1;
+    }
+
+    /* Inner content wrapper so we can animate “switching” without fighting outer transforms */
+    .inner{
+      position:absolute;
+      inset:0;
+      transform-origin: 50% 60%;
+      will-change: transform, opacity, filter;
+      transition: transform var(--dur) var(--ease), opacity var(--dur) var(--ease), filter var(--dur) var(--ease);
+    }
+
+    /* Animate-in: start hidden, then fade/raise in */
+    body:not([data-ready="1"]) .inner{
+      opacity: 0;
+      transform: translateY(26px) scale(.985);
+      filter: blur(2px);
+    }
+
+    /* Focus / non-focus grading */
+    .phone[data-focus="1"]{
+      cursor: default;
+      filter: brightness(1.05) saturate(1.06) contrast(1.02);
+      opacity: 1;
+    }
+    .phone[data-focus="1"]::before{ opacity: .78; }
+    .phone[data-focus="1"]::after{ opacity: .58; }
+
+    .phone[data-dim="1"]{
+      filter: brightness(.72) saturate(.88);
+    }
+    .phone[data-dim="1"]::before{ opacity: .40; }
+    .phone[data-dim="1"]::after{ opacity: .28; }
+
+    /* Switching “whoomp” (inner-only) */
+    .inner.pulse{
+      transform: scale(.965);
+      filter: blur(.2px) brightness(1.02);
+    }
+
+    /* Bezel */
+    .bezel{
+      position:absolute;
+      inset:10px;
+      border-radius: 18px;
+      border: 1px solid rgba(255,255,255,.10);
+      pointer-events:none;
+      z-index: 6;
+    }
+
+    /* Top bar */
+    .bar{
+      position:absolute; left:0; right:0; top:0;
+      height: 38px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      padding: 8px 10px;
+      background: linear-gradient(180deg, rgba(0,0,0,.62), rgba(0,0,0,0));
+      z-index: 7;
+      gap: 8px;
+      pointer-events:none;
+    }
+
+    .label{
+      font-size: 12px;
+      color: rgba(255,255,255,.90);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 70%;
+      text-shadow: 0 2px 10px rgba(0,0,0,.7);
+    }
+
+    .btns{
+      display:flex; gap:6px;
+      pointer-events:auto;
+    }
+    .btn{
+      border: 1px solid rgba(255,255,255,.22);
+      background: rgba(0,0,0,.46);
+      color: rgba(255,255,255,.92);
+      border-radius: 999px;
+      font-size: 12px;
+      line-height: 1;
+      padding: 6px 9px;
+      cursor:pointer;
+      backdrop-filter: blur(10px);
+    }
+    .btn:active{ transform: scale(.98); }
+
+    iframe{
+      position:absolute; inset:0;
+      width:100%; height:100%;
+      border:0;
+      background:#000;
+    }
+
+    /* HUD */
+    .hud{
+      position:absolute;
+      left: 12px; right: 12px; top: 10px;
+      pointer-events:none;
+      z-index: 99999;
+      font-size: 12px;
+      color: rgba(255,255,255,.65);
+      text-shadow: 0 2px 14px rgba(0,0,0,.70);
+      display:flex;
+      gap:10px;
+      align-items:center;
+      justify-content:space-between;
+      flex-wrap:wrap;
+    }
+    .pill{
+      display:inline-flex;
+      gap:8px;
+      align-items:center;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,.14);
+      background: rgba(0,0,0,.28);
+      color: rgba(255,255,255,.70);
+      backdrop-filter: blur(10px);
+    }
+    .dot{
+      width:8px; height:8px; border-radius:999px;
+      background: rgba(255,255,255,.35);
+      box-shadow: 0 0 10px rgba(56,189,248,.30);
+    }
+    .kbd{
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      border:1px solid rgba(255,255,255,.18);
+      border-bottom-width: 3px;
+      border-radius: 8px;
+      padding: 1px 6px;
+      background: rgba(0,0,0,.45);
+      color: rgba(255,255,255,.85);
+    }
+  </style>
+</head>
+
+<body>
+  <div id="viewport">
+    <div class="hud">
+      <span class="pill"><span class="dot"></span> LAN Phone Carousel</span>
+      <span class="pill">Swipe ↑↓ · Tap focus · Keys <span class="kbd">1</span>-<span class="kbd">5</span> · <span class="kbd">Esc</span></span>
+    </div>
+    <div id="world"></div>
+  </div>
+
+  <script>
+    // =========================
+    // CONFIG
+    // =========================
+    const APPS = [
+      { id: "media_sync",      name: "Media Sync",      url: "http://192.168.0.25:8787/public/explorer.html" },
+      { id: "overlay_plates",  name: "Overlay Plates",  url: "http://192.168.0.25:8789/" },
+      { id: "program_monitor", name: "Program Monitor", url: "http://192.168.0.25:8789/program-monitor/index.html" },
+      { id: "captioner_3d",    name: "3D Captioner",    url: "http://192.168.0.25:8791/" },
+      { id: "teleprompter",    name: "Teleprompter",    url: "http://192.168.0.25:8798/" },
+    ];
+
+    const DESIGN = { w: 1080, h: 1920 };
+
+    // Your chosen layout
+    const LAYOUT = {
+      padPx: 12,
+
+      hero: {
+        cx: 735,
+        cy: 1200,
+        scale: 1.90,
+        rz: 2,
+        ry: 0,
+        z: 520
+      },
+
+      rail: {
+        baseCx: 175,
+        baseCy: 690,
+        stepY: 160,
+        arcX: 110,
+        arcTilt: 12,
+        rotZ: -10,
+        perRotZ: -4,
+        zStep: 140,
+        scale: 0.92
+      },
+
+      dimOthers: false,
+      swipeThresholdPx: 30,
+    };
+
+    // =========================
+    // WHOOSH (NO FILES)
+    // Pure WebAudio: noise + pitch sweep envelope.
+    // Note: audio only works after a user gesture on iOS.
+    // =========================
+    const WHOOSH = {
+      enabled: true,
+      ctx: null,
+      armed: false,
+      master: null,
+    };
+
+    function armAudio(){
+      if (WHOOSH.armed) return;
+      try{
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        if (!Ctx) return;
+
+        WHOOSH.ctx = new Ctx();
+        WHOOSH.master = WHOOSH.ctx.createGain();
+        WHOOSH.master.gain.value = 0.18; // overall volume
+        WHOOSH.master.connect(WHOOSH.ctx.destination);
+
+        // iOS: resume inside gesture
+        WHOOSH.ctx.resume?.();
+        WHOOSH.armed = true;
+      }catch{
+        // ignore
+      }
+    }
+
+    function playWhoosh(){
+      if (!WHOOSH.enabled || !WHOOSH.armed || !WHOOSH.ctx) return;
+
+      const ctx = WHOOSH.ctx;
+      const now = ctx.currentTime;
+
+      // --- Noise burst ---
+      const noiseDur = 0.16;
+      const bufferSize = Math.max(1, Math.floor(ctx.sampleRate * noiseDur));
+      const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i=0; i<bufferSize; i++){
+        // shaped white noise
+        const t = i / bufferSize;
+        const env = (1 - t) * (1 - t);
+        data[i] = (Math.random() * 2 - 1) * env;
+      }
+
+      const noise = ctx.createBufferSource();
+      noise.buffer = buffer;
+
+      const hp = ctx.createBiquadFilter();
+      hp.type = "highpass";
+      hp.frequency.setValueAtTime(500, now);
+      hp.frequency.exponentialRampToValueAtTime(1800, now + noiseDur);
+
+      const lp = ctx.createBiquadFilter();
+      lp.type = "lowpass";
+      lp.frequency.setValueAtTime(9000, now);
+      lp.frequency.exponentialRampToValueAtTime(4500, now + noiseDur);
+
+      const ng = ctx.createGain();
+      ng.gain.setValueAtTime(0.0001, now);
+      ng.gain.exponentialRampToValueAtTime(0.55, now + 0.03);
+      ng.gain.exponentialRampToValueAtTime(0.0001, now + noiseDur);
+
+      noise.connect(hp);
+      hp.connect(lp);
+      lp.connect(ng);
+      ng.connect(WHOOSH.master);
+
+      // --- Tone sweep (subtle body) ---
+      const osc = ctx.createOscillator();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(260, now);
+      osc.frequency.exponentialRampToValueAtTime(120, now + 0.12);
+
+      const og = ctx.createGain();
+      og.gain.setValueAtTime(0.0001, now);
+      og.gain.exponentialRampToValueAtTime(0.10, now + 0.02);
+      og.gain.exponentialRampToValueAtTime(0.0001, now + 0.14);
+
+      osc.connect(og);
+      og.connect(WHOOSH.master);
+
+      noise.start(now);
+      noise.stop(now + noiseDur);
+      osc.start(now);
+      osc.stop(now + 0.16);
+    }
+
+    // =========================
+    // STATE + DOM
+    // =========================
+    const LS_KEY = "lan_phone_carousel_focus_v2";
+    const viewportEl = document.getElementById("viewport");
+    const worldEl = document.getElementById("world");
+    const nodes = new Map();
+    let focusedId = null;
+
+    function loadFocus(){
+      const v = localStorage.getItem(LS_KEY);
+      if (v && APPS.some(a => a.id === v)) return v;
+      return APPS[0]?.id ?? null;
+    }
+    function saveFocus(id){
+      if (!id) localStorage.removeItem(LS_KEY);
+      else localStorage.setItem(LS_KEY, id);
+    }
+
+    function createIframeIfNeeded(inner, url){
+      if (inner.querySelector("iframe")) return;
+      const iframe = document.createElement("iframe");
+      iframe.src = url;
+      iframe.loading = "lazy";
+      iframe.referrerPolicy = "no-referrer";
+      inner.appendChild(iframe);
+    }
+
+    function setPhoneTransform(el, x, y, scale, rz, ry, z){
+      el.style.transform =
+        `translate3d(${x}px, ${y}px, 0px) rotateZ(${rz}deg) rotateY(${ry}deg) translateZ(${z}px) scale(${scale})`;
+    }
+
+    function makePhone(app, index){
+      const phone = document.createElement("div");
+      phone.className = "phone";
+      phone.dataset.id = app.id;
+
+      const inner = document.createElement("div");
+      inner.className = "inner";
+
+      const bar = document.createElement("div");
+      bar.className = "bar";
+
+      const label = document.createElement("div");
+      label.className = "label";
+      label.textContent = `${index+1}. ${app.name}`;
+
+      const btns = document.createElement("div");
+      btns.className = "btns";
+
+      const btnOpen = document.createElement("button");
+      btnOpen.className = "btn";
+      btnOpen.textContent = "Open ↗";
+      btnOpen.onclick = (e) => {
+        e.stopPropagation();
+        window.open(app.url, "_blank", "noopener,noreferrer");
+      };
+
+      const btnReload = document.createElement("button");
+      btnReload.className = "btn";
+      btnReload.textContent = "Reload";
+      btnReload.onclick = (e) => {
+        e.stopPropagation();
+        const iframe = inner.querySelector("iframe");
+        if (iframe) iframe.remove();
+        createIframeIfNeeded(inner, app.url);
+      };
+
+      btns.append(btnOpen, btnReload);
+      bar.append(label, btns);
+
+      const bezel = document.createElement("div");
+      bezel.className = "bezel";
+
+      inner.appendChild(bar);
+      inner.appendChild(bezel);
+      phone.appendChild(inner);
+
+      // Click to focus (also arms audio on iOS)
+      phone.addEventListener("pointerdown", () => armAudio(), { passive:true });
+      phone.addEventListener("click", () => setFocus(app.id));
+
+      worldEl.appendChild(phone);
+      nodes.set(app.id, { app, phone, inner, index });
+    }
+
+    // =========================
+    // VIEWPORT SCALE (down only)
+    // =========================
+    function getVisualViewportBox(){
+      const vv = window.visualViewport;
+      const w = vv ? vv.width : window.innerWidth;
+      const h = vv ? vv.height : window.innerHeight;
+
+      viewportEl.style.width = `${Math.round(w)}px`;
+      viewportEl.style.height = `${Math.round(h)}px`;
+
+      const cs = getComputedStyle(document.documentElement);
+      const safeL = parseFloat(cs.getPropertyValue("--safeLeft")) || 0;
+      const safeR = parseFloat(cs.getPropertyValue("--safeRight")) || 0;
+      const safeT = parseFloat(cs.getPropertyValue("--safeTop")) || 0;
+      const safeB = parseFloat(cs.getPropertyValue("--safeBot")) || 0;
+
+      const pad = LAYOUT.padPx;
+      const cw = Math.max(1, w - (pad*2) - safeL - safeR);
+      const ch = Math.max(1, h - (pad*2) - safeT - safeB);
+
+      return { w, h, cw, ch };
+    }
+
+    function applyWorldScale(){
+      const vp = getVisualViewportBox();
+      const s = Math.min(vp.cw / DESIGN.w, vp.ch / DESIGN.h, 1); // DOWN only
+      worldEl.style.transform = `translate(-50%,-50%) scale(${s})`;
+    }
+
+    // =========================
+    // LAYOUT (carousel rail + hero)
+    // =========================
+    function layoutWorld(){
+      if (!focusedId || !nodes.has(focusedId)) return;
+
+      for (const { phone } of nodes.values()){
+        const isFocus = phone.dataset.id === focusedId;
+        phone.dataset.focus = isFocus ? "1" : "0";
+        phone.dataset.dim = (!isFocus && LAYOUT.dimOthers) ? "1" : "0";
+      }
+
+      const phoneW = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--phoneW")) || 300;
+      const phoneH = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--phoneH")) || 533;
+
+      // Hero
+      const f = nodes.get(focusedId);
+      createIframeIfNeeded(f.inner, f.app.url);
+
+      const hero = LAYOUT.hero;
+      const fX = hero.cx - (phoneW/2);
+      const fY = hero.cy - (phoneH/2);
+
+      f.phone.style.zIndex = "999";
+      setPhoneTransform(f.phone, fX, fY, hero.scale, hero.rz, hero.ry, hero.z);
+
+      // Rail (others)
+      const others = Array.from(nodes.values())
+        .filter(n => n.app.id !== focusedId)
+        .sort((a,b) => a.index - b.index);
+
+      const count = others.length;
+      const rail = LAYOUT.rail;
+
+      for (let i = 0; i < count; i++){
+        const n = others[i];
+
+        const t = (count <= 1) ? 0 : (i / (count - 1)); // 0..1
+        const bow = (t - 0.5);
+        const arcX = -rail.arcX * (1 - (bow*bow*4)); // max left mid
+
+        const cx = rail.baseCx + arcX;
+        const cy = rail.baseCy + (i * rail.stepY);
+
+        const x = cx - (phoneW/2);
+        const y = cy - (phoneH/2);
+
+        const z = (count - i) * rail.zStep;
+        const rz = rail.rotZ + (rail.perRotZ * (t - 0.5));
+
+        n.phone.style.zIndex = String(300 + i);
+
+        // preload top-most rail card
+        if (i === 0) createIframeIfNeeded(n.inner, n.app.url);
+
+        setPhoneTransform(n.phone, x, y, rail.scale, rz, rail.arcTilt, z);
+      }
+    }
+
+    function relayout(){
+      applyWorldScale();
+      layoutWorld();
+    }
+
+    // =========================
+    // ANIMATION HOOKS
+    // =========================
+    function pulseSwitch(){
+      // Pulse all inners briefly (hero + rail) to sell the motion
+      for (const { inner } of nodes.values()){
+        inner.classList.remove("pulse");
+        // force reflow for a reliable retrigger
+        void inner.offsetWidth;
+        inner.classList.add("pulse");
+        setTimeout(() => inner.classList.remove("pulse"), 160);
+      }
+    }
+
+    function animateIn(){
+      // Let layout happen, then flip ready flag so inners fade/raise in
+      requestAnimationFrame(() => {
+        document.body.dataset.ready = "1";
+      });
+    }
+
+    // =========================
+    // FOCUS CHANGE
+    // =========================
+    function setFocus(id){
+      if (!nodes.has(id)) return;
+      if (focusedId === id) return;
+
+      focusedId = id;
+      saveFocus(id);
+
+      // switching: pulse + whoosh
+      pulseSwitch();
+      playWhoosh();
+
+      requestAnimationFrame(() => {
+        relayout();
+        requestAnimationFrame(relayout);
+      });
+    }
+
+    // =========================
+    // SWIPE (vertical carousel feel)
+    // =========================
+    let startY = null;
+
+    function focusIndex(){
+      return APPS.findIndex(a => a.id === focusedId);
+    }
+    function focusByIndex(idx){
+      const i = ((idx % APPS.length) + APPS.length) % APPS.length;
+      setFocus(APPS[i].id);
+    }
+
+    // Swipe should work on background + phone shells (NOT inside iframes)
+    worldEl.addEventListener("pointerdown", (e) => {
+      armAudio();
+      startY = e.clientY;
+    }, { passive:true });
+
+    worldEl.addEventListener("pointerup", (e) => {
+      if (startY == null) return;
+      const endY = e.clientY;
+      const dy = endY - startY;
+      startY = null;
+
+      if (Math.abs(dy) < LAYOUT.swipeThresholdPx) return;
+      const cur = focusIndex();
+      if (dy < 0) focusByIndex(cur + 1); // swipe up -> next
+      else focusByIndex(cur - 1);        // swipe down -> prev
+    }, { passive:true });
+
+    // Keyboard shortcuts
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "Escape"){ setFocus(APPS[0].id); return; }
+      const n = Number(e.key);
+      if (Number.isFinite(n) && n >= 1 && n <= APPS.length){
+        setFocus(APPS[n-1].id);
+      }
+      if (e.key === "ArrowDown") focusByIndex(focusIndex() + 1);
+      if (e.key === "ArrowUp") focusByIndex(focusIndex() - 1);
+    });
+
+    // Prevent iOS gesture zoom / scroll
+    document.addEventListener("gesturestart", (e) => e.preventDefault(), { passive:false });
+    document.addEventListener("gesturechange", (e) => e.preventDefault(), { passive:false });
+    document.addEventListener("gestureend", (e) => e.preventDefault(), { passive:false });
+
+    // =========================
+    // INIT
+    // =========================
+    APPS.forEach(makePhone);
+
+    // Start with a focus (no whoosh on initial)
+    focusedId = loadFocus();
+    saveFocus(focusedId);
+
+    // Layout first, then animate in
+    requestAnimationFrame(() => {
+      relayout();
+      requestAnimationFrame(() => {
+        relayout();
+        animateIn();
+      });
+    });
+
+    // iOS toolbar changes
+    window.addEventListener("resize", () => setTimeout(relayout, 0));
+    if (window.visualViewport){
+      window.visualViewport.addEventListener("resize", () => setTimeout(relayout, 0));
+      window.visualViewport.addEventListener("scroll", () => setTimeout(relayout, 0));
+    }
+  </script>
+</body>
+</html>
