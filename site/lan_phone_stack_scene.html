@@ -442,6 +442,7 @@
     const worldEl = document.getElementById("world");
     const nodes = new Map();
     let focusedId = null;
+    let relayoutRaf = 0;
 
     function loadFocus(){
       const v = localStorage.getItem(LS_KEY);
@@ -526,11 +527,14 @@
     // =========================
     function getVisualViewportBox(){
       const vv = window.visualViewport;
-      const w = vv ? vv.width : window.innerWidth;
-      const h = vv ? vv.height : window.innerHeight;
+      const w = Math.round(vv ? vv.width : window.innerWidth);
+      const h = Math.round(vv ? vv.height : window.innerHeight);
+      const offsetX = Math.round(vv?.offsetLeft ?? 0);
+      const offsetY = Math.round(vv?.offsetTop ?? 0);
 
-      viewportEl.style.width = `${Math.round(w)}px`;
-      viewportEl.style.height = `${Math.round(h)}px`;
+      viewportEl.style.width = `${w}px`;
+      viewportEl.style.height = `${h}px`;
+      viewportEl.style.transform = `translate(${offsetX}px, ${offsetY}px)`;
 
       const cs = getComputedStyle(document.documentElement);
       const safeL = parseFloat(cs.getPropertyValue("--safeLeft")) || 0;
@@ -613,6 +617,14 @@
     function relayout(){
       applyWorldScale();
       layoutWorld();
+    }
+
+    function scheduleRelayout(){
+      if (relayoutRaf) return;
+      relayoutRaf = requestAnimationFrame(() => {
+        relayoutRaf = 0;
+        relayout();
+      });
     }
 
     // =========================
@@ -722,10 +734,10 @@
     });
 
     // iOS toolbar changes
-    window.addEventListener("resize", () => setTimeout(relayout, 0));
+    window.addEventListener("resize", scheduleRelayout);
     if (window.visualViewport){
-      window.visualViewport.addEventListener("resize", () => setTimeout(relayout, 0));
-      window.visualViewport.addEventListener("scroll", () => setTimeout(relayout, 0));
+      window.visualViewport.addEventListener("resize", scheduleRelayout);
+      window.visualViewport.addEventListener("scroll", scheduleRelayout);
     }
   </script>
 </body>
