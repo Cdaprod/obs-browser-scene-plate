@@ -525,7 +525,19 @@
     // =========================
     // VIEWPORT SCALE (down only)
     // =========================
-    function getVisualViewportBox(){
+    function readRootMetrics(){
+      const cs = getComputedStyle(document.documentElement);
+      return {
+        safeL: parseFloat(cs.getPropertyValue("--safeLeft")) || 0,
+        safeR: parseFloat(cs.getPropertyValue("--safeRight")) || 0,
+        safeT: parseFloat(cs.getPropertyValue("--safeTop")) || 0,
+        safeB: parseFloat(cs.getPropertyValue("--safeBot")) || 0,
+        phoneW: parseFloat(cs.getPropertyValue("--phoneW")) || 300,
+        phoneH: parseFloat(cs.getPropertyValue("--phoneH")) || 533,
+      };
+    }
+
+    function getVisualViewportBox(metrics){
       const vv = window.visualViewport;
       const w = Math.round(vv ? vv.width : window.innerWidth);
       const h = Math.round(vv ? vv.height : window.innerHeight);
@@ -536,21 +548,15 @@
       viewportEl.style.height = `${h}px`;
       viewportEl.style.transform = `translate(${offsetX}px, ${offsetY}px)`;
 
-      const cs = getComputedStyle(document.documentElement);
-      const safeL = parseFloat(cs.getPropertyValue("--safeLeft")) || 0;
-      const safeR = parseFloat(cs.getPropertyValue("--safeRight")) || 0;
-      const safeT = parseFloat(cs.getPropertyValue("--safeTop")) || 0;
-      const safeB = parseFloat(cs.getPropertyValue("--safeBot")) || 0;
-
       const pad = LAYOUT.padPx;
-      const cw = Math.max(1, w - (pad*2) - safeL - safeR);
-      const ch = Math.max(1, h - (pad*2) - safeT - safeB);
+      const cw = Math.max(1, w - (pad*2) - metrics.safeL - metrics.safeR);
+      const ch = Math.max(1, h - (pad*2) - metrics.safeT - metrics.safeB);
 
       return { w, h, cw, ch };
     }
 
-    function applyWorldScale(){
-      const vp = getVisualViewportBox();
+    function applyWorldScale(metrics){
+      const vp = getVisualViewportBox(metrics);
       const s = Math.min(vp.cw / DESIGN.w, vp.ch / DESIGN.h, 1); // DOWN only
       worldEl.style.transform = `translate(-50%,-50%) scale(${s})`;
     }
@@ -558,7 +564,7 @@
     // =========================
     // LAYOUT (carousel rail + hero)
     // =========================
-    function layoutWorld(){
+    function layoutWorld(metrics){
       if (!focusedId || !nodes.has(focusedId)) return;
 
       for (const { phone } of nodes.values()){
@@ -567,8 +573,7 @@
         phone.dataset.dim = (!isFocus && LAYOUT.dimOthers) ? "1" : "0";
       }
 
-      const phoneW = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--phoneW")) || 300;
-      const phoneH = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--phoneH")) || 533;
+      const { phoneW, phoneH } = metrics;
 
       // Hero
       const f = nodes.get(focusedId);
@@ -615,8 +620,9 @@
     }
 
     function relayout(){
-      applyWorldScale();
-      layoutWorld();
+      const metrics = readRootMetrics();
+      applyWorldScale(metrics);
+      layoutWorld(metrics);
     }
 
     function scheduleRelayout(){
