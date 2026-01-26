@@ -196,7 +196,7 @@ body.micro #text{
  * Designed for OBS Browser Source (transparent).
  *
  * Default URL (full params):
- *  http://<HOST_IP>:8789/overlays/centered_text_segmented_typewriter.html?s1=THIS%20VIDEO%20CONTAINS%20SENSITIVE%20MATERIAL.&s2=THE%20FOLLOWING%20CONTENT%20MAY%20BE%20DISTURBING.&s3=VIEWER%20DISCRETION%20IS%20ADVISED.&in=420&out=360&hold=2600&gap=320&start=0&cps=22&pause=650&jitter=0&micro=0&mode=once&spot=0.20&audio=0&vol=0.65&rate=tick&space=0
+ *  http://<HOST_IP>:8789/overlays/centered_text_segmented_typewriter.html?s1=THIS%20VIDEO%20CONTAINS%20SENSITIVE%20MATERIAL.&s2=THE%20FOLLOWING%20CONTENT%20MAY%20BE%20DISTURBING.&s3=VIEWER%20DISCRETION%20IS%20ADVISED.&in=420&out=360&hold=2600&gap=320&start=0&cps=22&pause=650&jitter=0&micro=0&mode=once&spot=0.20&audio=0&vol=0.65&rate=tick&space=0&unlock=auto
  *
  * Segment params:
  *   s1=...&s2=...&s3=...   (any s<number> collected + sorted)
@@ -223,6 +223,7 @@ body.micro #text{
  *   vol=0..1     master volume
  *   rate=tick|char  play per tick or per character
  *   space=0|1    include spaces
+ *   unlock=auto|gesture  audio unlock strategy
  *   seed=string  deterministic randomness
  *
  * Look:
@@ -254,6 +255,8 @@ const AUDIO_ON = (qs.get("audio") || "0") === "1";
 const AUDIO_VOL = clampFloat(parseFloat(qs.get("vol") || "0.65"), 0, 1);
 const AUDIO_RATE = (qs.get("rate") || "tick").toLowerCase(); // tick | char
 const AUDIO_SPACE = (qs.get("space") || "0") === "1";
+const AUDIO_UNLOCK = (qs.get("unlock") || "auto").toLowerCase();
+const AUDIO_AUTOUNLOCK = AUDIO_UNLOCK !== "gesture";
 const AUDIO_SEED = qs.get("seed");
 
 /* Look tuning */
@@ -345,7 +348,10 @@ async function audioResume(){
 
 function playKeySound(kind){
   if (!AUDIO_ON || !audioReady || !audioCtx) return;
-  if (audioCtx.state !== "running") return;
+  if (audioCtx.state !== "running"){
+    audioResume();
+    return;
+  }
 
   const t0 = audioCtx.currentTime;
   const r1 = rng();
@@ -434,6 +440,11 @@ function makeNoiseNode(ctx, seconds){
   src.buffer = buf;
   src.loop = true;
   return src;
+}
+
+function requestAudioUnlock(){
+  if (!AUDIO_ON) return;
+  audioResume();
 }
 
 /* Typewriter engine */
@@ -567,6 +578,9 @@ function start(){
   idx = 0;
   hide();
   clearTimer();
+  if (AUDIO_AUTOUNLOCK){
+    requestAudioUnlock();
+  }
   activeTimer = setTimeout(play, START);
 }
 
@@ -604,6 +618,14 @@ start();
 addEventListener("pointerdown", async () => {
   await audioResume();
   start();
+});
+addEventListener("click", requestAudioUnlock);
+addEventListener("touchstart", requestAudioUnlock, { passive: true });
+addEventListener("keydown", requestAudioUnlock);
+addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && AUDIO_AUTOUNLOCK){
+    requestAudioUnlock();
+  }
 });
 </script>
 </body>
