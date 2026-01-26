@@ -2,6 +2,7 @@ FROM nginx:alpine
 
 COPY site/ /usr/share/nginx/html/
 COPY program-monitor/ /usr/share/nginx/html/program-monitor/
+COPY lan-dashboard/ /usr/share/nginx/html/lan-dashboard/
 COPY nginx/nginx.conf /etc/nginx/nginx.conf
 
 # Copy the entrypoint script

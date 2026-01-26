@@ -22,6 +22,7 @@ No cloud dependencies. No static file dragging. Just URLs.
 - Optional **rendering services** (`render-api/`) to export plates as MOV assets  
 - Fully **local-first**: runs on your machine or LAN with no cloud dependencies  
 - **Program Monitor** UI (`/program-monitor/`) for sequencing layered URL nodes into a timeline  
+- **LAN Dashboard** UI (`/lan-dashboard/`) for quick LAN link access  
 
 ---
 
@@ -92,6 +93,12 @@ Open the Program Monitor UI after the stack is running:
 
 Each node is a multiline list of URLs where the first line is the base video and subsequent lines are overlays/audio.
 Exports use the render-api service to generate MOV outputs.
+
+## LAN Dashboard
+
+Open the LAN Dashboard after the stack is running:
+
+`http://<HOST_IP>:8789/lan-dashboard/`
 
 ## Use in OBS
 
