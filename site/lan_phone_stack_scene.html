@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <!-- No pinch zoom required; keep the scene locked and framed -->
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
+  <!-- Default URL (full params): http://<HOST_IP>:8789/lan_phone_stack_scene.html -->
   <title>LAN Phone Stack Scene</title>
 
   <style>
@@ -76,8 +77,8 @@
       mix-blend-mode: multiply;
     }
 
-    /* World: fixed design canvas scaled DOWN to fit */
-    #world{
+    /* Scale-to-fit wrapper (applies ONLY global scale) */
+    #worldScale{
       position:absolute;
       left: 50%;
       top: 50%;
@@ -85,7 +86,27 @@
       height: 1920px;
       transform-origin: 50% 50%;
       transform: translate(-50%,-50%) scale(.5);
+      transform-style: preserve-3d;
+    }
+
+    /* Perspective stage (animate FOV here) */
+    #cameraStage{
+      position:absolute; inset:0;
+      transform-style: preserve-3d;
       perspective: 1400px;
+      perspective-origin: 50% 50%;
+    }
+
+    /* Camera transform wrapper (ambient sway) */
+    #camera{
+      position:absolute; inset:0;
+      transform-style: preserve-3d;
+      will-change: transform;
+    }
+
+    /* World where phones live (design coords) */
+    #world{
+      position:absolute; inset:0;
       transform-style: preserve-3d;
     }
 
@@ -100,7 +121,6 @@
       transform-style: preserve-3d;
       will-change: transform, filter, opacity;
       transition:
-        transform var(--dur) var(--ease),
         filter var(--dur) var(--ease),
         opacity var(--dur) var(--ease);
       user-select:none;
@@ -296,7 +316,13 @@
       <span class="pill"><span class="dot"></span> LAN Phone Carousel</span>
       <span class="pill">Swipe ↑↓ · Tap focus · Keys <span class="kbd">1</span>-<span class="kbd">5</span> · <span class="kbd">Esc</span></span>
     </div>
-    <div id="world"></div>
+    <div id="worldScale">
+      <div id="cameraStage">
+        <div id="camera">
+          <div id="world"></div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -340,6 +366,44 @@
 
       dimOthers: false,
       swipeThresholdPx: 30,
+      liveRange: 2.25,
+      fadeStart: 2.2,
+      fadeEnd: 4.0,
+    };
+
+    const CAMERA = {
+      introSec: 10,
+      perspIdle: 1400,
+      perspIntro: 900,
+      introTranslateY: 120,
+      introRotateZ: -2.5,
+      introRotateX: 2.0,
+      swayTranslateX: 6,
+      swayTranslateY: 5,
+      swayRotateZ: 0.4,
+      swayRotateX: 0.3,
+      swayRotateY: 0.3,
+      swayHz: 0.11,
+      jitterTranslate: 1.8,
+      jitterRotate: 0.1,
+      jitterHz: 0.75,
+    };
+
+    const MOTION = {
+      tau: 0.16,
+      snapAfterMs: 80,
+      pulseMs: 160,
+    };
+
+    const AUTO = {
+      enabled: true,
+      spinSec: 5.0,
+      slowSec: 10.0,
+      loops: 2.0,
+      slowExtra: 1.0,
+      settleIndex: 0,
+      startDelaySec: 0.8,
+      pauseOnTouchSec: 6.0,
     };
 
     // =========================
@@ -439,20 +503,75 @@
     // =========================
     const LS_KEY = "lan_phone_carousel_focus_v2";
     const viewportEl = document.getElementById("viewport");
+    const worldScaleEl = document.getElementById("worldScale");
+    const cameraStageEl = document.getElementById("cameraStage");
+    const cameraEl = document.getElementById("camera");
     const worldEl = document.getElementById("world");
     const nodes = new Map();
-    let focusedId = null;
     let relayoutRaf = 0;
+    let progress = 0;
+    let targetProgress = 0;
+    let lastTick = performance.now();
+    let introStart = performance.now();
+    let auto = {
+      phase: "idle",
+      tStart: 0,
+      pauseUntil: 0,
+      startFrom: 0,
+      endAt: 0,
+    };
 
-    function loadFocus(){
+    function loadFocusId(){
       const v = localStorage.getItem(LS_KEY);
       if (v && APPS.some(a => a.id === v)) return v;
       return APPS[0]?.id ?? null;
     }
-    function saveFocus(id){
+    function saveFocusId(id){
       if (!id) localStorage.removeItem(LS_KEY);
       else localStorage.setItem(LS_KEY, id);
     }
+    function focusIndexById(id){
+      return Math.max(0, APPS.findIndex(a => a.id === id));
+    }
+
+    // =========================
+    // UTIL
+    // =========================
+    function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
+    function lerp(a,b,t){ return a + (b-a)*t; }
+    function smoothstep(t){ t = clamp(t,0,1); return t*t*(3-2*t); }
+    function easeOutCubic(t){ t = clamp(t,0,1); return 1 - Math.pow(1-t,3); }
+    function wrap01(x, m){ return ((x % m) + m) % m; }
+    function wrapIndex(idx){
+      const m = APPS.length;
+      return wrap01(idx, m);
+    }
+    function wrapDelta(d){
+      const m = APPS.length;
+      let w = wrap01(d, m);
+      if (w > m / 2) w -= m;
+      return w;
+    }
+    function shortestDelta(from, to){
+      const m = APPS.length;
+      let d = to - from;
+      if (d > m / 2) d -= m;
+      if (d < -m / 2) d += m;
+      return d;
+    }
+    function fract(x){ return x - Math.floor(x); }
+    function hash1(n){
+      const x = Math.sin(n * 127.1) * 43758.5453;
+      return fract(x);
+    }
+    function noise1(t){
+      const i = Math.floor(t);
+      const f = t - i;
+      const a = hash1(i);
+      const b = hash1(i + 1);
+      return lerp(a, b, smoothstep(f));
+    }
+    function signedNoise(t){ return (noise1(t) * 2 - 1); }
 
     function createIframeIfNeeded(inner, url){
       if (inner.querySelector("iframe")) return;
@@ -461,6 +580,10 @@
       iframe.loading = "lazy";
       iframe.referrerPolicy = "no-referrer";
       inner.appendChild(iframe);
+    }
+    function removeIframeIfFar(inner){
+      const iframe = inner.querySelector("iframe");
+      if (iframe) iframe.remove();
     }
 
     function setPhoneTransform(el, x, y, scale, rz, ry, z){
@@ -516,7 +639,7 @@
 
       // Click to focus (also arms audio on iOS)
       phone.addEventListener("pointerdown", () => armAudio(), { passive:true });
-      phone.addEventListener("click", () => setFocus(app.id));
+      phone.addEventListener("click", () => moveToIndex(index));
 
       worldEl.appendChild(phone);
       nodes.set(app.id, { app, phone, inner, index });
@@ -558,71 +681,45 @@
     function applyWorldScale(metrics){
       const vp = getVisualViewportBox(metrics);
       const s = Math.min(vp.cw / DESIGN.w, vp.ch / DESIGN.h, 1); // DOWN only
-      worldEl.style.transform = `translate(-50%,-50%) scale(${s})`;
+      worldScaleEl.style.transform = `translate(-50%,-50%) scale(${s})`;
     }
 
     // =========================
-    // LAYOUT (carousel rail + hero)
+    // DECK POSE (rolling, not switching)
     // =========================
-    function layoutWorld(metrics){
-      if (!focusedId || !nodes.has(focusedId)) return;
+    function deckPose(d){
+      const ad = Math.abs(d);
+      const focusT = smoothstep(1 - clamp(ad / 1.0, 0, 1));
 
-      for (const { phone } of nodes.values()){
-        const isFocus = phone.dataset.id === focusedId;
-        phone.dataset.focus = isFocus ? "1" : "0";
-        phone.dataset.dim = (!isFocus && LAYOUT.dimOthers) ? "1" : "0";
-      }
-
-      const { phoneW, phoneH } = metrics;
-
-      // Hero
-      const f = nodes.get(focusedId);
-      createIframeIfNeeded(f.inner, f.app.url);
-
-      const hero = LAYOUT.hero;
-      const fX = hero.cx - (phoneW/2);
-      const fY = hero.cy - (phoneH/2);
-
-      f.phone.style.zIndex = "999";
-      setPhoneTransform(f.phone, fX, fY, hero.scale, hero.rz, hero.ry, hero.z);
-
-      // Rail (others)
-      const others = Array.from(nodes.values())
-        .filter(n => n.app.id !== focusedId)
-        .sort((a,b) => a.index - b.index);
-
-      const count = others.length;
       const rail = LAYOUT.rail;
+      const hero = LAYOUT.hero;
 
-      for (let i = 0; i < count; i++){
-        const n = others[i];
+      const arc = -rail.arcX * Math.sin(d * 0.65);
+      const cxRail = rail.baseCx + arc;
+      const cyRail = rail.baseCy + d * rail.stepY;
 
-        const t = (count <= 1) ? 0 : (i / (count - 1)); // 0..1
-        const bow = (t - 0.5);
-        const arcX = -rail.arcX * (1 - (bow*bow*4)); // max left mid
+      const cx = lerp(cxRail, hero.cx, focusT);
+      const cy = lerp(cyRail, hero.cy, focusT);
 
-        const cx = rail.baseCx + arcX;
-        const cy = rail.baseCy + (i * rail.stepY);
+      const zRail = rail.zStep * (APPS.length - ad);
+      const z = lerp(zRail, hero.z, focusT);
 
-        const x = cx - (phoneW/2);
-        const y = cy - (phoneH/2);
+      const scale = lerp(rail.scale, hero.scale, focusT);
+      const rz = lerp(rail.rotZ + (rail.perRotZ * d * 0.25), hero.rz, focusT);
+      const ry = lerp(rail.arcTilt, hero.ry, focusT);
 
-        const z = (count - i) * rail.zStep;
-        const rz = rail.rotZ + (rail.perRotZ * (t - 0.5));
-
-        n.phone.style.zIndex = String(300 + i);
-
-        // preload top-most rail card
-        if (i === 0) createIframeIfNeeded(n.inner, n.app.url);
-
-        setPhoneTransform(n.phone, x, y, rail.scale, rz, rail.arcTilt, z);
+      let opacity = 1.0;
+      if (ad > LAYOUT.fadeStart){
+        const t = clamp((ad - LAYOUT.fadeStart) / (LAYOUT.fadeEnd - LAYOUT.fadeStart), 0, 1);
+        opacity = 1.0 - t;
       }
+
+      return { cx, cy, z, scale, rz, ry, opacity, focusT };
     }
 
     function relayout(){
       const metrics = readRootMetrics();
       applyWorldScale(metrics);
-      layoutWorld(metrics);
     }
 
     function scheduleRelayout(){
@@ -643,7 +740,7 @@
         // force reflow for a reliable retrigger
         void inner.offsetWidth;
         inner.classList.add("pulse");
-        setTimeout(() => inner.classList.remove("pulse"), 160);
+        setTimeout(() => inner.classList.remove("pulse"), MOTION.pulseMs);
       }
     }
 
@@ -655,65 +752,193 @@
     }
 
     // =========================
-    // FOCUS CHANGE
+    // CAMERA + AUTOPLAY
     // =========================
-    function setFocus(id){
-      if (!nodes.has(id)) return;
-      if (focusedId === id) return;
+    function applyCamera(now){
+      const elapsed = (now - introStart) / 1000;
+      const introT = easeOutCubic(clamp(elapsed / CAMERA.introSec, 0, 1));
 
-      focusedId = id;
-      saveFocus(id);
+      const persp = lerp(CAMERA.perspIntro, CAMERA.perspIdle, introT);
+      cameraStageEl.style.perspective = `${persp}px`;
 
-      // switching: pulse + whoosh
-      pulseSwitch();
-      playWhoosh();
+      const introDy = lerp(CAMERA.introTranslateY, 0, introT);
+      const introRz = lerp(CAMERA.introRotateZ, 0, introT);
+      const introRx = lerp(CAMERA.introRotateX, 0, introT);
 
-      requestAnimationFrame(() => {
-        relayout();
-        requestAnimationFrame(relayout);
-      });
+      const t = now / 1000;
+      const sway = Math.sin(t * Math.PI * 2 * CAMERA.swayHz);
+      const sway2 = Math.sin(t * Math.PI * 2 * CAMERA.swayHz * 1.7 + 1.1);
+
+      const sx = sway * CAMERA.swayTranslateX;
+      const sy = sway2 * CAMERA.swayTranslateY;
+      const rz = sway * CAMERA.swayRotateZ;
+      const rx = sway2 * CAMERA.swayRotateX;
+      const ry = Math.sin(t * Math.PI * 2 * CAMERA.swayHz * 1.31 + 0.6) * CAMERA.swayRotateY;
+
+      const jT = t * CAMERA.jitterHz;
+      const jx = signedNoise(jT + 10.3) * CAMERA.jitterTranslate;
+      const jy = signedNoise(jT + 33.7) * CAMERA.jitterTranslate;
+      const jrz = signedNoise(jT + 90.1) * CAMERA.jitterRotate;
+      const jrx = signedNoise(jT + 120.4) * CAMERA.jitterRotate;
+      const jry = signedNoise(jT + 210.9) * CAMERA.jitterRotate;
+
+      const tx = sx + jx;
+      const ty = sy + jy + introDy;
+      const rZ = rz + jrz + introRz;
+      const rX = rx + jrx + introRx;
+      const rY = ry + jry;
+
+      cameraEl.style.transform =
+        `translate3d(${tx}px, ${ty}px, 0px) rotateX(${rX}deg) rotateY(${rY}deg) rotateZ(${rZ}deg)`;
+    }
+
+    function pauseAutoplay(now){
+      auto.pauseUntil = now + AUTO.pauseOnTouchSec * 1000;
+      auto.phase = "idle";
+    }
+
+    function updateRolodex(now){
+      if (!AUTO.enabled) return;
+      if (now < auto.pauseUntil) return;
+
+      const m = APPS.length;
+
+      if (auto.phase === "idle"){
+        auto.phase = "spin";
+        auto.tStart = now;
+        auto.startFrom = targetProgress;
+        auto.endAt = targetProgress + AUTO.loops * m;
+      }
+
+      if (auto.phase === "spin"){
+        const t = (now - auto.tStart) / 1000;
+        const u = clamp(t / AUTO.spinSec, 0, 1);
+        targetProgress = auto.startFrom + (auto.endAt - auto.startFrom) * u;
+        if (u >= 1){
+          auto.phase = "slow";
+          auto.tStart = now;
+          const currentWrapped = wrap01(targetProgress, m);
+          const settle = wrapIndex(AUTO.settleIndex);
+          const forwardDelta = wrap01(settle - currentWrapped, m);
+          auto.startFrom = targetProgress;
+          auto.endAt = targetProgress + AUTO.slowExtra * m + forwardDelta;
+        }
+        return;
+      }
+
+      if (auto.phase === "slow"){
+        const t = (now - auto.tStart) / 1000;
+        const u = clamp(t / AUTO.slowSec, 0, 1);
+        const e = easeOutCubic(u);
+        targetProgress = auto.startFrom + (auto.endAt - auto.startFrom) * e;
+        if (u >= 1){
+          const settle = wrapIndex(AUTO.settleIndex);
+          targetProgress = Math.round(targetProgress);
+          const wrapped = wrapIndex(targetProgress);
+          targetProgress += shortestDelta(wrapped, settle);
+          saveFocusId(APPS[settle]?.id);
+          auto.phase = "done";
+        }
+      }
     }
 
     // =========================
-    // SWIPE (vertical carousel feel)
+    // RENDER LOOP (rAF)
     // =========================
     let startY = null;
+    let lastReleaseAt = 0;
 
-    function focusIndex(){
-      return APPS.findIndex(a => a.id === focusedId);
+    function currentFocusIndex(){
+      return wrapIndex(Math.round(targetProgress));
     }
-    function focusByIndex(idx){
-      const i = ((idx % APPS.length) + APPS.length) % APPS.length;
-      setFocus(APPS[i].id);
+
+    function moveToIndex(index){
+      const clamped = wrapIndex(index);
+      const currentWrapped = wrap01(targetProgress, APPS.length);
+      const delta = shortestDelta(currentWrapped, clamped);
+      targetProgress += delta;
+      saveFocusId(APPS[clamped]?.id);
+      pauseAutoplay(performance.now());
+      pulseSwitch();
+      playWhoosh();
+      lastReleaseAt = performance.now();
+    }
+
+    function tick(now){
+      const dt = Math.min(0.05, (now - lastTick) / 1000);
+      lastTick = now;
+
+      const metrics = readRootMetrics();
+      applyWorldScale(metrics);
+      applyCamera(now);
+      updateRolodex(now);
+
+      const alpha = 1 - Math.exp(-dt / MOTION.tau);
+      progress = lerp(progress, targetProgress, alpha);
+
+      if (Math.abs(targetProgress - progress) < 0.001 && (now - lastReleaseAt) > MOTION.snapAfterMs){
+        progress = targetProgress;
+      }
+
+      for (const n of nodes.values()){
+        const d = wrapDelta(n.index - progress);
+        const pose = deckPose(d);
+
+        const x = pose.cx - (metrics.phoneW / 2);
+        const y = pose.cy - (metrics.phoneH / 2);
+
+        n.phone.style.opacity = String(pose.opacity);
+        const zOrder = Math.round(10000 - Math.abs(d) * 1000);
+        n.phone.style.zIndex = String(zOrder);
+
+        const isFocus = Math.abs(d) < 0.33;
+        n.phone.dataset.focus = isFocus ? "1" : "0";
+        n.phone.dataset.dim = (!isFocus && LAYOUT.dimOthers) ? "1" : "0";
+
+        if (Math.abs(d) <= LAYOUT.liveRange){
+          createIframeIfNeeded(n.inner, n.app.url);
+        } else {
+          removeIframeIfFar(n.inner);
+        }
+
+        setPhoneTransform(n.phone, x, y, pose.scale, pose.rz, pose.ry, pose.z);
+      }
+
+      if (!document.body.dataset.ready){
+        document.body.dataset.ready = "1";
+      }
+
+      requestAnimationFrame(tick);
     }
 
     // Swipe should work on background + phone shells (NOT inside iframes)
-    worldEl.addEventListener("pointerdown", (e) => {
+    worldScaleEl.addEventListener("pointerdown", (e) => {
       armAudio();
       startY = e.clientY;
+      pauseAutoplay(performance.now());
     }, { passive:true });
 
-    worldEl.addEventListener("pointerup", (e) => {
+    worldScaleEl.addEventListener("pointerup", (e) => {
       if (startY == null) return;
       const endY = e.clientY;
       const dy = endY - startY;
       startY = null;
 
       if (Math.abs(dy) < LAYOUT.swipeThresholdPx) return;
-      const cur = focusIndex();
-      if (dy < 0) focusByIndex(cur + 1); // swipe up -> next
-      else focusByIndex(cur - 1);        // swipe down -> prev
+      const cur = currentFocusIndex();
+      if (dy < 0) moveToIndex(cur + 1); // swipe up -> next
+      else moveToIndex(cur - 1);        // swipe down -> prev
     }, { passive:true });
 
     // Keyboard shortcuts
     window.addEventListener("keydown", (e) => {
-      if (e.key === "Escape"){ setFocus(APPS[0].id); return; }
+      if (e.key === "Escape"){ moveToIndex(0); return; }
       const n = Number(e.key);
       if (Number.isFinite(n) && n >= 1 && n <= APPS.length){
-        setFocus(APPS[n-1].id);
+        moveToIndex(n - 1);
       }
-      if (e.key === "ArrowDown") focusByIndex(focusIndex() + 1);
-      if (e.key === "ArrowUp") focusByIndex(focusIndex() - 1);
+      if (e.key === "ArrowDown") moveToIndex(currentFocusIndex() + 1);
+      if (e.key === "ArrowUp") moveToIndex(currentFocusIndex() - 1);
     });
 
     // Prevent iOS gesture zoom / scroll
@@ -727,8 +952,14 @@
     APPS.forEach(makePhone);
 
     // Start with a focus (no whoosh on initial)
-    focusedId = loadFocus();
-    saveFocus(focusedId);
+    const startId = loadFocusId();
+    const startIndex = focusIndexById(startId);
+    progress = startIndex;
+    targetProgress = startIndex;
+    saveFocusId(APPS[startIndex]?.id);
+
+    auto.pauseUntil = performance.now() + AUTO.startDelaySec * 1000;
+    auto.phase = "idle";
 
     // Layout first, then animate in
     requestAnimationFrame(() => {
@@ -738,6 +969,10 @@
         animateIn();
       });
     });
+
+    introStart = performance.now();
+    lastTick = performance.now();
+    requestAnimationFrame(tick);
 
     // iOS toolbar changes
     window.addEventListener("resize", scheduleRelayout);
