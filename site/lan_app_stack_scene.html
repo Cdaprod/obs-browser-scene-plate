@@ -1,0 +1,840 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <!-- Lock zoom: this is a “scene”, not a webpage -->
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
+  <title>LAN Phone Stack Scene — Deck Carousel</title>
+
+  <style>
+    :root{
+      --bg:#000;
+
+      /* Safe areas */
+      --safeTop: env(safe-area-inset-top, 0px);
+      --safeBot: env(safe-area-inset-bottom, 0px);
+      --safeLeft: env(safe-area-inset-left, 0px);
+      --safeRight: env(safe-area-inset-right, 0px);
+
+      /* Design canvas */
+      --designW: 1080;
+      --designH: 1920;
+
+      /* Phone in design px */
+      --phoneW: 300;
+      --phoneH: 533;
+
+      /* Glow */
+      --glowA: rgba(56,189,248,.55);
+      --glowB: rgba(168,85,247,.38);
+      --stroke: rgba(255,255,255,.14);
+
+      /* UI */
+      --hudText: rgba(255,255,255,.70);
+    }
+
+    *{ box-sizing:border-box; }
+    html,body{
+      margin:0;
+      width:100%;
+      height:100%;
+      overflow:hidden;
+      overscroll-behavior:none;
+      touch-action: manipulation;
+      background: var(--bg);
+      -webkit-text-size-adjust: 100%;
+    }
+
+    body{
+      background:
+        radial-gradient(1200px 900px at 18% 0%, rgba(56,189,248,.12), transparent 56%),
+        radial-gradient(1000px 700px at 88% 20%, rgba(168,85,247,.10), transparent 64%),
+        radial-gradient(1200px 900px at 45% 110%, rgba(255,255,255,.05), transparent 55%),
+        var(--bg);
+    }
+
+    /* Locked visible box: JS sets width/height to visualViewport for iOS */
+    #viewport{
+      position: fixed;
+      left: 0; top: 0;
+      overflow: hidden;
+      padding:
+        calc(10px + var(--safeTop))
+        calc(10px + var(--safeRight))
+        calc(10px + var(--safeBot))
+        calc(10px + var(--safeLeft));
+    }
+
+    /* Vignette + subtle dot texture */
+    #viewport::before{
+      content:"";
+      position:absolute; inset:0;
+      background:
+        radial-gradient(1200px 1200px at 50% 30%, rgba(0,0,0,0) 0%, rgba(0,0,0,.25) 55%, rgba(0,0,0,.72) 100%),
+        radial-gradient(circle at 1px 1px, rgba(255,255,255,.06) 1px, transparent 1px);
+      background-size: auto, 18px 18px;
+      opacity: .55;
+      pointer-events:none;
+      mix-blend-mode: multiply;
+    }
+
+    /* Scale-to-fit wrapper (applies ONLY global scale) */
+    #worldScale{
+      position:absolute;
+      left: 50%;
+      top: 50%;
+      width: calc(var(--designW) * 1px);
+      height: calc(var(--designH) * 1px);
+      transform-origin: 50% 50%;
+      transform: translate(-50%,-50%) scale(.5);
+    }
+
+    /* Perspective stage (we animate “camera + FOV” here) */
+    #cameraStage{
+      position:absolute; inset:0;
+      transform-style: preserve-3d;
+      perspective: 1400px; /* JS animates this for FOV */
+      perspective-origin: 50% 50%;
+    }
+
+    /* Camera transform wrapper (JS animates subtle sway here) */
+    #camera{
+      position:absolute; inset:0;
+      transform-style: preserve-3d;
+      will-change: transform;
+    }
+
+    /* World where phones live (design coords) */
+    #world{
+      position:absolute; inset:0;
+      transform-style: preserve-3d;
+    }
+
+    /* Phone shell */
+    .phone{
+      position:absolute;
+      width: calc(var(--phoneW) * 1px);
+      height: calc(var(--phoneH) * 1px);
+      border-radius: 24px;
+      overflow:hidden;
+      background: rgba(255,255,255,.02);
+      transform-style: preserve-3d;
+      will-change: transform, filter, opacity;
+      user-select:none;
+      -webkit-tap-highlight-color: transparent;
+      cursor:pointer;
+
+      outline: 1px solid var(--stroke);
+      box-shadow:
+        0 22px 70px rgba(0,0,0,.60),
+        0 0 0 1px rgba(255,255,255,.04) inset;
+    }
+
+    /* Thin glowing border */
+    .phone::before{
+      content:"";
+      position:absolute;
+      inset:-1px;
+      border-radius: 26px;
+      padding: 1px;
+      background: linear-gradient(135deg, var(--glowA), var(--glowB), rgba(255,255,255,.10));
+      -webkit-mask:
+        linear-gradient(#000 0 0) content-box,
+        linear-gradient(#000 0 0);
+      -webkit-mask-composite: xor;
+              mask-composite: exclude;
+      opacity: .55;
+      pointer-events:none;
+      filter: blur(.25px);
+      z-index: 5;
+    }
+
+    /* Bloom */
+    .phone::after{
+      content:"";
+      position:absolute;
+      inset:-14px;
+      border-radius: 36px;
+      background:
+        radial-gradient(closest-side at 20% 25%, rgba(56,189,248,.22), transparent 70%),
+        radial-gradient(closest-side at 80% 20%, rgba(168,85,247,.16), transparent 72%),
+        radial-gradient(closest-side at 50% 90%, rgba(255,255,255,.08), transparent 70%);
+      opacity: .40;
+      pointer-events:none;
+      filter: blur(10px);
+      z-index:-1;
+    }
+
+    /* Inner wrapper so we can “pulse” without fighting outer transforms */
+    .inner{
+      position:absolute;
+      inset:0;
+      transform-origin: 50% 60%;
+      will-change: transform, opacity, filter;
+    }
+
+    /* Animate-in */
+    body:not([data-ready="1"]) .inner{
+      opacity: 0;
+      transform: translateY(28px) scale(.985);
+      filter: blur(2px);
+    }
+
+    /* Switching pulse */
+    .inner.pulse{
+      transform: scale(.965);
+      filter: blur(.2px) brightness(1.02);
+    }
+
+    /* Bezel */
+    .bezel{
+      position:absolute;
+      inset:10px;
+      border-radius: 18px;
+      border: 1px solid rgba(255,255,255,.10);
+      pointer-events:none;
+      z-index: 6;
+    }
+
+    /* Top bar */
+    .bar{
+      position:absolute; left:0; right:0; top:0;
+      height: 38px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      padding: 8px 10px;
+      background: linear-gradient(180deg, rgba(0,0,0,.62), rgba(0,0,0,0));
+      z-index: 7;
+      gap: 8px;
+      pointer-events:none;
+    }
+
+    .label{
+      font-size: 12px;
+      color: rgba(255,255,255,.90);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 70%;
+      text-shadow: 0 2px 10px rgba(0,0,0,.7);
+    }
+
+    .btns{
+      display:flex; gap:6px;
+      pointer-events:auto;
+    }
+    .btn{
+      border: 1px solid rgba(255,255,255,.22);
+      background: rgba(0,0,0,.46);
+      color: rgba(255,255,255,.92);
+      border-radius: 999px;
+      font-size: 12px;
+      line-height: 1;
+      padding: 6px 9px;
+      cursor:pointer;
+      backdrop-filter: blur(10px);
+    }
+    .btn:active{ transform: scale(.98); }
+
+    iframe{
+      position:absolute; inset:0;
+      width:100%; height:100%;
+      border:0;
+      background:#000;
+    }
+
+    /* HUD overlay */
+    .hud{
+      position:absolute;
+      left: 12px; right: 12px; top: 10px;
+      pointer-events:none;
+      z-index: 99999;
+      font-size: 12px;
+      color: var(--hudText);
+      text-shadow: 0 2px 14px rgba(0,0,0,.70);
+      display:flex;
+      gap:10px;
+      align-items:center;
+      justify-content:space-between;
+      flex-wrap:wrap;
+    }
+    .pill{
+      display:inline-flex;
+      gap:8px;
+      align-items:center;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,.14);
+      background: rgba(0,0,0,.28);
+      color: rgba(255,255,255,.70);
+      backdrop-filter: blur(10px);
+    }
+    .dot{
+      width:8px; height:8px; border-radius:999px;
+      background: rgba(255,255,255,.35);
+      box-shadow: 0 0 10px rgba(56,189,248,.30);
+    }
+    .kbd{
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      border:1px solid rgba(255,255,255,.18);
+      border-bottom-width: 3px;
+      border-radius: 8px;
+      padding: 1px 6px;
+      background: rgba(0,0,0,.45);
+      color: rgba(255,255,255,.85);
+    }
+  </style>
+</head>
+
+<body>
+  <div id="viewport">
+    <div class="hud">
+      <span class="pill"><span class="dot"></span> Deck Carousel + Camera Sway</span>
+      <span class="pill">Swipe ↑↓ · Tap focus · Keys <span class="kbd">1</span>-<span class="kbd">5</span> · <span class="kbd">Esc</span></span>
+    </div>
+
+    <div id="worldScale">
+      <div id="cameraStage">
+        <div id="camera">
+          <div id="world"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ============================================================
+    // APPS
+    // ============================================================
+    const APPS = [
+      { id: "media_sync",      name: "Media Sync",      url: "http://192.168.0.25:8787/public/explorer.html" },
+      { id: "overlay_plates",  name: "Overlay Plates",  url: "http://192.168.0.25:8789/" },
+      { id: "program_monitor", name: "Program Monitor", url: "http://192.168.0.25:8789/program-monitor/index.html" },
+      { id: "captioner_3d",    name: "3D Captioner",    url: "http://192.168.0.25:8791/" },
+      { id: "teleprompter",    name: "Teleprompter",    url: "http://192.168.0.25:8798/" },
+    ];
+
+    // ============================================================
+    // DOM
+    // ============================================================
+    const viewportEl   = document.getElementById("viewport");
+    const worldScaleEl = document.getElementById("worldScale");
+    const cameraStageEl= document.getElementById("cameraStage");
+    const cameraEl     = document.getElementById("camera");
+    const worldEl      = document.getElementById("world");
+
+    // ============================================================
+    // LAYOUT + MOTION (tune here)
+    // ============================================================
+    const DESIGN = { w: 1080, h: 1920 };
+    const PHONE  = { w: 300, h: 533 };
+
+    // Deck carousel mapping:
+    // d = index - progress
+    // d=0 is the “focused” card, but movement is continuous.
+    const DECK = {
+      // Primary anchor for focused card
+      focusCx: 735,
+      focusCy: 1200,
+
+      // Rail anchor for the “deck” stack
+      railCx: 175,
+      railCy: 690,
+
+      // How the deck flows vertically
+      stepY: 165,
+
+      // How it arcs horizontally as it rolls
+      arcX: 135,
+
+      // Depth and scale falloff
+      zNear: 650,
+      zStep: 160,
+      baseScale: 0.92,
+
+      // Focus boost
+      focusScaleBoost: 1.20, // multiplies baseScale near d=0
+      focusZBoost: 280,
+
+      // Rotation styling
+      rotZBase: -10,
+      rotZStep: -6,     // per card “tilt” as you move in deck
+      rotYBase: 12,
+
+      // Left/right separation (helps cinematic negative space)
+      focusXOffset: 560, // applied as you approach focus (d -> 0)
+
+      // Opacity falloff
+      fadeStart: 2.2,   // start fading after this |d|
+      fadeEnd:   4.0,   // fully faded by this |d|
+
+      // Iframe creation window (perf)
+      liveRange: 2.25,  // only keep iframes for cards near view
+    };
+
+    // Camera / FOV intro + ambient handheld sway
+    const CAMERA = {
+      // Intro: camera eases in over introSec seconds
+      introSec: 10,
+
+      // FOV-like effect: CSS perspective (smaller = wider FOV)
+      perspIdle: 1400,
+      perspIntro: 900,
+
+      // Intro camera transform (bigger move, then settle)
+      introTranslateY: 120, // px
+      introRotateZ: -2.5,   // deg
+      introRotateX: 2.0,    // deg
+
+      // Idle sway (subtle)
+      swayTranslateX: 7,   // px
+      swayTranslateY: 5,   // px
+      swayRotateZ: 0.45,   // deg
+      swayRotateX: 0.35,   // deg
+      swayRotateY: 0.35,   // deg
+      swayHz: 0.11,        // slow breathing
+
+      // “Hand movement” micro jitter (smoothed noise)
+      jitterTranslate: 2.0, // px
+      jitterRotate: 0.12,   // deg
+      jitterHz: 0.75,       // faster than sway
+    };
+
+    // Interaction / easing
+    const MOTION = {
+      // progress smoothing (seconds to converge)
+      tau: 0.16,
+
+      // drag sensitivity
+      dragToProgress: 1 / 420, // px -> progress units
+
+      // snapping when released
+      snapAfterMs: 80,
+
+      // switching pulse
+      pulseMs: 160,
+    };
+
+    // Viewport constraint padding
+    const PAD = 12;
+
+    // ============================================================
+    // STATE
+    // ============================================================
+    const LS_KEY = "lan_deck_carousel_focus_v1";
+
+    const nodes = new Map();
+    let progress = 0;       // current continuous position
+    let targetProgress = 0; // where we want to go
+    let dragging = false;
+    let dragStartY = 0;
+    let dragStartTarget = 0;
+    let lastReleaseAt = 0;
+
+    let t0 = performance.now();
+    let introStart = performance.now();
+
+    // ============================================================
+    // UTIL
+    // ============================================================
+    function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
+    function lerp(a,b,t){ return a + (b-a)*t; }
+    function invLerp(a,b,v){ return (v-a)/(b-a); }
+    function smoothstep(t){ t = clamp(t,0,1); return t*t*(3-2*t); }
+    function easeOutCubic(t){ t = clamp(t,0,1); return 1 - Math.pow(1-t,3); }
+    function fract(x){ return x - Math.floor(x); }
+
+    // Smooth noise (value noise)
+    function hash1(n){
+      const x = Math.sin(n * 127.1) * 43758.5453;
+      return fract(x);
+    }
+    function noise1(t){
+      const i = Math.floor(t);
+      const f = t - i;
+      const a = hash1(i);
+      const b = hash1(i + 1);
+      return lerp(a, b, smoothstep(f));
+    }
+    function signedNoise(t){ return (noise1(t) * 2 - 1); }
+
+    function focusIndex(){
+      const idx = Math.round(targetProgress);
+      return clamp(idx, 0, APPS.length - 1);
+    }
+
+    function saveFocus(idx){
+      try{ localStorage.setItem(LS_KEY, String(idx)); }catch{}
+    }
+    function loadFocus(){
+      try{
+        const v = localStorage.getItem(LS_KEY);
+        const n = v == null ? 0 : Number(v);
+        if (Number.isFinite(n)) return clamp(n, 0, APPS.length - 1);
+      }catch{}
+      return 0;
+    }
+
+    // ============================================================
+    // DOM creation
+    // ============================================================
+    function createIframeIfNeeded(inner, url){
+      if (inner.querySelector("iframe")) return;
+      const iframe = document.createElement("iframe");
+      iframe.src = url;
+      iframe.loading = "lazy";
+      iframe.referrerPolicy = "no-referrer";
+      inner.appendChild(iframe);
+    }
+
+    function removeIframeIfFar(inner){
+      const iframe = inner.querySelector("iframe");
+      if (iframe) iframe.remove();
+    }
+
+    function makePhone(app, index){
+      const phone = document.createElement("div");
+      phone.className = "phone";
+      phone.dataset.id = app.id;
+
+      const inner = document.createElement("div");
+      inner.className = "inner";
+
+      const bar = document.createElement("div");
+      bar.className = "bar";
+
+      const label = document.createElement("div");
+      label.className = "label";
+      label.textContent = `${index+1}. ${app.name}`;
+
+      const btns = document.createElement("div");
+      btns.className = "btns";
+
+      const btnOpen = document.createElement("button");
+      btnOpen.className = "btn";
+      btnOpen.textContent = "Open ↗";
+      btnOpen.onclick = (e) => {
+        e.stopPropagation();
+        window.open(app.url, "_blank", "noopener,noreferrer");
+      };
+
+      const btnReload = document.createElement("button");
+      btnReload.className = "btn";
+      btnReload.textContent = "Reload";
+      btnReload.onclick = (e) => {
+        e.stopPropagation();
+        const iframe = inner.querySelector("iframe");
+        if (iframe) iframe.remove();
+        createIframeIfNeeded(inner, app.url);
+      };
+
+      btns.append(btnOpen, btnReload);
+      bar.append(label, btns);
+
+      const bezel = document.createElement("div");
+      bezel.className = "bezel";
+
+      inner.appendChild(bar);
+      inner.appendChild(bezel);
+      phone.appendChild(inner);
+
+      phone.addEventListener("click", () => {
+        // Jump target to this card (smooth roll)
+        targetProgress = index;
+        saveFocus(index);
+        pulseAll();
+      });
+
+      worldEl.appendChild(phone);
+      nodes.set(app.id, { app, phone, inner, index });
+    }
+
+    // ============================================================
+    // VIEWPORT SCALE (down only, iOS-safe)
+    // ============================================================
+    function getVisualViewportBox(){
+      const vv = window.visualViewport;
+      const w = vv ? vv.width : window.innerWidth;
+      const h = vv ? vv.height : window.innerHeight;
+
+      viewportEl.style.width = `${Math.round(w)}px`;
+      viewportEl.style.height = `${Math.round(h)}px`;
+
+      const cs = getComputedStyle(document.documentElement);
+      const safeL = parseFloat(cs.getPropertyValue("--safeLeft")) || 0;
+      const safeR = parseFloat(cs.getPropertyValue("--safeRight")) || 0;
+      const safeT = parseFloat(cs.getPropertyValue("--safeTop")) || 0;
+      const safeB = parseFloat(cs.getPropertyValue("--safeBot")) || 0;
+
+      const cw = Math.max(1, w - (PAD*2) - safeL - safeR);
+      const ch = Math.max(1, h - (PAD*2) - safeT - safeB);
+
+      return { w, h, cw, ch };
+    }
+
+    function applyWorldScale(){
+      const vp = getVisualViewportBox();
+      const s = Math.min(vp.cw / DESIGN.w, vp.ch / DESIGN.h, 1); // DOWN only
+      worldScaleEl.style.transform = `translate(-50%,-50%) scale(${s})`;
+    }
+
+    // ============================================================
+    // DECK POSE FUNCTION (rolling, not switching)
+    // ============================================================
+    function deckPose(d){
+      // d = index - progress
+      const ad = Math.abs(d);
+
+      // Focus influence (0..1)
+      const focusT = smoothstep(1 - clamp(ad / 1.0, 0, 1));
+
+      // “Deck” y-flow: focused near focusCy; others drift toward rail
+      const yDeck = DECK.railCy + d * DECK.stepY;
+      const y = lerp(yDeck, DECK.focusCy, focusT);
+
+      // arc on X (carousel curve)
+      const arc = -DECK.arcX * Math.sin(d * 0.65);
+      const xDeck = DECK.railCx + arc;
+      const xFocus = DECK.focusCx;
+      const x = lerp(xDeck, xFocus, focusT) + (focusT * DECK.focusXOffset * 0.0); // keep 0; use cx you set
+
+      // z depth (more forward near focus)
+      const zDeck = DECK.zNear - ad * DECK.zStep;
+      const z = zDeck + focusT * DECK.focusZBoost;
+
+      // scale (boost near focus)
+      const scale = DECK.baseScale * lerp(1.0, DECK.focusScaleBoost, focusT) * (1.0 - clamp(ad, 0, 6) * 0.02);
+
+      // rotations
+      const rz = DECK.rotZBase + d * DECK.rotZStep * 0.25; // gentle
+      const ry = DECK.rotYBase * (1.0 - focusT * 0.7) + Math.sign(d) * Math.min(ad, 2) * 2.0;
+
+      // opacity falloff
+      let opacity = 1.0;
+      if (ad > DECK.fadeStart){
+        const t = clamp(invLerp(DECK.fadeStart, DECK.fadeEnd, ad), 0, 1);
+        opacity = 1.0 - t;
+      }
+
+      // Clamp z a bit so far cards don't go behind everything weirdly
+      return { cx:x, cy:y, z, scale, rz, ry, opacity, focusT };
+    }
+
+    function setPhoneTransform(el, x, y, scale, rz, ry, z){
+      el.style.transform =
+        `translate3d(${x}px, ${y}px, 0px) rotateZ(${rz}deg) rotateY(${ry}deg) translateZ(${z}px) scale(${scale})`;
+    }
+
+    // ============================================================
+    // CAMERA (FOV + intro + ambient sway)
+    // ============================================================
+    function applyCamera(now){
+      const elapsed = (now - introStart) / 1000;
+      const introT = easeOutCubic(clamp(elapsed / CAMERA.introSec, 0, 1));
+
+      // Animate perspective (FOV-ish)
+      const persp = lerp(CAMERA.perspIntro, CAMERA.perspIdle, introT);
+      cameraStageEl.style.perspective = `${persp}px`;
+
+      // Intro move settles into idle sway
+      const introDy = lerp(CAMERA.introTranslateY, 0, introT);
+      const introRz = lerp(CAMERA.introRotateZ, 0, introT);
+      const introRx = lerp(CAMERA.introRotateX, 0, introT);
+
+      // Idle sway (slow)
+      const t = now / 1000;
+      const sway = Math.sin(t * Math.PI * 2 * CAMERA.swayHz);
+      const sway2 = Math.sin(t * Math.PI * 2 * CAMERA.swayHz * 1.7 + 1.1);
+
+      const sx = sway * CAMERA.swayTranslateX;
+      const sy = sway2 * CAMERA.swayTranslateY;
+      const rz = sway * CAMERA.swayRotateZ;
+      const rx = sway2 * CAMERA.swayRotateX;
+      const ry = Math.sin(t * Math.PI * 2 * CAMERA.swayHz * 1.31 + 0.6) * CAMERA.swayRotateY;
+
+      // Micro jitter (smoothed noise)
+      const jT = t * CAMERA.jitterHz;
+      const jx = signedNoise(jT + 10.3) * CAMERA.jitterTranslate;
+      const jy = signedNoise(jT + 33.7) * CAMERA.jitterTranslate;
+      const jrz = signedNoise(jT + 90.1) * CAMERA.jitterRotate;
+      const jrx = signedNoise(jT + 120.4) * CAMERA.jitterRotate;
+      const jry = signedNoise(jT + 210.9) * CAMERA.jitterRotate;
+
+      // Combine
+      const tx = sx + jx;
+      const ty = sy + jy + introDy;
+      const rZ = rz + jrz + introRz;
+      const rX = rx + jrx + introRx;
+      const rY = ry + jry;
+
+      cameraEl.style.transform =
+        `translate3d(${tx}px, ${ty}px, 0px) rotateX(${rX}deg) rotateY(${rY}deg) rotateZ(${rZ}deg)`;
+    }
+
+    // ============================================================
+    // PULSE (switching feel)
+    // ============================================================
+    function pulseAll(){
+      for (const { inner } of nodes.values()){
+        inner.classList.remove("pulse");
+        void inner.offsetWidth;
+        inner.classList.add("pulse");
+        setTimeout(() => inner.classList.remove("pulse"), MOTION.pulseMs);
+      }
+    }
+
+    // ============================================================
+    // RENDER LOOP (rAF)
+    // ============================================================
+    function tick(now){
+      const dt = Math.min(0.05, (now - t0) / 1000);
+      t0 = now;
+
+      applyWorldScale();
+      applyCamera(now);
+
+      // Smooth progress to target (critically damped-ish)
+      // alpha = 1 - exp(-dt/tau)
+      const alpha = 1 - Math.exp(-dt / MOTION.tau);
+      progress = lerp(progress, targetProgress, alpha);
+
+      // Snap when not dragging and close enough (so it “locks”)
+      if (!dragging){
+        const diff = Math.abs(targetProgress - progress);
+        if (diff < 0.001 && (now - lastReleaseAt) > MOTION.snapAfterMs){
+          progress = targetProgress;
+        }
+      }
+
+      // Pose each card
+      for (const n of nodes.values()){
+        const d = n.index - progress;
+        const pose = deckPose(d);
+
+        // Center-based to top-left
+        const x = pose.cx - (PHONE.w / 2);
+        const y = pose.cy - (PHONE.h / 2);
+
+        // Fade/opacity
+        n.phone.style.opacity = String(pose.opacity);
+
+        // Z-index (front-most near d=0)
+        const zOrder = Math.round(10000 - Math.abs(d) * 1000);
+        n.phone.style.zIndex = String(zOrder);
+
+        // Focus / dim tags (for grading)
+        const isFocus = Math.abs(d) < 0.33; // “in focus zone”
+        n.phone.dataset.focus = isFocus ? "1" : "0";
+        n.phone.dataset.dim = (!isFocus) ? "1" : "0";
+
+        // Iframe lifecycle (perf)
+        if (Math.abs(d) <= DECK.liveRange){
+          createIframeIfNeeded(n.inner, n.app.url);
+        } else {
+          removeIframeIfFar(n.inner);
+        }
+
+        setPhoneTransform(n.phone, x, y, pose.scale, pose.rz, pose.ry, pose.z);
+      }
+
+      // Animate-in flag (once intro starts)
+      if (!document.body.dataset.ready){
+        // after first meaningful frame
+        document.body.dataset.ready = "1";
+      }
+
+      requestAnimationFrame(tick);
+    }
+
+    // ============================================================
+    // INPUT (swipe = roll deck)
+    // ============================================================
+    function onPointerDown(e){
+      dragging = true;
+      dragStartY = e.clientY;
+      dragStartTarget = targetProgress;
+      lastReleaseAt = performance.now();
+      // don’t pulse here; only pulse on release/selection
+    }
+
+    function onPointerMove(e){
+      if (!dragging) return;
+      const dy = e.clientY - dragStartY;
+      targetProgress = clamp(dragStartTarget + (-dy * MOTION.dragToProgress), 0, APPS.length - 1);
+      saveFocus(Math.round(targetProgress));
+    }
+
+    function onPointerUp(e){
+      if (!dragging) return;
+      dragging = false;
+      lastReleaseAt = performance.now();
+
+      // snap target to nearest card so it “clicks” into deck slot
+      targetProgress = clamp(Math.round(targetProgress), 0, APPS.length - 1);
+      saveFocus(Math.round(targetProgress));
+      pulseAll();
+    }
+
+    // Attach to worldScale so it works even when camera/world move
+    worldScaleEl.addEventListener("pointerdown", onPointerDown, { passive:true });
+    window.addEventListener("pointermove", onPointerMove, { passive:true });
+    window.addEventListener("pointerup", onPointerUp, { passive:true });
+
+    // Keyboard focus jumps (still roll smoothly)
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "Escape"){
+        targetProgress = 0;
+        saveFocus(0);
+        pulseAll();
+        return;
+      }
+      const n = Number(e.key);
+      if (Number.isFinite(n) && n >= 1 && n <= APPS.length){
+        targetProgress = n - 1;
+        saveFocus(n - 1);
+        pulseAll();
+      }
+      if (e.key === "ArrowDown"){
+        targetProgress = clamp(Math.round(targetProgress) + 1, 0, APPS.length - 1);
+        saveFocus(Math.round(targetProgress));
+        pulseAll();
+      }
+      if (e.key === "ArrowUp"){
+        targetProgress = clamp(Math.round(targetProgress) - 1, 0, APPS.length - 1);
+        saveFocus(Math.round(targetProgress));
+        pulseAll();
+      }
+    });
+
+    // Prevent iOS gesture zoom
+    document.addEventListener("gesturestart", (e) => e.preventDefault(), { passive:false });
+    document.addEventListener("gesturechange", (e) => e.preventDefault(), { passive:false });
+    document.addEventListener("gestureend", (e) => e.preventDefault(), { passive:false });
+
+    // iOS toolbar changes
+    function relayout(){ applyWorldScale(); }
+    window.addEventListener("resize", () => setTimeout(relayout, 0));
+    if (window.visualViewport){
+      window.visualViewport.addEventListener("resize", () => setTimeout(relayout, 0));
+      window.visualViewport.addEventListener("scroll", () => setTimeout(relayout, 0));
+    }
+
+    // ============================================================
+    // INIT
+    // ============================================================
+    APPS.forEach((a, i) => makePhone(a, i));
+
+    // Start from last focus; set both progress and target to it
+    const startIdx = loadFocus();
+    progress = startIdx;
+    targetProgress = startIdx;
+
+    // Set intro start
+    introStart = performance.now();
+    t0 = performance.now();
+
+    requestAnimationFrame(tick);
+  </script>
+</body>
+</html>

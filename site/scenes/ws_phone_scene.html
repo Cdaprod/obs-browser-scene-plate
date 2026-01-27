@@ -1,0 +1,108 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    html, body { margin:0; width:100%; height:100%; background:transparent; overflow:hidden; }
+
+    /* Example phone element you animate */
+    #phone {
+      position:absolute;
+      left: 540px; top: 600px;     /* whatever your layout is */
+      width: 420px; height: 880px;
+      transform-origin: 50% 50%;
+      will-change: transform;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- This is your animated phone frame (png/svg/html) -->
+  <div id="phone"></div>
+
+  <script src="https://unpkg.com/obs-websocket-js@5/dist/obs-websocket.js"></script>
+  <script>
+    const OBS_ADDR = "ws://127.0.0.1:4455";
+    const OBS_PASS = "YOUR_PASSWORD";
+
+    const SCENE_NAME = "PHONE_RIG";
+    const NDI_SOURCE_NAME = "NDI_PHONE";
+
+    const obs = new OBSWebSocket();
+    const phoneEl = document.getElementById("phone");
+
+    // Helpers
+    function clamp01(x){ return Math.max(0, Math.min(1, x)); }
+
+    async function getSceneItemId(sceneName, sourceName) {
+      const res = await obs.call("GetSceneItemId", { sceneName, sourceName });
+      return res.sceneItemId;
+    }
+
+    function parseMatrix(m) {
+      // m is like: "matrix(a, b, c, d, tx, ty)" OR "none"
+      if (!m || m === "none") return { a:1,b:0,c:0,d:1,tx:0,ty:0 };
+      const nums = m.match(/matrix\(([^)]+)\)/)[1].split(",").map(s=>parseFloat(s.trim()));
+      const [a,b,c,d,tx,ty] = nums;
+      return { a,b,c,d,tx,ty };
+    }
+
+    function matrixToRotationDeg(a,b) {
+      // rotation = atan2(b, a)
+      return Math.atan2(b, a) * (180/Math.PI);
+    }
+
+    function matrixToScale(a,b,c,d) {
+      // scaleX = sqrt(a^2 + b^2); scaleY = sqrt(c^2 + d^2)
+      return {
+        sx: Math.sqrt(a*a + b*b),
+        sy: Math.sqrt(c*c + d*d),
+      };
+    }
+
+    // IMPORTANT:
+    // This assumes your phone element is positioned in the same pixel coordinate space as OBS canvas in this scene.
+    // So set Browser Source size to match OBS canvas (e.g., 1080x1920) and keep it unscaled.
+
+    (async function main(){
+      await obs.connect(OBS_ADDR, OBS_PASS);
+
+      const ndiItemId = await getSceneItemId(SCENE_NAME, NDI_SOURCE_NAME);
+
+      function tick(){
+        // Read phone transform
+        const cs = getComputedStyle(phoneEl);
+        const m = parseMatrix(cs.transform);
+
+        // Element layout position
+        const rect = phoneEl.getBoundingClientRect();
+
+        const rot = matrixToRotationDeg(m.a, m.b);
+        const { sx, sy } = matrixToScale(m.a, m.b, m.c, m.d);
+
+        // Here we drive NDI transform to match phone’s top-left position and rotation/scale.
+        // You’ll usually want the NDI to align to the phone screen window, so add offsets.
+        const posX = rect.left;
+        const posY = rect.top;
+
+        obs.call("SetSceneItemTransform", {
+          sceneName: SCENE_NAME,
+          sceneItemId: ndiItemId,
+          sceneItemTransform: {
+            positionX: posX,
+            positionY: posY,
+            rotation: rot,
+            scaleX: sx,
+            scaleY: sy,
+            alignment: 0, // 0 = top-left; you can change alignment strategy if desired
+          }
+        }).catch(()=>{});
+
+        requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    })();
+  </script>
+</body>
+</html>
