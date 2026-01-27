@@ -30,3 +30,10 @@ test("lan phone stack scene syncs viewport size and offsets", () => {
   assert.match(source, /viewportEl\.style\.height/);
   assert.match(source, /viewportEl\.style\.transform/);
 });
+
+test("lan phone stack scene includes camera and rolodex autoplay hooks", () => {
+  assert.match(source, /cameraStage/);
+  assert.match(source, /applyCamera/);
+  assert.match(source, /updateRolodex/);
+  assert.match(source, /pauseAutoplay/);
+});
