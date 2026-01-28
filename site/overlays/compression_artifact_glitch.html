@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>compression-artifact-glitch</title>
+
+<style>
+:root{
+  --alpha: 0.35;
+}
+
+html, body{
+  height:100%;
+  margin:0;
+  background: transparent !important;
+  overflow:hidden;
+}
+
+#wrap{
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+}
+
+canvas{
+  position:absolute;
+  inset:0;
+  width:100%;
+  height:100%;
+  opacity: var(--alpha);
+  mix-blend-mode: screen;
+}
+</style>
+</head>
+
+<body>
+<div id="wrap">
+  <canvas id="c"></canvas>
+</div>
+
+<script>
+/**
+ * compression_artifact_glitch.html — “COMPRESSION PIXEL SCRAMBLE”
+ *
+ * PURPOSE:
+ *  Adds blocky, corrupted color pixels with alpha transparency to mimic
+ *  heavy video compression artifacts. Designed as a lightweight overlay.
+ *
+ * Default URL (full params):
+ *  http://<HOST_IP>:8789/overlays/compression_artifact_glitch.html?alpha=0.35&density=0.65&sizeMin=6&sizeMax=60&spark=0.35&shift=0.28&jitter=0.18&fps=30&loop=6
+ *
+ * Params:
+ *  alpha=0..0.6        overall opacity
+ *  density=0..1        block count
+ *  sizeMin=2..40       minimum block size
+ *  sizeMax=8..120      maximum block size
+ *  spark=0..1          extra small pixel fragments
+ *  shift=0..0.6        color channel corruption
+ *  jitter=0..0.6       fragment offset inside a block
+ *  fps=8..60           animation frame rate
+ *  loop=2..20          deterministic loop length (seconds)
+ */
+
+const qs = new URLSearchParams(location.search);
+const cfg = {
+  alpha: clampF(getF("alpha", 0.35), 0, 0.6),
+  density: clampF(getF("density", 0.65), 0, 1),
+  sizeMin: clampF(getF("sizeMin", 6), 2, 40),
+  sizeMax: clampF(getF("sizeMax", 60), 8, 120),
+  spark: clampF(getF("spark", 0.35), 0, 1),
+  shift: clampF(getF("shift", 0.28), 0, 0.6),
+  jitter: clampF(getF("jitter", 0.18), 0, 0.6),
+  fps: clampF(getF("fps", 30), 8, 60),
+  loop: clampF(getF("loop", 6), 2, 20),
+};
+
+document.documentElement.style.setProperty("--alpha", cfg.alpha);
+
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d", { alpha:true });
+
+let W = 0;
+let H = 0;
+let DPR = 1;
+
+function resize(){
+  DPR = Math.max(1, Math.min(2, devicePixelRatio || 1));
+  W = Math.floor(innerWidth * DPR);
+  H = Math.floor(innerHeight * DPR);
+  canvas.width = W;
+  canvas.height = H;
+}
+addEventListener("resize", resize, { passive:true });
+resize();
+
+function mulberry32(seed){
+  return function(){
+    let t = seed += 0x6D2B79F5;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+let t0 = performance.now();
+let lastFrame = 0;
+
+function drawBlock(rnd, x, y, size){
+  const rBase = 80 + rnd() * 175;
+  const gBase = 80 + rnd() * 175;
+  const bBase = 80 + rnd() * 175;
+  const shift = cfg.shift;
+  const r = clampI(rBase * (1 + shift * 0.6), 0, 255);
+  const g = clampI(gBase * (1 - shift * 0.4), 0, 255);
+  const b = clampI(bBase * (1 + shift * 0.2), 0, 255);
+  const a = 0.18 + rnd() * 0.6;
+
+  ctx.fillStyle = `rgba(${r},${g},${b},${a})`;
+  ctx.fillRect(x, y, size, size);
+
+  const shards = Math.floor(1 + cfg.spark * 6 * rnd());
+  for (let i = 0; i < shards; i += 1){
+    const shardSize = Math.max(1, size * (0.15 + rnd() * 0.35));
+    const jitter = cfg.jitter * size;
+    const sx = x + (rnd() - 0.5) * jitter;
+    const sy = y + (rnd() - 0.5) * jitter;
+    ctx.fillStyle = `rgba(${clampI(r + rnd() * 80, 0, 255)},${clampI(g - rnd() * 60, 0, 255)},${clampI(b + rnd() * 120, 0, 255)},${0.2 + rnd() * 0.6})`;
+    ctx.fillRect(sx, sy, shardSize, shardSize);
+  }
+}
+
+function frame(now){
+  const frameMs = 1000 / cfg.fps;
+  if (now - lastFrame < frameMs){
+    requestAnimationFrame(frame);
+    return;
+  }
+  lastFrame = now;
+
+  const elapsed = (now - t0) / 1000;
+  const loopT = elapsed % cfg.loop;
+  const frameIndex = Math.floor(loopT * cfg.fps);
+  const rnd = mulberry32(frameIndex + 101);
+
+  ctx.clearRect(0, 0, W, H);
+
+  const blocks = Math.floor(30 + cfg.density * 180);
+  for (let i = 0; i < blocks; i += 1){
+    const size = (cfg.sizeMin + rnd() * (cfg.sizeMax - cfg.sizeMin)) * DPR;
+    const x = Math.floor(rnd() * (W - size));
+    const y = Math.floor(rnd() * (H - size));
+    drawBlock(rnd, x, y, size);
+  }
+
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+function getF(k, d){
+  const v = qs.get(k);
+  if (v === null || v === "") return d;
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? n : d;
+}
+function clampF(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
+function clampI(v, lo, hi){ return Math.round(Math.max(lo, Math.min(hi, v))); }
+</script>
+</body>
+</html>

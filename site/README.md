@@ -41,4 +41,5 @@ standardization checklist below.
 * Overlay default URL doc tests:
   ```sh
   node --test site/overlays/centered_text_segmented_typewriter.test.js
+  node --test site/overlays/compression_artifact_glitch.test.js
   ```
