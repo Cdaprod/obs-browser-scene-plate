@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { normalizeImportNodes } = require("./import_listener.js");
+const { normalizeImportNodes, shouldApplyDurationOverride } = require("./import_listener.js");
 
 process.on("uncaughtException", (error) => {
   console.error(error);
@@ -44,4 +44,14 @@ test("normalizeImportNodes preserves duration overrides", () => {
     { lines: ["http://example.com/base.mp4"], durationOverride: 3.2 },
     { lines: ["http://example.com/base2.mp4"], durationOverride: "auto" }
   ]);
+});
+
+test("shouldApplyDurationOverride skips auto and empty values", () => {
+  assert.equal(shouldApplyDurationOverride(undefined), false);
+  assert.equal(shouldApplyDurationOverride(null), false);
+  assert.equal(shouldApplyDurationOverride(""), false);
+  assert.equal(shouldApplyDurationOverride("auto"), false);
+  assert.equal(shouldApplyDurationOverride(0), true);
+  assert.equal(shouldApplyDurationOverride(2.5), true);
+  assert.equal(shouldApplyDurationOverride("3"), true);
 });

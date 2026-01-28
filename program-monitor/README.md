@@ -27,6 +27,21 @@ A browser-only **Program + Monitor** UI for stacking URL-based media nodes into 
 - **Validate**: basic checks for missing base URLs and non-http(s) entries.
 - **Open Base**: open the active node base URL in a new tab.
 - **Export Node/Timeline**: send jobs to the render-api service for MOV output.
+- **PostMessage import**: append nodes by sending a `CDAPROD_PROGRAM_MONITOR_IMPORT` payload to the Program Monitor tab.
+
+### PostMessage import payload
+
+Send a message shaped like:
+
+```js
+{
+  type: "CDAPROD_PROGRAM_MONITOR_IMPORT",
+  version: 1,
+  nodes: [
+    { lines: ["http://example.com/base.mp4"], durationOverride: "auto" }
+  ]
+}
+```
 
 ## Tests
 
@@ -34,6 +49,12 @@ Run the minimal utility tests:
 
 ```sh
 node --test program-monitor/timeline-utils.test.mjs
+```
+
+Run the Program Monitor import listener tests:
+
+```sh
+node --test program-monitor/import_listener.test.mjs
 ```
 
 Optional render-api tests (from repo root):

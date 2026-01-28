@@ -2,6 +2,7 @@
  * Program Monitor import listener.
  * Usage (browser): include /program-monitor/import_listener.js and it will install automatically.
  * Example: window.ProgramMonitorImportListener.installProgramMonitorImportListener();
+ * Example payload: { type: "CDAPROD_PROGRAM_MONITOR_IMPORT", version: 1, nodes: [{ lines: ["http://..."], durationOverride: "auto" }] }
  */
 
 (function setupProgramMonitorImportListener(globalScope) {
@@ -40,6 +41,16 @@
         };
       })
       .filter(Boolean);
+  }
+
+  function shouldApplyDurationOverride(value) {
+    if (value === undefined || value === null) {
+      return false;
+    }
+    if (value === "auto" || value === "") {
+      return false;
+    }
+    return true;
   }
 
   function getCurrentNodeCount() {
@@ -81,7 +92,7 @@
       return;
     }
 
-    if (durationOverride !== undefined && durationOverride !== null && durationOverride !== "auto" && durationOverride !== "") {
+    if (shouldApplyDurationOverride(durationOverride)) {
       input.value = String(durationOverride);
       input.dispatchEvent(new Event("input", { bubbles: true }));
     }
@@ -123,7 +134,8 @@
 
   const api = {
     installProgramMonitorImportListener,
-    normalizeImportNodes
+    normalizeImportNodes,
+    shouldApplyDurationOverride
   };
 
   if (typeof module !== "undefined" && module.exports) {
