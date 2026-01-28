@@ -18,7 +18,7 @@ A browser-only **Program + Monitor** UI for stacking URL-based media nodes into 
 
 ## Controls
 
-- **Add Node / Delete Node**: manage the timeline.
+- **Add Node / Delete Node**: manage the timeline (single-node delete clears the node; long-press delete clears all).
 - **Transport**: preview the timeline in sequence.
 - **Save**: persist to localStorage.
 - **Projects**: save/load named timelines (stored in localStorage) with structured base/overlay/ambient metadata for reuse without the UI.
@@ -28,6 +28,7 @@ A browser-only **Program + Monitor** UI for stacking URL-based media nodes into 
 - **Open Base**: open the active node base URL in a new tab.
 - **Export Node/Timeline**: send jobs to the render-api service for MOV output.
 - **PostMessage import**: append nodes by sending a `CDAPROD_PROGRAM_MONITOR_IMPORT` payload to the Program Monitor tab.
+- **Image bases**: default to 5 seconds unless a duration override is provided.
 
 ### PostMessage import payload
 

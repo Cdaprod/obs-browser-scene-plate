@@ -412,6 +412,8 @@ const renderApiPort = 8793;
 const webPort = window.location.port || 8789;
 const renderApiBase = `http://${host}:${renderApiPort}`;
 const downloadBase = `http://${host}:${webPort}`;
+const DEFAULT_IMAGE_DURATION_SECONDS = 5;
+const DELETE_LONG_PRESS_MS = 3500;
 
 function autogrow(el) {
   el.style.height = "auto";
@@ -453,6 +455,8 @@ function getDurationSourceLabel(source) {
       return "media";
     case "hint":
       return "url hint";
+    case "default":
+      return "default";
     default:
       return "auto";
   }
@@ -903,7 +907,7 @@ function clearLayers() {
 
 function setBaseKind(kind, url) {
   activeBaseKind = kind;
-  if (kind === "page") {
+  if (kind === "page" || kind === "image") {
     elements.baseVideo.pause();
     elements.baseVideo.removeAttribute("src");
     elements.baseVideo.style.display = "none";
@@ -935,6 +939,13 @@ function resolveDurationInfo({ baseKind, baseUrl, overrideSeconds, baseDuration,
   const base = Number.isFinite(baseDuration) && baseDuration > 0 ? baseDuration : 0;
   const hintValue = Number.isFinite(durationHintSeconds) ? durationHintSeconds : getDurationHintSeconds(baseUrl);
   const hint = Number.isFinite(hintValue) && hintValue > 0 ? hintValue : 0;
+
+  if (baseKind === "image") {
+    if (override) {
+      return { duration: override, source: "override" };
+    }
+    return { duration: DEFAULT_IMAGE_DURATION_SECONDS, source: "default" };
+  }
 
   if (baseKind === "page") {
     if (override) {
@@ -1010,20 +1021,23 @@ async function primeNode(index) {
     return;
   }
 
-  if (baseKind === "page") {
-    setBaseKind("page", parsed.baseUrl);
+  if (baseKind === "page" || baseKind === "image") {
+    setBaseKind(baseKind, parsed.baseUrl);
   } else {
     setBaseKind("video", parsed.baseUrl);
   }
 
   let duration = 0;
-  if (baseKind === "page") {
+  if (baseKind === "page" || baseKind === "image") {
     if (Number.isFinite(overrideSeconds) && overrideSeconds > 0) {
       duration = overrideSeconds;
-      setMessage("Using duration override for HTML source.");
-    } else if (Number.isFinite(durationHintSeconds) && durationHintSeconds > 0) {
+      setMessage(`Using duration override for ${baseKind === "page" ? "HTML" : "image"} source.`);
+    } else if (baseKind === "page" && Number.isFinite(durationHintSeconds) && durationHintSeconds > 0) {
       duration = durationHintSeconds;
       setMessage("Using duration hint from URL parameters.");
+    } else if (baseKind === "image") {
+      duration = DEFAULT_IMAGE_DURATION_SECONDS;
+      setMessage("Using default image duration.");
     } else {
       setMessage("Base duration unknown. Add a duration override to enable playback.");
     }
@@ -1051,7 +1065,7 @@ async function primeNode(index) {
   duration = durationInfo.duration;
   state.durationInfo = durationInfo;
 
-  if (!duration && baseKind !== "page") {
+  if (!duration && baseKind !== "page" && baseKind !== "image") {
     if (Number.isFinite(overrideSeconds) && overrideSeconds > 0) {
       setMessage("Using duration override for streaming source.");
     } else if (Number.isFinite(durationHintSeconds) && durationHintSeconds > 0) {
@@ -1138,6 +1152,25 @@ function stopAll() {
   }
 }
 
+function clearNodeContent(node) {
+  if (!node) {
+    return;
+  }
+  node.text = "";
+  node.durationOverride = "";
+}
+
+function resetAllNodes() {
+  state.nodes = [{ id: uuid(), text: "", durationOverride: "" }];
+  state.activeIndex = 0;
+  state.selectedIndex = 0;
+  state.validationResults = [];
+  renderNodes();
+  primeNode(state.activeIndex).catch(() => {});
+  saveLocal();
+  setMessage("Cleared all nodes.");
+}
+
 function pauseAll() {
   state.playing = false;
   elements.baseVideo.pause();
@@ -1202,7 +1235,7 @@ async function playActive({ resume = false } = {}) {
     audio.play().catch(() => {});
   });
 
-  if (baseKind !== "page") {
+  if (baseKind !== "page" && baseKind !== "image") {
     elements.baseVideo.currentTime = 0;
     await elements.baseVideo.play().catch(() => {
       state.playing = false;
@@ -1245,7 +1278,7 @@ async function playActive({ resume = false } = {}) {
   };
 
   clearBaseHandlers();
-  if (baseKind !== "page") {
+  if (baseKind !== "page" && baseKind !== "image") {
     baseEndedHandler = () => {
       if (state.playing) {
         advance();
@@ -1259,7 +1292,7 @@ async function playActive({ resume = false } = {}) {
       return;
     }
 
-    const current = activeBaseKind === "page"
+    const current = activeBaseKind === "page" || activeBaseKind === "image"
       ? (performance.now() - baseStartTime) / 1000
       : (elements.baseVideo.currentTime || 0);
     const durationInfo = state.durationInfo || { duration: 0, source: "none" };
@@ -1268,7 +1301,7 @@ async function playActive({ resume = false } = {}) {
     elements.statDur.textContent = (Number.isFinite(duration) ? duration : 0).toFixed(2);
 
     const shouldAdvanceOnDuration = duration > 0
-      && (activeBaseKind === "page" || durationInfo.source === "override");
+      && (activeBaseKind === "page" || activeBaseKind === "image" || durationInfo.source === "override");
 
     if (shouldAdvanceOnDuration && current >= duration - 0.05) {
       advance();
@@ -1501,11 +1534,25 @@ $("#btnAdd").addEventListener("click", () => {
   saveLocal();
 });
 
+let deleteLongPressTimer = null;
+let deleteLongPressTriggered = false;
+
 $("#btnDelete").addEventListener("click", () => {
   if (state.playing) {
     return;
   }
+  if (deleteLongPressTriggered) {
+    deleteLongPressTriggered = false;
+    return;
+  }
   if (state.nodes.length <= 1) {
+    clearNodeContent(state.nodes[0]);
+    state.activeIndex = 0;
+    state.selectedIndex = 0;
+    state.validationResults = [];
+    renderNodes();
+    primeNode(state.activeIndex).catch(() => {});
+    saveLocal();
     return;
   }
   state.nodes.splice(state.activeIndex, 1);
@@ -1516,6 +1563,34 @@ $("#btnDelete").addEventListener("click", () => {
   primeNode(state.activeIndex).catch(() => {});
   saveLocal();
 });
+
+const deleteButton = $("#btnDelete");
+if (deleteButton) {
+  const startLongPress = () => {
+    if (state.playing) {
+      return;
+    }
+    deleteLongPressTriggered = false;
+    deleteLongPressTimer = setTimeout(() => {
+      deleteLongPressTriggered = true;
+      resetAllNodes();
+    }, DELETE_LONG_PRESS_MS);
+  };
+
+  const cancelLongPress = () => {
+    if (deleteLongPressTimer) {
+      clearTimeout(deleteLongPressTimer);
+      deleteLongPressTimer = null;
+    }
+  };
+
+  deleteButton.addEventListener("mousedown", startLongPress);
+  deleteButton.addEventListener("touchstart", startLongPress, { passive: true });
+  deleteButton.addEventListener("mouseleave", cancelLongPress);
+  deleteButton.addEventListener("mouseup", cancelLongPress);
+  deleteButton.addEventListener("touchend", cancelLongPress);
+  deleteButton.addEventListener("touchcancel", cancelLongPress);
+}
 
 $("#btnPrev").addEventListener("click", async () => {
   if (state.playing) {

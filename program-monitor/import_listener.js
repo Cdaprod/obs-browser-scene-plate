@@ -45,6 +45,36 @@
       .filter(Boolean);
   }
 
+  function getEmptyNodeIndexes(nodeTexts) {
+    if (!Array.isArray(nodeTexts)) {
+      return [];
+    }
+    return nodeTexts.reduce((indexes, value, index) => {
+      if (!String(value || "").trim()) {
+        indexes.push(index);
+      }
+      return indexes;
+    }, []);
+  }
+
+  function buildImportPlan(nodeTexts, incomingCount) {
+    const emptyIndexes = getEmptyNodeIndexes(nodeTexts);
+    const existingIndexes = [];
+    let remaining = Number.isFinite(incomingCount) ? incomingCount : 0;
+    let emptyCursor = 0;
+
+    while (remaining > 0 && emptyCursor < emptyIndexes.length) {
+      existingIndexes.push(emptyIndexes[emptyCursor]);
+      emptyCursor += 1;
+      remaining -= 1;
+    }
+
+    return {
+      existingIndexes,
+      appendCount: remaining
+    };
+  }
+
   function shouldApplyDurationOverride(value) {
     if (value === undefined || value === null) {
       return false;
@@ -86,6 +116,13 @@
       return 0;
     }
     return globalScope.document.querySelectorAll(".nodeCard").length;
+  }
+
+  function getNodeTextValues() {
+    if (!globalScope?.document) {
+      return [];
+    }
+    return Array.from(globalScope.document.querySelectorAll(".nodeCard textarea")).map((textarea) => textarea.value || "");
   }
 
   function addNode() {
@@ -157,10 +194,18 @@
         return;
       }
 
-      const startIndex = getCurrentNodeCount();
-      nodes.forEach((node, offset) => {
+      const nodeTexts = getNodeTextValues();
+      const { existingIndexes } = buildImportPlan(nodeTexts, nodes.length);
+      let appended = 0;
+
+      nodes.forEach((node, index) => {
+        if (index < existingIndexes.length) {
+          setNodeContent(existingIndexes[index], node.lines, node.durationOverride);
+          return;
+        }
         addNode();
-        setNodeContent(startIndex + offset, node.lines, node.durationOverride);
+        setNodeContent(nodeTexts.length + appended, node.lines, node.durationOverride);
+        appended += 1;
       });
 
       try {
@@ -174,6 +219,8 @@
   const api = {
     installProgramMonitorImportListener,
     normalizeImportNodes,
+    getEmptyNodeIndexes,
+    buildImportPlan,
     shouldApplyDurationOverride,
     recordMessageId,
     wasMessageProcessed
