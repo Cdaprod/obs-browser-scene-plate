@@ -37,6 +37,7 @@ Send a message shaped like:
 {
   type: "CDAPROD_PROGRAM_MONITOR_IMPORT",
   version: 1,
+  messageId: "hand-off-123",
   nodes: [
     { lines: ["http://example.com/base.mp4"], durationOverride: "auto" }
   ]

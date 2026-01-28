@@ -7,7 +7,12 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
-const { normalizeImportNodes, shouldApplyDurationOverride } = require("./import_listener.js");
+const {
+  normalizeImportNodes,
+  shouldApplyDurationOverride,
+  recordMessageId,
+  wasMessageProcessed
+} = require("./import_listener.js");
 
 process.on("uncaughtException", (error) => {
   console.error(error);
@@ -54,4 +59,21 @@ test("shouldApplyDurationOverride skips auto and empty values", () => {
   assert.equal(shouldApplyDurationOverride(0), true);
   assert.equal(shouldApplyDurationOverride(2.5), true);
   assert.equal(shouldApplyDurationOverride("3"), true);
+});
+
+test("messageId de-dupe only records once", () => {
+  const messageId = "msg-123";
+  assert.equal(wasMessageProcessed(messageId), false);
+  assert.equal(recordMessageId(messageId), true);
+  assert.equal(wasMessageProcessed(messageId), true);
+  assert.equal(recordMessageId(messageId), false);
+});
+
+test("messageId de-dupe allows different ids", () => {
+  const first = "msg-first";
+  const second = "msg-second";
+  assert.equal(recordMessageId(first), true);
+  assert.equal(recordMessageId(second), true);
+  assert.equal(wasMessageProcessed(first), true);
+  assert.equal(wasMessageProcessed(second), true);
 });

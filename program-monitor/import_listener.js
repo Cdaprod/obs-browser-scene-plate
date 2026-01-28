@@ -2,7 +2,7 @@
  * Program Monitor import listener.
  * Usage (browser): include /program-monitor/import_listener.js and it will install automatically.
  * Example: window.ProgramMonitorImportListener.installProgramMonitorImportListener();
- * Example payload: { type: "CDAPROD_PROGRAM_MONITOR_IMPORT", version: 1, nodes: [{ lines: ["http://..."], durationOverride: "auto" }] }
+ * Example payload: { type: "CDAPROD_PROGRAM_MONITOR_IMPORT", version: 1, messageId: "abc", nodes: [{ lines: ["http://..."], durationOverride: "auto" }] }
  */
 
 (function setupProgramMonitorImportListener(globalScope) {
@@ -10,6 +10,8 @@
   const IMPORT_TYPE = "CDAPROD_PROGRAM_MONITOR_IMPORT";
   const IMPORT_VERSION = 1;
   const ALLOWED_ORIGINS = null;
+  const DEDUPE_LIMIT = 50;
+  const processedMessageIds = [];
 
   function isAllowedOrigin(origin) {
     if (!ALLOWED_ORIGINS) {
@@ -51,6 +53,32 @@
       return false;
     }
     return true;
+  }
+
+  function recordMessageId(messageId) {
+    if (!messageId || typeof messageId !== "string") {
+      return false;
+    }
+
+    const existingIndex = processedMessageIds.indexOf(messageId);
+    if (existingIndex !== -1) {
+      processedMessageIds.splice(existingIndex, 1);
+      processedMessageIds.push(messageId);
+      return false;
+    }
+
+    processedMessageIds.push(messageId);
+    if (processedMessageIds.length > DEDUPE_LIMIT) {
+      processedMessageIds.shift();
+    }
+    return true;
+  }
+
+  function wasMessageProcessed(messageId) {
+    if (!messageId || typeof messageId !== "string") {
+      return false;
+    }
+    return processedMessageIds.includes(messageId);
   }
 
   function getCurrentNodeCount() {
@@ -113,6 +141,17 @@
         return;
       }
 
+      const messageId = typeof data.messageId === "string" ? data.messageId : "";
+      const isNewMessage = recordMessageId(messageId);
+      if (!isNewMessage && messageId) {
+        try {
+          ev.source?.postMessage({ type: ACK_TYPE, ok: true, messageId }, ev.origin || "*");
+        } catch (error) {
+          console.warn("Failed to post import ACK", error);
+        }
+        return;
+      }
+
       const nodes = normalizeImportNodes(data.nodes);
       if (!nodes.length) {
         return;
@@ -125,7 +164,7 @@
       });
 
       try {
-        ev.source?.postMessage({ type: ACK_TYPE, ok: true }, "*");
+        ev.source?.postMessage({ type: ACK_TYPE, ok: true, messageId }, ev.origin || "*");
       } catch (error) {
         console.warn("Failed to post import ACK", error);
       }
@@ -135,7 +174,9 @@
   const api = {
     installProgramMonitorImportListener,
     normalizeImportNodes,
-    shouldApplyDurationOverride
+    shouldApplyDurationOverride,
+    recordMessageId,
+    wasMessageProcessed
   };
 
   if (typeof module !== "undefined" && module.exports) {
