@@ -4,6 +4,8 @@
     "/overlays/analogue_dust_loop.html",
     "/overlays/analogue_flicker_loop.html",
     "/overlays/analogue_static_loop.html",
+    "/overlays/compression_artifact_glitch.html",
+    "/overlays/compression_artifact_glitch.test.js",
     "/overlays/center_title_card.html",
     "/overlays/center_title_list_card.html",
     "/overlays/centered_text_segmented.html",

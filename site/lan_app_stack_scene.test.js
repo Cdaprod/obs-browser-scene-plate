@@ -24,7 +24,9 @@ const source = fs.readFileSync(
 
 test("lan app stack scene wires rolodex autoplay and wrap helpers", () => {
   assert.match(source, /AUTO/);
+  assert.match(source, /LOAD/);
   assert.match(source, /updateRolodex/);
   assert.match(source, /wrapDelta/);
   assert.match(source, /pauseAutoplay/);
+  assert.match(source, /beginLoadingGate/);
 });
