@@ -9,6 +9,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const {
   normalizeImportNodes,
+  buildImportPlan,
   shouldApplyDurationOverride,
   recordMessageId,
   wasMessageProcessed
@@ -49,6 +50,18 @@ test("normalizeImportNodes preserves duration overrides", () => {
     { lines: ["http://example.com/base.mp4"], durationOverride: 3.2 },
     { lines: ["http://example.com/base2.mp4"], durationOverride: "auto" }
   ]);
+});
+
+test("buildImportPlan fills empty nodes before append", () => {
+  const nodeTexts = ["", "filled", ""];
+  const plan = buildImportPlan(nodeTexts, 2);
+  assert.deepEqual(plan, { existingIndexes: [0, 2], appendCount: 0 });
+});
+
+test("buildImportPlan appends when empties are exhausted", () => {
+  const nodeTexts = ["", "filled", ""];
+  const plan = buildImportPlan(nodeTexts, 4);
+  assert.deepEqual(plan, { existingIndexes: [0, 2], appendCount: 2 });
 });
 
 test("shouldApplyDurationOverride skips auto and empty values", () => {
