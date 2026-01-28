@@ -285,6 +285,50 @@
       background: rgba(0,0,0,.45);
       color: rgba(255,255,255,.85);
     }
+
+    .loading{
+      position:absolute;
+      inset:0;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      flex-direction:column;
+      gap: 12px;
+      z-index: 99998;
+      pointer-events:none;
+      opacity: 0;
+      transition: opacity 400ms ease;
+    }
+
+    body[data-loading="1"] .loading{
+      opacity: 1;
+    }
+
+    .loading-card{
+      padding: 14px 18px;
+      border-radius: 16px;
+      border: 1px solid rgba(255,255,255,.16);
+      background: rgba(0,0,0,.65);
+      box-shadow: 0 20px 80px rgba(0,0,0,.65);
+      text-align:center;
+      color: rgba(255,255,255,.86);
+      font-size: 13px;
+      max-width: 320px;
+    }
+
+    .spinner{
+      width: 34px;
+      height: 34px;
+      border-radius: 999px;
+      border: 3px solid rgba(255,255,255,.2);
+      border-top-color: rgba(56,189,248,.9);
+      animation: spin 1s linear infinite;
+      box-shadow: 0 0 18px rgba(56,189,248,.4);
+    }
+
+    @keyframes spin{
+      to{ transform: rotate(360deg); }
+    }
   </style>
 </head>
 
@@ -300,6 +344,13 @@
         <div id="camera">
           <div id="world"></div>
         </div>
+      </div>
+    </div>
+
+    <div class="loading" aria-live="polite">
+      <div class="spinner" aria-hidden="true"></div>
+      <div class="loading-card">
+        Loading deck… syncing frames before play.
       </div>
     </div>
   </div>
@@ -428,6 +479,12 @@
       pauseOnTouchSec: 6.0,
     };
 
+    const LOAD = {
+      minReady: 2,
+      timeoutMs: 4500,
+      settleFrames: 2,
+    };
+
     // Viewport constraint padding
     const PAD = 12;
 
@@ -443,6 +500,11 @@
     let dragStartY = 0;
     let dragStartTarget = 0;
     let lastReleaseAt = 0;
+    let isAnimating = false;
+    let loadingReadyCount = 0;
+    let loadingMinReady = 0;
+    let loadingTimer = null;
+    let loadingSettleFrames = 0;
 
     let t0 = performance.now();
     let introStart = performance.now();
@@ -517,12 +579,14 @@
     // DOM creation
     // ============================================================
     function createIframeIfNeeded(inner, url){
-      if (inner.querySelector("iframe")) return;
+      const existing = inner.querySelector("iframe");
+      if (existing) return existing;
       const iframe = document.createElement("iframe");
       iframe.src = url;
       iframe.loading = "lazy";
       iframe.referrerPolicy = "no-referrer";
       inner.appendChild(iframe);
+      return iframe;
     }
 
     function removeIframeIfFar(inner){
@@ -612,6 +676,11 @@
       const vp = getVisualViewportBox();
       const s = Math.min(vp.cw / DESIGN.w, vp.ch / DESIGN.h, 1); // DOWN only
       worldScaleEl.style.transform = `translate(-50%,-50%) scale(${s})`;
+    }
+
+    function applyCameraStatic(){
+      cameraStageEl.style.perspective = `${CAMERA.perspIdle}px`;
+      cameraEl.style.transform = "translate3d(0px, 0px, 0px) rotateX(0deg) rotateY(0deg) rotateZ(0deg)";
     }
 
     // ============================================================
@@ -775,18 +844,26 @@
     // ============================================================
     // RENDER LOOP (rAF)
     // ============================================================
-    function tick(now){
+    function renderFrame(now, { animate } = { animate: true }){
       const dt = Math.min(0.05, (now - t0) / 1000);
       t0 = now;
 
       applyWorldScale();
-      applyCamera(now);
-      updateRolodex(now);
+      if (animate){
+        applyCamera(now);
+        updateRolodex(now);
+      } else {
+        applyCameraStatic();
+      }
 
-      // Smooth progress to target (critically damped-ish)
-      // alpha = 1 - exp(-dt/tau)
-      const alpha = 1 - Math.exp(-dt / MOTION.tau);
-      progress = lerp(progress, targetProgress, alpha);
+      if (animate){
+        // Smooth progress to target (critically damped-ish)
+        // alpha = 1 - exp(-dt/tau)
+        const alpha = 1 - Math.exp(-dt / MOTION.tau);
+        progress = lerp(progress, targetProgress, alpha);
+      } else {
+        progress = targetProgress;
+      }
 
       // Snap when not dragging and close enough (so it “locks”)
       if (!dragging){
@@ -828,11 +905,14 @@
       }
 
       // Animate-in flag (once intro starts)
+    }
+
+    function tick(now){
+      renderFrame(now, { animate: true });
       if (!document.body.dataset.ready){
         // after first meaningful frame
         document.body.dataset.ready = "1";
       }
-
       requestAnimationFrame(tick);
     }
 
@@ -921,11 +1001,79 @@
     auto.pauseUntil = performance.now() + AUTO.startDelaySec * 1000;
     auto.phase = "idle";
 
-    // Set intro start
-    introStart = performance.now();
-    t0 = performance.now();
+    function markIframeReady(){
+      loadingReadyCount += 1;
+      if (loadingReadyCount >= loadingMinReady){
+        finishLoadingGate();
+      }
+    }
 
-    requestAnimationFrame(tick);
+    function watchIframeReady(iframe){
+      if (!iframe || iframe.dataset.readyWatch === "1") return;
+      iframe.dataset.readyWatch = "1";
+      iframe.addEventListener("load", () => {
+        iframe.dataset.readyWatch = "2";
+        markIframeReady();
+      }, { once: true });
+    }
+
+    function beginLoadingGate(){
+      document.body.dataset.loading = "1";
+      loadingReadyCount = 0;
+      loadingMinReady = 0;
+      loadingSettleFrames = LOAD.settleFrames;
+
+      for (const n of nodes.values()){
+        const d = wrapDelta(n.index - progress);
+        if (Math.abs(d) <= DECK.liveRange){
+          const iframe = createIframeIfNeeded(n.inner, n.app.url);
+          if (iframe){
+            loadingMinReady += 1;
+            watchIframeReady(iframe);
+          }
+        }
+      }
+
+      loadingMinReady = Math.min(LOAD.minReady, loadingMinReady);
+      if (loadingMinReady === 0){
+        finishLoadingGate();
+        return;
+      }
+
+      if (loadingTimer){
+        clearTimeout(loadingTimer);
+      }
+      loadingTimer = setTimeout(() => finishLoadingGate(), LOAD.timeoutMs);
+    }
+
+    function finishLoadingGate(){
+      if (isAnimating) return;
+      if (loadingTimer){
+        clearTimeout(loadingTimer);
+        loadingTimer = null;
+      }
+      if (loadingSettleFrames > 0){
+        requestAnimationFrame(() => {
+          loadingSettleFrames -= 1;
+          finishLoadingGate();
+        });
+        return;
+      }
+      document.body.dataset.loading = "0";
+      startAnimation();
+    }
+
+    function startAnimation(){
+      if (isAnimating) return;
+      isAnimating = true;
+      introStart = performance.now();
+      t0 = performance.now();
+      requestAnimationFrame(tick);
+    }
+
+    // Initial layout before animation loop
+    renderFrame(performance.now(), { animate: false });
+    beginLoadingGate();
 
     function moveToIndex(index){
       const clamped = wrapIndex(index);
