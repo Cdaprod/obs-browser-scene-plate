@@ -21,6 +21,8 @@
 ## UI/UX Expectations
 - Ensure the UI is responsive on mobile and desktop, with no overflow in header, actions, or preview areas.
 - Prefer flex wrapping and safe text overflow behaviors for long URLs.
+- For iframe-heavy scenes (e.g. `lan_app_stack_scene.html`), gate animations until initial iframe loads finish and show a lightweight loading overlay to avoid dropped frames.
+- Use `overlays/compression_artifact_glitch.html` for glitching analogue static; keep `analogue_static_loop.html` as the steady, non-burst static layer.
 
 ## Testing Expectations
 - Add minimal automated tests for logic changes when possible.
