@@ -441,7 +441,9 @@ const elements = {
   obsTakeScene: $("#obsTakeScene"),
   obsAutoplay: $("#obsAutoplay"),
   obsHud: $("#obsHud"),
-  obsSendTimeline: $("#btnSendTimelineObs")
+  obsSendTimeline: $("#btnSendTimelineObs"),
+  obsToggle: $("#btnToggleObs"),
+  obsPanelBody: $("#obsPanelBody")
 };
 
 let overlayVideos = [];
@@ -452,6 +454,7 @@ let exportPollTimer = null;
 let activeBaseKind = "video";
 let baseStartTime = 0;
 const PREVIEW_COLLAPSE_KEY = "program-monitor.preview-collapsed";
+const OBS_PANEL_COLLAPSE_KEY = "program-monitor.obs-collapsed";
 
 const isFileProtocol = window.location.protocol === "file:";
 const host = window.location.hostname || "localhost";
@@ -562,6 +565,22 @@ function setPreviewCollapsed(collapsed) {
     localStorage.setItem(PREVIEW_COLLAPSE_KEY, JSON.stringify(isCollapsed));
   } catch (error) {
     console.warn("Failed to persist preview state", error);
+  }
+}
+
+function setObsPanelCollapsed(collapsed) {
+  const isCollapsed = Boolean(collapsed);
+  if (elements.obsPanelBody) {
+    elements.obsPanelBody.setAttribute("aria-hidden", String(isCollapsed));
+  }
+  if (elements.obsToggle) {
+    elements.obsToggle.setAttribute("aria-expanded", String(!isCollapsed));
+    elements.obsToggle.textContent = isCollapsed ? "Show OBS" : "Hide OBS";
+  }
+  try {
+    localStorage.setItem(OBS_PANEL_COLLAPSE_KEY, JSON.stringify(isCollapsed));
+  } catch (error) {
+    console.warn("Failed to persist OBS panel state", error);
   }
 }
 
@@ -2059,6 +2078,15 @@ if (elements.togglePreview) {
   });
 }
 
+if (elements.obsToggle) {
+  elements.obsToggle.addEventListener("click", () => {
+    const isCollapsed = elements.obsPanelBody
+      ? elements.obsPanelBody.getAttribute("aria-hidden") !== "false"
+      : true;
+    setObsPanelCollapsed(!isCollapsed);
+  });
+}
+
 if (elements.nodeList) {
   const nodesPanel = elements.nodeList.closest(".nodes") || elements.nodeList;
   nodesPanel.addEventListener("click", (event) => {
@@ -2127,6 +2155,17 @@ try {
   } catch (error) {
     console.warn("Failed to load preview state", error);
     setPreviewCollapsed(false);
+  }
+  try {
+    const storedObs = localStorage.getItem(OBS_PANEL_COLLAPSE_KEY);
+    if (storedObs !== null) {
+      setObsPanelCollapsed(JSON.parse(storedObs));
+    } else {
+      setObsPanelCollapsed(true);
+    }
+  } catch (error) {
+    console.warn("Failed to load OBS panel state", error);
+    setObsPanelCollapsed(true);
   }
   renderNodes();
   primeNode(state.activeIndex).catch(() => {});

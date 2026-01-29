@@ -28,7 +28,7 @@ A browser-only **Program + Monitor** UI for stacking URL-based media nodes into 
 - **Validate**: basic checks for missing base URLs and non-http(s) entries.
 - **Open Base**: open the active node base URL in a new tab.
 - **Export Node/Timeline**: send jobs to the render-api service for MOV output.
-- **OBS Control**: send the compiled timeline player URL to OBS `ASSET_MEDIA` via WebSocket.
+- **OBS Control**: send the compiled timeline player URL to OBS `ASSET_MEDIA` via WebSocket (panel is collapsible).
 - **PostMessage import**: append nodes by sending a `CDAPROD_PROGRAM_MONITOR_IMPORT` payload to the Program Monitor tab.
 - **Image bases**: default to 5 seconds unless a duration override is provided.
 

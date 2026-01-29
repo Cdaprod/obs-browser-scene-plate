@@ -79,36 +79,41 @@
           <a class="exportLink hidden" id="downloadLink" download>Download MOV</a>
         </section>
 
-        <section class="obsPanel" aria-label="OBS Control">
+        <section class="obsPanel" id="obsPanel" aria-label="OBS Control">
           <div class="obsHeader">
             <div>
               <div class="obsTitle">OBS Control</div>
               <div class="obsSub">Send the compiled timeline player URL to ASSET_MEDIA.</div>
             </div>
-            <button id="btnSendTimelineObs" class="pill" type="button">Send Timeline → OBS</button>
+            <div class="obsHeaderActions">
+              <button id="btnToggleObs" type="button" aria-expanded="false" aria-controls="obsPanelBody">Show OBS</button>
+              <button id="btnSendTimelineObs" class="pill" type="button">Send Timeline → OBS</button>
+            </div>
           </div>
-          <div class="obsFields">
-            <label>
-              WebSocket URL
-              <input id="obsAddress" type="text" placeholder="ws://localhost:4455" />
-            </label>
-            <label>
-              Password
-              <input id="obsPassword" type="password" placeholder="optional" />
-            </label>
-            <label>
-              Scene name
-              <input id="obsScene" type="text" placeholder="ASSET_SCENE" />
-            </label>
-            <label>
-              Input name
-              <input id="obsInput" type="text" placeholder="ASSET_MEDIA" />
-            </label>
-          </div>
-          <div class="obsOptions">
-            <label><input id="obsTakeScene" type="checkbox" /> Take scene after send</label>
-            <label><input id="obsAutoplay" type="checkbox" checked /> Autoplay timeline</label>
-            <label><input id="obsHud" type="checkbox" /> HUD overlay</label>
+          <div class="obsBody" id="obsPanelBody" aria-hidden="true">
+            <div class="obsFields">
+              <label>
+                WebSocket URL
+                <input id="obsAddress" type="text" placeholder="ws://localhost:4455" />
+              </label>
+              <label>
+                Password
+                <input id="obsPassword" type="password" placeholder="optional" />
+              </label>
+              <label>
+                Scene name
+                <input id="obsScene" type="text" placeholder="ASSET_SCENE" />
+              </label>
+              <label>
+                Input name
+                <input id="obsInput" type="text" placeholder="ASSET_MEDIA" />
+              </label>
+            </div>
+            <div class="obsOptions">
+              <label><input id="obsTakeScene" type="checkbox" /> Take scene after send</label>
+              <label><input id="obsAutoplay" type="checkbox" checked /> Autoplay timeline</label>
+              <label><input id="obsHud" type="checkbox" /> HUD overlay</label>
+            </div>
           </div>
         </section>
 
