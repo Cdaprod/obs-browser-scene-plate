@@ -1751,7 +1751,7 @@ async function sendTimelineToObs() {
     await client.call("SetInputSettings", {
       inputName: settings.inputName,
       inputSettings: { url: timelineUrl },
-      overlay: false
+      overlay: true
     });
 
     if (settings.takeScene && settings.sceneName) {
