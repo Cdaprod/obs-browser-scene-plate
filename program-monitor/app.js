@@ -376,6 +376,7 @@ const PROJECTS_LIMIT = 20;
 const elements = {
   nodeList: $("#nodeList"),
   baseVideo: $("#baseVideo"),
+  baseImage: $("#baseImage"),
   baseFrame: $("#baseFrame"),
   overlayLayer: $("#overlayLayer"),
   statNode: $("#statNode"),
@@ -911,11 +912,22 @@ function setBaseKind(kind, url) {
     elements.baseVideo.pause();
     elements.baseVideo.removeAttribute("src");
     elements.baseVideo.style.display = "none";
-    elements.baseFrame.style.display = "block";
-    elements.baseFrame.src = url || "about:blank";
+    if (kind === "image") {
+      elements.baseFrame.style.display = "none";
+      elements.baseFrame.removeAttribute("src");
+      elements.baseImage.style.display = "block";
+      elements.baseImage.src = url || "";
+    } else {
+      elements.baseImage.style.display = "none";
+      elements.baseImage.removeAttribute("src");
+      elements.baseFrame.style.display = "block";
+      elements.baseFrame.src = url || "about:blank";
+    }
   } else {
     elements.baseFrame.removeAttribute("src");
     elements.baseFrame.style.display = "none";
+    elements.baseImage.removeAttribute("src");
+    elements.baseImage.style.display = "none";
     elements.baseVideo.style.display = "block";
   }
 }
@@ -1014,6 +1026,7 @@ async function primeNode(index) {
   if (!parsed.baseUrl) {
     setBaseKind("video");
     elements.baseVideo.removeAttribute("src");
+    elements.baseImage.removeAttribute("src");
     elements.baseFrame.removeAttribute("src");
     elements.statDur.textContent = "0.00";
     state.durationInfo = { duration: 0, source: "none" };
