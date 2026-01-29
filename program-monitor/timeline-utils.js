@@ -293,6 +293,39 @@
     };
   }
 
+  function buildTimelinePlayerUrl({
+    origin,
+    timeline,
+    name,
+    autoplay = true,
+    hud = false
+  } = {}) {
+    if (!origin) {
+      return "";
+    }
+
+    const payload = encodeTimelinePayload(buildTimelineDescriptor(timeline || { version: 1, nodes: [], activeIndex: 0 }));
+    if (!payload) {
+      return "";
+    }
+
+    let url;
+    try {
+      url = new URL("/program-monitor/timeline_player.html", origin);
+    } catch (error) {
+      return "";
+    }
+
+    url.searchParams.set("data", payload);
+    if (name) {
+      url.searchParams.set("name", name);
+    }
+    url.searchParams.set("autoplay", autoplay ? "1" : "0");
+    url.searchParams.set("hud", hud ? "1" : "0");
+
+    return url.toString();
+  }
+
   function encodeTimelinePayload(payload) {
     if (payload === undefined) {
       return "";
@@ -348,6 +381,7 @@
     resolvePlaybackScope,
     buildNodeDescriptor,
     buildTimelineDescriptor,
+    buildTimelinePlayerUrl,
     encodeTimelinePayload,
     decodeTimelinePayload
   };

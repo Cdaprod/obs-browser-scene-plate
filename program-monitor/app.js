@@ -283,6 +283,41 @@ const fallbackUtils = (() => {
     };
   };
 
+  const buildTimelinePlayerUrl = ({
+    origin,
+    timeline,
+    name,
+    autoplay = true,
+    hud = false
+  } = {}) => {
+    if (!origin) {
+      return "";
+    }
+
+    const payload = encodeTimelinePayload(
+      buildTimelineDescriptor(timeline || { version: 1, nodes: [], activeIndex: 0 })
+    );
+    if (!payload) {
+      return "";
+    }
+
+    let url;
+    try {
+      url = new URL("/program-monitor/timeline_player.html", origin);
+    } catch (error) {
+      return "";
+    }
+
+    url.searchParams.set("data", payload);
+    if (name) {
+      url.searchParams.set("name", name);
+    }
+    url.searchParams.set("autoplay", autoplay ? "1" : "0");
+    url.searchParams.set("hud", hud ? "1" : "0");
+
+    return url.toString();
+  };
+
   const encodeTimelinePayload = (payload) => {
     if (payload === undefined) {
       return "";
@@ -338,6 +373,7 @@ const fallbackUtils = (() => {
     resolvePlaybackScope,
     buildNodeDescriptor,
     buildTimelineDescriptor,
+    buildTimelinePlayerUrl,
     encodeTimelinePayload,
     decodeTimelinePayload
   };
@@ -352,6 +388,7 @@ const {
   parseNodeText,
   buildNodeDescriptor,
   buildTimelineDescriptor,
+  buildTimelinePlayerUrl,
   encodeTimelinePayload,
   resolvePlaybackScope,
   STORAGE_KEY,
@@ -372,6 +409,7 @@ const state = {
 
 const PROJECTS_KEY = "program-monitor.projects.v1";
 const PROJECTS_LIMIT = 20;
+const OBS_SETTINGS_KEY = "program-monitor.obs.v1";
 
 const elements = {
   nodeList: $("#nodeList"),
@@ -395,7 +433,17 @@ const elements = {
   projectList: $("#projectList"),
   projectsToggle: $("#btnProjects"),
   projectSave: $("#projectSave"),
-  openStage: $("#btnOpenStage")
+  openStage: $("#btnOpenStage"),
+  obsAddress: $("#obsAddress"),
+  obsPassword: $("#obsPassword"),
+  obsScene: $("#obsScene"),
+  obsInput: $("#obsInput"),
+  obsTakeScene: $("#obsTakeScene"),
+  obsAutoplay: $("#obsAutoplay"),
+  obsHud: $("#obsHud"),
+  obsSendTimeline: $("#btnSendTimelineObs"),
+  obsToggle: $("#btnToggleObs"),
+  obsPanelBody: $("#obsPanelBody")
 };
 
 let overlayVideos = [];
@@ -406,6 +454,7 @@ let exportPollTimer = null;
 let activeBaseKind = "video";
 let baseStartTime = 0;
 const PREVIEW_COLLAPSE_KEY = "program-monitor.preview-collapsed";
+const OBS_PANEL_COLLAPSE_KEY = "program-monitor.obs-collapsed";
 
 const isFileProtocol = window.location.protocol === "file:";
 const host = window.location.hostname || "localhost";
@@ -519,6 +568,22 @@ function setPreviewCollapsed(collapsed) {
   }
 }
 
+function setObsPanelCollapsed(collapsed) {
+  const isCollapsed = Boolean(collapsed);
+  if (elements.obsPanelBody) {
+    elements.obsPanelBody.setAttribute("aria-hidden", String(isCollapsed));
+  }
+  if (elements.obsToggle) {
+    elements.obsToggle.setAttribute("aria-expanded", String(!isCollapsed));
+    elements.obsToggle.textContent = isCollapsed ? "Show OBS" : "Hide OBS";
+  }
+  try {
+    localStorage.setItem(OBS_PANEL_COLLAPSE_KEY, JSON.stringify(isCollapsed));
+  } catch (error) {
+    console.warn("Failed to persist OBS panel state", error);
+  }
+}
+
 function saveLocal() {
   try {
     localStorage.setItem(
@@ -596,6 +661,88 @@ function saveProjects(entries) {
   } catch (error) {
     console.warn("Failed to save projects", error);
   }
+}
+
+function getDefaultObsSettings() {
+  return {
+    address: `ws://${host}:4455`,
+    password: "",
+    sceneName: "ASSET_SCENE",
+    inputName: "ASSET_MEDIA",
+    takeScene: false,
+    autoplay: true,
+    hud: false
+  };
+}
+
+function loadObsSettings() {
+  try {
+    const raw = localStorage.getItem(OBS_SETTINGS_KEY);
+    if (!raw) {
+      return getDefaultObsSettings();
+    }
+    const parsed = JSON.parse(raw);
+    return {
+      ...getDefaultObsSettings(),
+      ...parsed
+    };
+  } catch (error) {
+    console.warn("Failed to load OBS settings", error);
+    return getDefaultObsSettings();
+  }
+}
+
+function saveObsSettings(settings) {
+  try {
+    localStorage.setItem(OBS_SETTINGS_KEY, JSON.stringify(settings));
+  } catch (error) {
+    console.warn("Failed to save OBS settings", error);
+  }
+}
+
+function applyObsSettingsToInputs(settings) {
+  if (!settings) {
+    return;
+  }
+  if (elements.obsAddress) {
+    elements.obsAddress.value = settings.address || "";
+  }
+  if (elements.obsPassword) {
+    elements.obsPassword.value = settings.password || "";
+  }
+  if (elements.obsScene) {
+    elements.obsScene.value = settings.sceneName || "";
+  }
+  if (elements.obsInput) {
+    elements.obsInput.value = settings.inputName || "";
+  }
+  if (elements.obsTakeScene) {
+    elements.obsTakeScene.checked = Boolean(settings.takeScene);
+  }
+  if (elements.obsAutoplay) {
+    elements.obsAutoplay.checked = settings.autoplay !== false;
+  }
+  if (elements.obsHud) {
+    elements.obsHud.checked = Boolean(settings.hud);
+  }
+}
+
+function readObsSettingsFromInputs() {
+  return {
+    address: elements.obsAddress ? elements.obsAddress.value.trim() : "",
+    password: elements.obsPassword ? elements.obsPassword.value : "",
+    sceneName: elements.obsScene ? elements.obsScene.value.trim() : "",
+    inputName: elements.obsInput ? elements.obsInput.value.trim() : "",
+    takeScene: elements.obsTakeScene ? elements.obsTakeScene.checked : false,
+    autoplay: elements.obsAutoplay ? elements.obsAutoplay.checked : true,
+    hud: elements.obsHud ? elements.obsHud.checked : false
+  };
+}
+
+function persistObsSettingsFromInputs() {
+  const settings = readObsSettingsFromInputs();
+  saveObsSettings(settings);
+  return settings;
 }
 
 function setProjectToolbarOpen(isOpen) {
@@ -1409,6 +1556,216 @@ function validateNodes() {
   renderNodes();
 }
 
+const obsAuth = window.ProgramMonitorObsAuth || {};
+
+function connectObs(settings) {
+  if (!settings?.address) {
+    return Promise.reject(new Error("OBS WebSocket address is missing."));
+  }
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const pending = new Map();
+
+    let socket;
+    try {
+      socket = new WebSocket(settings.address, "obswebsocket.json");
+    } catch (error) {
+      reject(error);
+      return;
+    }
+
+    const cleanup = () => {
+      if (!socket) {
+        return;
+      }
+      socket.removeEventListener("message", onMessage);
+      socket.removeEventListener("error", onError);
+      socket.removeEventListener("close", onClose);
+    };
+
+    const fail = (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+
+    const succeed = (client) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      resolve(client);
+    };
+
+    const call = (requestType, requestData) => new Promise((resolveCall, rejectCall) => {
+      const requestId = uuid();
+      pending.set(requestId, { resolveCall, rejectCall });
+      socket.send(JSON.stringify({
+        op: 6,
+        d: {
+          requestType,
+          requestId,
+          requestData
+        }
+      }));
+    });
+
+    const onMessage = async (event) => {
+      let data;
+      try {
+        data = JSON.parse(event.data);
+      } catch (error) {
+        return;
+      }
+
+      if (data.op === 0) {
+        const auth = data.d?.authentication;
+        let authentication = undefined;
+        if (auth?.challenge && auth?.salt) {
+          if (!settings.password) {
+            fail(new Error("OBS WebSocket requires a password."));
+            return;
+          }
+          try {
+            if (typeof obsAuth.buildObsAuth !== "function") {
+              fail(new Error("OBS auth helper is unavailable. Reload to retry."));
+              return;
+            }
+            authentication = await obsAuth.buildObsAuth(settings.password, auth.challenge, auth.salt);
+          } catch (error) {
+            fail(new Error("OBS authentication failed."));
+            return;
+          }
+        }
+
+        socket.send(JSON.stringify({
+          op: 1,
+          d: {
+            rpcVersion: data.d?.rpcVersion ?? 1,
+            authentication,
+            eventSubscriptions: 0
+          }
+        }));
+        return;
+      }
+
+      if (data.op === 2) {
+        succeed({
+          call,
+          close: () => {
+            cleanup();
+            socket.close();
+          }
+        });
+        return;
+      }
+
+      if (data.op === 7) {
+        const requestId = data.d?.requestId;
+        if (!requestId) {
+          return;
+        }
+        const pendingRequest = pending.get(requestId);
+        if (!pendingRequest) {
+          return;
+        }
+        pending.delete(requestId);
+        if (!data.d?.requestStatus?.result) {
+          pendingRequest.rejectCall(new Error(data.d?.requestStatus?.comment || "OBS request failed."));
+          return;
+        }
+        pendingRequest.resolveCall(data.d?.responseData);
+      }
+    };
+
+    const onError = () => {
+      fail(new Error("OBS WebSocket connection error."));
+    };
+
+    const onClose = () => {
+      if (!settled) {
+        fail(new Error("OBS WebSocket closed before identification."));
+      }
+    };
+
+    socket.addEventListener("message", onMessage);
+    socket.addEventListener("error", onError);
+    socket.addEventListener("close", onClose);
+  });
+}
+
+async function sendTimelineToObs() {
+  if (isFileProtocol) {
+    setMessage("OBS control requires http(s). Serve this page from the stack.");
+    return;
+  }
+
+  if (!state.nodes.length) {
+    setMessage("Add at least one node before sending to OBS.");
+    return;
+  }
+
+  const settings = persistObsSettingsFromInputs();
+  if (!settings.address) {
+    setMessage("Set the OBS WebSocket address before connecting.");
+    return;
+  }
+  if (!settings.inputName) {
+    setMessage("Set the OBS input name for ASSET_MEDIA.");
+    return;
+  }
+
+  const origin = window.location.origin;
+  if (!origin || origin === "null") {
+    setMessage("Unable to resolve the timeline player URL from this origin.");
+    return;
+  }
+
+  const timeline = {
+    version: 1,
+    nodes: state.nodes,
+    activeIndex: 0
+  };
+  const name = elements.projectName ? elements.projectName.value.trim() : "";
+  const timelineUrl = buildTimelinePlayerUrl({
+    origin,
+    timeline,
+    name,
+    autoplay: settings.autoplay,
+    hud: settings.hud
+  });
+
+  if (!timelineUrl) {
+    setMessage("Failed to build the timeline player URL.");
+    return;
+  }
+
+  setMessage("Connecting to OBS...");
+
+  try {
+    const client = await connectObs(settings);
+    await client.call("SetInputSettings", {
+      inputName: settings.inputName,
+      inputSettings: { url: timelineUrl },
+      overlay: false
+    });
+
+    if (settings.takeScene && settings.sceneName) {
+      await client.call("SetCurrentProgramScene", { sceneName: settings.sceneName });
+    }
+
+    client.close();
+    setMessage("Sent timeline player URL to OBS.");
+  } catch (error) {
+    console.error(error);
+    setMessage(`OBS error: ${error.message || error}`);
+  }
+}
+
 async function pollJobStatus(statusUrl) {
   const res = await fetch(statusUrl);
   const data = await res.json();
@@ -1692,6 +2049,15 @@ if (elements.togglePreview) {
   });
 }
 
+if (elements.obsToggle) {
+  elements.obsToggle.addEventListener("click", () => {
+    const isCollapsed = elements.obsPanelBody
+      ? elements.obsPanelBody.getAttribute("aria-hidden") !== "false"
+      : true;
+    setObsPanelCollapsed(!isCollapsed);
+  });
+}
+
 if (elements.nodeList) {
   const nodesPanel = elements.nodeList.closest(".nodes") || elements.nodeList;
   nodesPanel.addEventListener("click", (event) => {
@@ -1719,7 +2085,36 @@ elements.fileImport.addEventListener("change", async () => {
   }
 });
 
+if (elements.obsSendTimeline) {
+  elements.obsSendTimeline.addEventListener("click", () => {
+    sendTimelineToObs().catch((error) => {
+      console.error(error);
+    });
+  });
+}
+
+const obsSettingsInputs = [
+  elements.obsAddress,
+  elements.obsPassword,
+  elements.obsScene,
+  elements.obsInput,
+  elements.obsTakeScene,
+  elements.obsAutoplay,
+  elements.obsHud
+];
+
+obsSettingsInputs.forEach((input) => {
+  if (!input) {
+    return;
+  }
+  input.addEventListener("change", () => {
+    persistObsSettingsFromInputs();
+  });
+});
+
 try {
+  const obsSettings = loadObsSettings();
+  applyObsSettingsToInputs(obsSettings);
   loadLocal();
   try {
     const stored = localStorage.getItem(PREVIEW_COLLAPSE_KEY);
@@ -1731,6 +2126,17 @@ try {
   } catch (error) {
     console.warn("Failed to load preview state", error);
     setPreviewCollapsed(false);
+  }
+  try {
+    const storedObs = localStorage.getItem(OBS_PANEL_COLLAPSE_KEY);
+    if (storedObs !== null) {
+      setObsPanelCollapsed(JSON.parse(storedObs));
+    } else {
+      setObsPanelCollapsed(true);
+    }
+  } catch (error) {
+    console.warn("Failed to load OBS panel state", error);
+    setObsPanelCollapsed(true);
   }
   renderNodes();
   primeNode(state.activeIndex).catch(() => {});
