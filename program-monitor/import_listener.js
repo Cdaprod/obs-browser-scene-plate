@@ -75,6 +75,23 @@
     };
   }
 
+  function evaluateImportResult(beforeTexts, afterTexts, plan) {
+    const beforeCount = Array.isArray(beforeTexts) ? beforeTexts.length : 0;
+    const afterCount = Array.isArray(afterTexts) ? afterTexts.length : 0;
+    const appendCount = Number.isFinite(plan?.appendCount) ? plan.appendCount : 0;
+    const expectedCount = beforeCount + Math.max(0, appendCount);
+
+    if (afterCount < expectedCount) {
+      return false;
+    }
+
+    const indexes = Array.isArray(plan?.existingIndexes) ? plan.existingIndexes : [];
+    return indexes.every((index) => {
+      const value = afterTexts[index];
+      return Boolean(String(value || "").trim());
+    });
+  }
+
   function shouldApplyDurationOverride(value) {
     if (value === undefined || value === null) {
       return false;
@@ -195,7 +212,8 @@
       }
 
       const nodeTexts = getNodeTextValues();
-      const { existingIndexes } = buildImportPlan(nodeTexts, nodes.length);
+      const plan = buildImportPlan(nodeTexts, nodes.length);
+      const { existingIndexes, appendCount } = plan;
       let appended = 0;
 
       nodes.forEach((node, index) => {
@@ -208,8 +226,14 @@
         appended += 1;
       });
 
+      const updatedTexts = getNodeTextValues();
+      const importSucceeded = evaluateImportResult(nodeTexts, updatedTexts, {
+        existingIndexes,
+        appendCount
+      });
+
       try {
-        ev.source?.postMessage({ type: ACK_TYPE, ok: true, messageId }, ev.origin || "*");
+        ev.source?.postMessage({ type: ACK_TYPE, ok: importSucceeded, messageId }, ev.origin || "*");
       } catch (error) {
         console.warn("Failed to post import ACK", error);
       }
@@ -221,6 +245,7 @@
     normalizeImportNodes,
     getEmptyNodeIndexes,
     buildImportPlan,
+    evaluateImportResult,
     shouldApplyDurationOverride,
     recordMessageId,
     wasMessageProcessed
