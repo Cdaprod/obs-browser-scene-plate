@@ -23,10 +23,12 @@ A browser-only **Program + Monitor** UI for stacking URL-based media nodes into 
 - **Save**: persist to localStorage.
 - **Projects**: save/load named timelines (stored in localStorage) with structured base/overlay/ambient metadata for reuse without the UI.
 - **Open Stage**: open a standalone timeline preview tab from the current nodes.
+- **Timeline Player**: `/program-monitor/timeline_player.html?data=...` plays the full timeline headlessly (for OBS browser sources).
 - **Export / Import JSON**: move timelines between machines.
 - **Validate**: basic checks for missing base URLs and non-http(s) entries.
 - **Open Base**: open the active node base URL in a new tab.
 - **Export Node/Timeline**: send jobs to the render-api service for MOV output.
+- **OBS Control**: send the compiled timeline player URL to OBS `ASSET_MEDIA` via WebSocket (panel is collapsible).
 - **PostMessage import**: append nodes by sending a `CDAPROD_PROGRAM_MONITOR_IMPORT` payload to the Program Monitor tab.
 - **Image bases**: default to 5 seconds unless a duration override is provided.
 
@@ -44,6 +46,16 @@ Send a message shaped like:
   ]
 }
 ```
+
+### OBS Control
+
+Use **Send Timeline → OBS** to push a single compiled player URL into the reusable `ASSET_MEDIA` browser source. Defaults assume:
+
+- WebSocket URL: `ws://<HOST_IP>:4455`
+- Scene: `ASSET_SCENE`
+- Input: `ASSET_MEDIA`
+
+Optionally enable **Take scene after send** to cut to the asset scene once the URL is updated.
 
 ## Tests
 
