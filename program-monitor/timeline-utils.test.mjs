@@ -19,7 +19,8 @@ const {
   encodeTimelinePayload,
   decodeTimelinePayload,
   buildNodeDescriptor,
-  buildTimelineDescriptor
+  buildTimelineDescriptor,
+  buildTimelinePlayerUrl
 } = require("./timeline-utils.js");
 
 process.on("uncaughtException", (error) => {
@@ -183,4 +184,20 @@ test("encode/decode timeline payload round-trips", () => {
 
 test("decodeTimelinePayload returns null on bad input", () => {
   assert.equal(decodeTimelinePayload("not-base64"), null);
+});
+
+test("buildTimelinePlayerUrl returns a URL with payload and flags", () => {
+  const url = buildTimelinePlayerUrl({
+    origin: "http://localhost:8789",
+    timeline: { version: 1, nodes: [{ id: "a", text: "http://host/base.mp4", durationOverride: "3" }] },
+    name: "Demo Timeline",
+    autoplay: false,
+    hud: true
+  });
+  const parsed = new URL(url);
+  assert.equal(parsed.pathname, "/program-monitor/timeline_player.html");
+  assert.ok(parsed.searchParams.get("data"));
+  assert.equal(parsed.searchParams.get("name"), "Demo Timeline");
+  assert.equal(parsed.searchParams.get("autoplay"), "0");
+  assert.equal(parsed.searchParams.get("hud"), "1");
 });
