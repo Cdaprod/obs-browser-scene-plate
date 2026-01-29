@@ -10,6 +10,7 @@ const require = createRequire(import.meta.url);
 const {
   normalizeImportNodes,
   buildImportPlan,
+  evaluateImportResult,
   shouldApplyDurationOverride,
   recordMessageId,
   wasMessageProcessed
@@ -62,6 +63,16 @@ test("buildImportPlan appends when empties are exhausted", () => {
   const nodeTexts = ["", "filled", ""];
   const plan = buildImportPlan(nodeTexts, 4);
   assert.deepEqual(plan, { existingIndexes: [0, 2], appendCount: 2 });
+});
+
+test("evaluateImportResult requires append count and filled empties", () => {
+  const before = ["", "filled"];
+  const plan = { existingIndexes: [0], appendCount: 1 };
+  const afterFail = ["filled", "filled"];
+  const afterPass = ["filled", "filled", "new"];
+
+  assert.equal(evaluateImportResult(before, afterFail, plan), false);
+  assert.equal(evaluateImportResult(before, afterPass, plan), true);
 });
 
 test("shouldApplyDurationOverride skips auto and empty values", () => {
