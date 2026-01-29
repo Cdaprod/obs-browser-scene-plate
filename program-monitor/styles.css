@@ -275,6 +275,72 @@ body.preview-collapsed .previewPanel {
   margin-bottom: 12px;
 }
 
+.obsPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--pad);
+  margin-bottom: 12px;
+}
+
+.obsHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.obsTitle {
+  font-weight: 600;
+}
+
+.obsSub {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.obsFields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.obsFields label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.obsFields input {
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: #06101a;
+  color: var(--text);
+  padding: 8px 10px;
+  font-family: var(--mono);
+}
+
+.obsOptions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.obsOptions label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .exportStatus {
   font-size: 12px;
   color: var(--muted);
