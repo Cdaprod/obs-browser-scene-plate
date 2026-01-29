@@ -32,6 +32,9 @@ button {
   border-radius: 12px;
   font-size: 13px;
   cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
 
 button:active {
@@ -189,6 +192,7 @@ body.preview-collapsed .previewPanel {
 }
 
 #baseVideo,
+#baseImage,
 #baseFrame {
   position: absolute;
   inset: 0;
@@ -196,6 +200,10 @@ body.preview-collapsed .previewPanel {
   height: 100%;
   object-fit: contain;
   background: #03111a;
+}
+
+#baseImage {
+  display: none;
 }
 
 #baseFrame {
