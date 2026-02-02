@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>audio-input-waveform</title>
+<style>
+html, body{
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+
+canvas{
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+</style>
+</head>
+<body>
+<canvas id="viz"></canvas>
+
+<script>
+/**
+ * audio_input_waveform.html
+ *
+ * Default URL (full params):
+ *  http://<HOST_IP>:8789/overlays/audio_input_waveform.html?ws=ws://127.0.0.1:8765&mode=bars&bins=64&bar=124,248,255,0.9&line=124,248,255,0.9&bg=0,0,0,0&smooth=0.25&decay=0.92&peak=255,255,255,0.9
+ *
+ * WebSocket payloads:
+ *  - {"type":"fft","bins":[0..1]} for bars
+ *  - {"type":"wave","samples":[-1..1]} for waveform
+ *  - Optional: {"peak":0..1,"rms":0..1} for additional metering
+ *
+ * Params:
+ *  - ws: websocket URL for audio data.
+ *  - mode: bars|wave.
+ *  - bins: number of bars or samples to render.
+ *  - bar/line/bg/peak: color as r,g,b,a.
+ *  - smooth: smoothing factor 0..1.
+ *  - decay: idle decay factor 0..1.
+ *  - lineWidth: waveform stroke width.
+ *  - demo: set to 1 to show animated placeholder data when no websocket data arrives.
+ */
+
+const canvas = document.getElementById("viz");
+const ctx = canvas.getContext("2d");
+
+const params = new URLSearchParams(window.location.search);
+const wsUrl = params.get("ws") || "ws://127.0.0.1:8765";
+const mode = params.get("mode") || "bars";
+const binCount = clampInt(params.get("bins"), 64, 8, 256);
+const smoothing = clampFloat(params.get("smooth"), 0.25, 0, 1);
+const decay = clampFloat(params.get("decay"), 0.92, 0.6, 1);
+const lineWidth = clampFloat(params.get("lineWidth"), 3, 1, 12);
+const demoEnabled = params.get("demo") === "1";
+
+const colors = {
+  bg: parseRgba(params.get("bg"), "rgba(0,0,0,0)"),
+  bar: parseRgba(params.get("bar"), "rgba(124,248,255,0.9)"),
+  line: parseRgba(params.get("line"), "rgba(124,248,255,0.9)"),
+  peak: parseRgba(params.get("peak"), "rgba(255,255,255,0.9)")
+};
+
+const state = {
+  bins: new Array(binCount).fill(0),
+  targetBins: new Array(binCount).fill(0),
+  wave: new Array(binCount).fill(0),
+  targetWave: new Array(binCount).fill(0),
+  peak: 0,
+  rms: 0,
+  lastMessageAt: 0,
+  demoPhase: 0
+};
+
+resizeCanvas();
+new ResizeObserver(resizeCanvas).observe(canvas);
+
+const socket = new WebSocket(wsUrl);
+
+socket.addEventListener("message", (event) => {
+  const payload = parseJson(event.data);
+  if (!payload) {
+    return;
+  }
+
+  state.lastMessageAt = Date.now();
+
+  if (Array.isArray(payload.bins)) {
+    updateArray(state.targetBins, payload.bins, 0, 1);
+  }
+
+  if (Array.isArray(payload.samples)) {
+    updateArray(state.targetWave, payload.samples, -1, 1);
+  }
+
+  if (typeof payload.peak === "number") {
+    state.peak = clampFloat(payload.peak, 0, 0, 1);
+  }
+
+  if (typeof payload.rms === "number") {
+    state.rms = clampFloat(payload.rms, 0, 0, 1);
+  }
+});
+
+socket.addEventListener("error", () => {
+  console.warn("audio_input_waveform websocket error");
+});
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  if (colors.bg !== "rgba(0,0,0,0)") {
+    ctx.fillStyle = colors.bg;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
+  if (demoEnabled && Date.now() - state.lastMessageAt > 400) {
+    applyDemoSignal();
+  }
+
+  updateSmoothed(state.bins, state.targetBins);
+  updateSmoothed(state.wave, state.targetWave);
+
+  if (mode === "wave") {
+    drawWaveform();
+  } else {
+    drawBars();
+  }
+
+  requestAnimationFrame(draw);
+}
+
+function drawBars() {
+  const width = canvas.width;
+  const height = canvas.height;
+  const barWidth = width / state.bins.length;
+
+  ctx.fillStyle = colors.bar;
+
+  for (let i = 0; i < state.bins.length; i += 1) {
+    const value = clampFloat(state.bins[i], 0, 0, 1);
+    const barHeight = value * height;
+    ctx.fillRect(i * barWidth, height - barHeight, Math.max(1, barWidth - 2), barHeight);
+  }
+
+  if (state.peak > 0) {
+    const peakY = height - state.peak * height;
+    ctx.fillStyle = colors.peak;
+    ctx.fillRect(0, peakY - 2, width, 4);
+  }
+}
+
+function drawWaveform() {
+  const width = canvas.width;
+  const height = canvas.height;
+  const mid = height / 2;
+
+  ctx.strokeStyle = colors.line;
+  ctx.lineWidth = lineWidth;
+  ctx.beginPath();
+
+  for (let i = 0; i < state.wave.length; i += 1) {
+    const x = (i / (state.wave.length - 1)) * width;
+    const y = mid + state.wave[i] * mid;
+    if (i === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
+  }
+
+  ctx.stroke();
+
+  if (state.peak > 0) {
+    ctx.fillStyle = colors.peak;
+    const peakHeight = clampFloat(state.peak, 0, 0, 1) * mid;
+    ctx.fillRect(0, mid - peakHeight, width, 2);
+    ctx.fillRect(0, mid + peakHeight, width, 2);
+  }
+}
+
+function updateSmoothed(current, target) {
+  for (let i = 0; i < current.length; i += 1) {
+    const next = current[i] + (target[i] - current[i]) * smoothing;
+    current[i] = Math.abs(next) < 0.0001 ? 0 : next;
+    target[i] *= decay;
+  }
+}
+
+function updateArray(target, values, min, max) {
+  const inputLength = values.length;
+  if (!inputLength) {
+    return;
+  }
+
+  for (let i = 0; i < target.length; i += 1) {
+    const sourceIndex = Math.floor((i / target.length) * inputLength);
+    const raw = Number(values[sourceIndex]);
+    if (Number.isNaN(raw)) {
+      continue;
+    }
+    const clamped = clampFloat(raw, 0, min, max);
+    target[i] = clamped;
+  }
+}
+
+function applyDemoSignal() {
+  state.demoPhase += 0.04;
+  for (let i = 0; i < state.targetBins.length; i += 1) {
+    const ratio = i / state.targetBins.length;
+    const wave = Math.sin(state.demoPhase + ratio * Math.PI * 4) * 0.45 + 0.5;
+    const noise = (Math.random() - 0.5) * 0.12;
+    state.targetBins[i] = clampFloat(wave + noise, 0, 0, 1);
+  }
+
+  for (let i = 0; i < state.targetWave.length; i += 1) {
+    const ratio = i / state.targetWave.length;
+    const wave = Math.sin(state.demoPhase * 1.5 + ratio * Math.PI * 6);
+    const jitter = Math.sin(state.demoPhase * 3 + ratio * Math.PI * 8) * 0.2;
+    state.targetWave[i] = clampFloat(wave * 0.55 + jitter, 0, -1, 1);
+  }
+
+  state.peak = 0.4 + Math.abs(Math.sin(state.demoPhase)) * 0.5;
+  state.rms = 0.3 + Math.abs(Math.cos(state.demoPhase * 0.6)) * 0.4;
+}
+
+function resizeCanvas() {
+  const ratio = window.devicePixelRatio || 1;
+  canvas.width = Math.floor(canvas.clientWidth * ratio);
+  canvas.height = Math.floor(canvas.clientHeight * ratio);
+}
+
+function parseJson(value) {
+  try {
+    return JSON.parse(value);
+  } catch (error) {
+    console.warn("audio_input_waveform invalid JSON", error);
+    return null;
+  }
+}
+
+function parseRgba(value, fallback) {
+  if (!value) {
+    return fallback;
+  }
+  const parts = value.split(",").map((part) => Number(part.trim()));
+  if (parts.length < 3 || parts.some((part) => Number.isNaN(part))) {
+    return fallback;
+  }
+  const [r, g, b, a = 1] = parts;
+  return `rgba(${clampFloat(r, 0, 0, 255)}, ${clampFloat(g, 0, 0, 255)}, ${clampFloat(b, 0, 0, 255)}, ${clampFloat(a, 1, 0, 1)})`;
+}
+
+function clampFloat(value, fallback, min, max) {
+  const number = Number(value);
+  if (Number.isNaN(number)) {
+    return fallback;
+  }
+  return Math.min(max, Math.max(min, number));
+}
+
+function clampInt(value, fallback, min, max) {
+  const number = Number.parseInt(value, 10);
+  if (Number.isNaN(number)) {
+    return fallback;
+  }
+  return Math.min(max, Math.max(min, number));
+}
+
+draw();
+</script>
+</body>
+</html>
