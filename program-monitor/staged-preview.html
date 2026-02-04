@@ -2,83 +2,340 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Program Monitor Stage Preview</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
+  <title>NLE Timeline Stage Preview</title>
   <link rel="stylesheet" href="./styles.css" />
   <style>
-    body {
-      padding: 12px;
+    :root {
+      --nle-bg: #0a0a0a;
+      --nle-panel: #141b22;
+      --nle-panel-strong: #1b242d;
+      --nle-border: #263341;
+      --nle-accent: #3b82f6;
+      --nle-accent-strong: #2563eb;
+      --nle-muted: #8fa3b8;
+      --nle-playhead: #ef4444;
     }
 
-    .stageApp {
-      max-width: 980px;
-      margin: 0 auto;
+    body {
+      margin: 0;
+      background: var(--nle-bg);
+      color: var(--text);
+      font-family: var(--sans);
+      height: 100vh;
+      height: 100dvh;
+      overflow: hidden;
+    }
+
+    .nle-app {
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      height: 100vh;
+      height: 100dvh;
     }
 
-    .stageHeader {
+    .nle-header {
+      padding: 10px 14px;
+      background: var(--nle-panel);
+      border-bottom: 1px solid var(--nle-border);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+
+    .nle-title {
+      font-weight: 700;
+      letter-spacing: 0.3px;
+      font-size: 14px;
+    }
+
+    .nle-meta {
+      font-size: 12px;
+      color: var(--nle-muted);
+      min-height: 16px;
+    }
+
+    .nle-preview {
+      flex: 1 1 auto;
+      min-height: 120px;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      padding: 12px;
+      gap: 8px;
+    }
+
+    .nle-frame {
+      position: relative;
+      flex: 1 1 auto;
+      background: #03090f;
+      border: 1px solid var(--nle-border);
+      border-radius: 14px;
+      overflow: hidden;
+      min-height: 180px;
+    }
+
+    #baseVideo,
+    #baseFrame {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      border: 0;
+      display: none;
+    }
+
+    #baseVideo.active,
+    #baseFrame.active {
+      display: block;
+    }
+
+    #overlayLayer {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    #overlayLayer > * {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    .nle-status {
+      font-size: 12px;
+      color: var(--nle-muted);
+      background: rgba(8, 12, 16, 0.7);
+      border: 1px solid var(--nle-border);
+      border-radius: 10px;
+      padding: 8px 10px;
+      min-height: 34px;
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      flex-wrap: wrap;
     }
 
-    .stageTitle {
-      font-weight: 700;
-    }
-
-    .stageMeta {
-      font-size: 12px;
-      color: var(--muted);
-      margin-top: 4px;
-    }
-
-    .stageControls {
+    .nle-timeline {
+      background: var(--nle-panel);
+      border-top: 1px solid var(--nle-border);
+      padding: 10px 12px 12px;
       display: flex;
+      flex-direction: column;
+      gap: 10px;
+      flex-shrink: 0;
+      max-height: 45vh;
+    }
+
+    .transport {
+      display: flex;
+      align-items: center;
       gap: 8px;
       flex-wrap: wrap;
     }
 
-    .stageFrame {
-      height: min(72vh, 560px);
+    .transport button {
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 12px;
+      min-height: 40px;
+      min-width: 48px;
     }
 
-    .stageStatus {
+    .transport .primary {
+      background: var(--nle-accent);
+      border-color: var(--nle-accent);
+      color: #fff;
+      font-weight: 600;
+      flex: 1 1 auto;
+    }
+
+    .transport .primary:active {
+      background: var(--nle-accent-strong);
+    }
+
+    .timecode {
+      font-family: var(--mono);
       font-size: 12px;
-      color: var(--accent);
-      min-height: 18px;
+      color: var(--nle-muted);
+      margin-left: auto;
+      white-space: nowrap;
+    }
+
+    .scrubber {
+      position: relative;
+      height: 36px;
+      border-radius: 10px;
+      background: var(--nle-panel-strong);
+      border: 1px solid var(--nle-border);
+      overflow: hidden;
+      touch-action: none;
+    }
+
+    .scrubber-progress {
+      position: absolute;
+      inset: 0;
+      width: 0;
+      background: rgba(59, 130, 246, 0.3);
+      pointer-events: none;
+    }
+
+    .scrubber-playhead {
+      position: absolute;
+      top: -6px;
+      width: 2px;
+      height: calc(100% + 12px);
+      background: var(--nle-playhead);
+      pointer-events: none;
+    }
+
+    .scrubber-playhead::before {
+      content: "";
+      position: absolute;
+      top: -6px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 0;
+      height: 0;
+      border-left: 6px solid transparent;
+      border-right: 6px solid transparent;
+      border-top: 8px solid var(--nle-playhead);
+    }
+
+    .node-track {
+      overflow-x: auto;
+      overflow-y: hidden;
+      padding-bottom: 4px;
+    }
+
+    .node-track::-webkit-scrollbar {
+      height: 6px;
+    }
+
+    .node-track::-webkit-scrollbar-thumb {
+      background: #1b2733;
+      border-radius: 4px;
+    }
+
+    .node-container {
+      display: flex;
+      gap: 8px;
+      min-width: min-content;
+      padding: 2px;
+    }
+
+    .node-clip {
+      background: #121b24;
+      border: 1px solid var(--nle-border);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 10px;
+      min-width: 84px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      text-align: left;
+      font-size: 12px;
+      cursor: pointer;
+      transition: border-color 0.2s, box-shadow 0.2s, transform 0.15s;
+      touch-action: manipulation;
+    }
+
+    .node-clip:active {
+      transform: scale(0.98);
+    }
+
+    .node-clip.active {
+      border-color: var(--nle-accent);
+      box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
+      background: #182636;
+    }
+
+    .node-index {
+      font-size: 10px;
+      color: var(--nle-muted);
+      font-weight: 600;
+    }
+
+    .node-label {
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .node-duration {
+      font-size: 11px;
+      color: var(--nle-muted);
+      font-family: var(--mono);
+    }
+
+    .node-meta {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--nle-muted);
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    @media (max-width: 380px) {
+      .transport button {
+        padding: 8px 10px;
+      }
+
+      .node-clip {
+        min-width: 70px;
+        padding: 8px;
+      }
+
+      .timecode {
+        font-size: 11px;
+      }
     }
   </style>
 </head>
 <body>
-  <div class="stageApp">
-    <header class="stageHeader">
-      <div>
-        <div class="stageTitle">Program Monitor Stage Preview</div>
-        <div class="stageMeta" id="stageMeta">Loading timeline…</div>
+  <div class="nle-app">
+    <header class="nle-header">
+      <div class="nle-title">NLE Timeline Stage Preview</div>
+      <div class="nle-meta" id="stageMeta">Loading timeline…</div>
+    </header>
+
+    <section class="nle-preview">
+      <div class="nle-frame">
+        <video id="baseVideo" playsinline preload="metadata"></video>
+        <iframe id="baseFrame" title="Base URL Preview" loading="eager"></iframe>
+        <div id="overlayLayer"></div>
       </div>
-      <div class="stageControls">
-        <button id="btnPlay" class="pill" type="button">Play</button>
+      <div class="nle-status" id="stageStatus">Ready.</div>
+    </section>
+
+    <section class="nle-timeline">
+      <div class="transport">
+        <button id="btnPlay" class="primary" type="button">Play</button>
         <button id="btnPause" type="button">Pause</button>
         <button id="btnStop" type="button">Stop</button>
         <button id="btnRestart" type="button">Restart</button>
+        <div class="timecode"><span id="statT">00:00.0</span> / <span id="statDur">00:00.0</span></div>
       </div>
-    </header>
 
-    <div class="stageFrame">
-      <video id="baseVideo" playsinline preload="metadata"></video>
-      <iframe id="baseFrame" title="Base URL Preview" loading="eager"></iframe>
-      <div id="overlayLayer"></div>
-    </div>
+      <div class="scrubber" id="timelineTrack" aria-label="Timeline scrubber">
+        <div class="scrubber-progress" id="timelineProgress"></div>
+        <div class="scrubber-playhead" id="timelinePlayhead"></div>
+      </div>
 
-    <div class="status">
-      <div>Node: <span id="statNode">—</span>/<span id="statTotal">—</span></div>
-      <div>t: <span id="statT">0.00</span>s / <span id="statDur">0.00</span>s</div>
-    </div>
-    <div class="stageStatus" id="stageStatus"></div>
+      <div class="node-track" id="nodeTrack">
+        <div class="node-container" id="nodeContainer"></div>
+      </div>
+
+      <div class="node-meta">
+        <div>Node <span id="statNode">—</span>/<span id="statTotal">—</span></div>
+        <div>Total <span id="statTotalDuration">00:00.0</span></div>
+      </div>
+    </section>
   </div>
 
   <script src="./timeline-utils.js"></script>
@@ -91,6 +348,8 @@
       parseNodeText
     } = window.ProgramMonitorUtils || {};
 
+    const DEFAULT_NODE_DURATION = 4;
+
     const elements = {
       baseVideo: document.getElementById("baseVideo"),
       baseFrame: document.getElementById("baseFrame"),
@@ -99,15 +358,23 @@
       statTotal: document.getElementById("statTotal"),
       statT: document.getElementById("statT"),
       statDur: document.getElementById("statDur"),
+      statTotalDuration: document.getElementById("statTotalDuration"),
       stageMeta: document.getElementById("stageMeta"),
-      stageStatus: document.getElementById("stageStatus")
+      stageStatus: document.getElementById("stageStatus"),
+      timelineProgress: document.getElementById("timelineProgress"),
+      timelinePlayhead: document.getElementById("timelinePlayhead"),
+      timelineTrack: document.getElementById("timelineTrack"),
+      nodeContainer: document.getElementById("nodeContainer"),
+      nodeTrack: document.getElementById("nodeTrack")
     };
 
     const state = {
       nodes: [],
       activeIndex: 0,
       playing: false,
-      stopRequested: false
+      stopRequested: false,
+      nodeDurations: [],
+      timelineDuration: 0
     };
 
     let overlayVideos = [];
@@ -117,22 +384,29 @@
     let activeBaseKind = "video";
     let baseStartTime = 0;
 
+    function formatTime(seconds) {
+      const safe = Number.isFinite(seconds) ? Math.max(seconds, 0) : 0;
+      const mins = Math.floor(safe / 60);
+      const secs = safe % 60;
+      return `${String(mins).padStart(2, "0")}:${secs.toFixed(1).padStart(4, "0")}`;
+    }
+
     function setStatus(text) {
       elements.stageStatus.textContent = text || "";
     }
 
     function setBaseKind(kind, url) {
       activeBaseKind = kind;
+      elements.baseVideo.classList.remove("active");
+      elements.baseFrame.classList.remove("active");
       if (kind === "page") {
         elements.baseVideo.pause();
         elements.baseVideo.removeAttribute("src");
-        elements.baseVideo.style.display = "none";
-        elements.baseFrame.style.display = "block";
+        elements.baseFrame.classList.add("active");
         elements.baseFrame.src = url || "about:blank";
       } else {
         elements.baseFrame.removeAttribute("src");
-        elements.baseFrame.style.display = "none";
-        elements.baseVideo.style.display = "block";
+        elements.baseVideo.classList.add("active");
       }
     }
 
@@ -201,6 +475,126 @@
       return { duration: 0, source: "none" };
     }
 
+    function getNodeDurationEstimate(node) {
+      const overrideSeconds = Number(node.durationOverride);
+      if (Number.isFinite(overrideSeconds) && overrideSeconds > 0) {
+        return overrideSeconds;
+      }
+      const parsed = parseNodeText(node.text);
+      const hint = getDurationHintSeconds(parsed.baseUrl);
+      if (Number.isFinite(hint) && hint > 0) {
+        return hint;
+      }
+      return DEFAULT_NODE_DURATION;
+    }
+
+    function getNodeDuration(index) {
+      if (!state.nodes[index]) {
+        return DEFAULT_NODE_DURATION;
+      }
+      return state.nodeDurations[index] || getNodeDurationEstimate(state.nodes[index]);
+    }
+
+    function updateTimelineDuration() {
+      state.timelineDuration = state.nodes.reduce((total, _, index) => total + getNodeDuration(index), 0);
+      elements.statTotalDuration.textContent = formatTime(state.timelineDuration);
+    }
+
+    function updateTimelineUI(currentTime) {
+      const total = state.timelineDuration || 0;
+      const progress = total > 0 ? Math.min(Math.max(currentTime / total, 0), 1) : 0;
+      elements.timelineProgress.style.width = `${progress * 100}%`;
+      elements.timelinePlayhead.style.left = `${progress * 100}%`;
+      elements.statT.textContent = formatTime(currentTime);
+      elements.statDur.textContent = formatTime(total);
+    }
+
+    function getNodeLabel(node, index) {
+      const parsed = parseNodeText(node.text);
+      if (!parsed.baseUrl) {
+        return `Node ${index + 1}`;
+      }
+      try {
+        if (parsed.baseUrl.includes("://")) {
+          const url = new URL(parsed.baseUrl);
+          const segments = url.pathname.split("/").filter(Boolean);
+          return segments[segments.length - 1] || url.host || `Node ${index + 1}`;
+        }
+      } catch (error) {
+        return parsed.baseUrl;
+      }
+      return parsed.baseUrl;
+    }
+
+    function renderNodeTrack() {
+      elements.nodeContainer.innerHTML = "";
+
+      state.nodes.forEach((node, index) => {
+        const clip = document.createElement("button");
+        clip.type = "button";
+        clip.className = "node-clip";
+        if (index === state.activeIndex) {
+          clip.classList.add("active");
+        }
+
+        const duration = getNodeDuration(index);
+        const width = Math.max(84, Math.min(180, duration * 24));
+        clip.style.width = `${width}px`;
+
+        clip.innerHTML = `
+          <div class="node-index">${index + 1}</div>
+          <div class="node-label">${getNodeLabel(node, index)}</div>
+          <div class="node-duration">${formatTime(duration)}</div>
+        `;
+
+        clip.addEventListener("click", () => {
+          jumpToNode(index, { autoplay: state.playing });
+        });
+
+        elements.nodeContainer.appendChild(clip);
+      });
+
+      const activeClip = elements.nodeContainer.children[state.activeIndex];
+      if (activeClip) {
+        activeClip.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+      }
+    }
+
+    function stopPlayback() {
+      state.stopRequested = true;
+      state.playing = false;
+      if (rafId) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+      clearBaseHandlers();
+      elements.baseVideo.pause();
+      overlayVideos.forEach((video) => {
+        video.pause();
+        video.currentTime = 0;
+      });
+      overlayAudios.forEach((audio) => {
+        audio.pause();
+        audio.currentTime = 0;
+      });
+    }
+
+    function stopAll() {
+      stopPlayback();
+      state.activeIndex = 0;
+      elements.statNode.textContent = "—";
+      updateTimelineUI(0);
+      renderNodeTrack();
+    }
+
+    function pauseAll() {
+      state.playing = false;
+      elements.baseVideo.pause();
+      overlayVideos.forEach((video) => video.pause());
+      overlayAudios.forEach((audio) => audio.pause());
+      setStatus("Paused.");
+    }
+
     async function primeNode(index) {
       clearLayers();
       clearBaseHandlers();
@@ -210,27 +604,26 @@
         setBaseKind("video");
         elements.baseVideo.removeAttribute("src");
         elements.baseFrame.removeAttribute("src");
-        elements.statDur.textContent = "0.00";
-        return;
+        return 0;
       }
 
       const parsed = parseNodeText(node.text);
       const overrideSeconds = Number(node.durationOverride);
-      const baseKind = classifyUrl(parsed.baseUrl);
       const durationHintSeconds = getDurationHintSeconds(parsed.baseUrl);
+      const safeBaseUrl = parsed.baseUrl || "";
+      const baseKind = safeBaseUrl === "about:blank" ? "page" : classifyUrl(safeBaseUrl);
 
-      if (!parsed.baseUrl) {
+      if (!safeBaseUrl) {
         setBaseKind("video");
         elements.baseVideo.removeAttribute("src");
         elements.baseFrame.removeAttribute("src");
-        elements.statDur.textContent = "0.00";
-        return;
+        return 0;
       }
 
       if (baseKind === "page") {
-        setBaseKind("page", parsed.baseUrl);
+        setBaseKind("page", safeBaseUrl);
       } else {
-        setBaseKind("video", parsed.baseUrl);
+        setBaseKind("video", safeBaseUrl);
       }
 
       let duration = 0;
@@ -241,21 +634,24 @@
         elements.baseVideo.preload = "metadata";
 
         try {
-          duration = await loadVideoMeta(elements.baseVideo, parsed.baseUrl);
+          duration = await loadVideoMeta(elements.baseVideo, safeBaseUrl);
         } catch (error) {
           duration = 0;
         }
       }
 
-      duration = resolveDurationInfo({
+      const resolvedDuration = resolveDurationInfo({
         baseKind,
-        baseUrl: parsed.baseUrl,
+        baseUrl: safeBaseUrl,
         overrideSeconds,
         baseDuration: duration,
         durationHintSeconds
       }).duration;
 
-      elements.statDur.textContent = duration.toFixed(2);
+      const nodeDuration = resolvedDuration > 0 ? resolvedDuration : getNodeDurationEstimate(node);
+      state.nodeDurations[index] = nodeDuration;
+      updateTimelineDuration();
+      renderNodeTrack();
 
       parsed.layers.forEach((url) => {
         const kind = classifyUrl(url);
@@ -295,36 +691,8 @@
         elements.overlayLayer.appendChild(video);
         overlayVideos.push(video);
       });
-    }
 
-    function stopAll() {
-      state.stopRequested = true;
-      state.playing = false;
-      if (rafId) {
-        cancelAnimationFrame(rafId);
-        rafId = null;
-      }
-      clearBaseHandlers();
-      elements.baseVideo.pause();
-      elements.baseVideo.currentTime = 0;
-      overlayVideos.forEach((video) => {
-        video.pause();
-        video.currentTime = 0;
-      });
-      overlayAudios.forEach((audio) => {
-        audio.pause();
-        audio.currentTime = 0;
-      });
-      elements.statT.textContent = "0.00";
-      elements.statDur.textContent = "0.00";
-      elements.statNode.textContent = "—";
-    }
-
-    function pauseAll() {
-      state.playing = false;
-      elements.baseVideo.pause();
-      overlayVideos.forEach((video) => video.pause());
-      overlayAudios.forEach((audio) => audio.pause());
+      return nodeDuration;
     }
 
     async function playActive() {
@@ -350,7 +718,7 @@
       const overrideSeconds = Number(state.nodes[index].durationOverride);
       elements.statNode.textContent = String(index + 1);
 
-      await primeNode(index);
+      const nodeDuration = await primeNode(index);
 
       const parsed = parseNodeText(state.nodes[index].text);
       const durationHintSeconds = getDurationHintSeconds(parsed.baseUrl);
@@ -360,7 +728,7 @@
         return;
       }
 
-      const baseKind = classifyUrl(parsed.baseUrl);
+      const baseKind = parsed.baseUrl === "about:blank" ? "page" : classifyUrl(parsed.baseUrl);
       activeBaseKind = baseKind;
       baseStartTime = performance.now();
 
@@ -432,9 +800,12 @@
           durationHintSeconds
         });
 
-        const duration = durationInfo.duration;
-        elements.statT.textContent = current.toFixed(2);
-        elements.statDur.textContent = (Number.isFinite(duration) ? duration : 0).toFixed(2);
+        const duration = durationInfo.duration || nodeDuration;
+        const timelineOffset = state.nodes
+          .slice(0, state.activeIndex)
+          .reduce((sum, _, i) => sum + getNodeDuration(i), 0);
+
+        updateTimelineUI(timelineOffset + Math.min(current, duration));
 
         const shouldAdvanceOnDuration = duration > 0
           && (activeBaseKind === "page" || durationInfo.source === "override");
@@ -447,7 +818,22 @@
         rafId = requestAnimationFrame(tick);
       };
 
+      setStatus(`Playing node ${index + 1}.`);
       rafId = requestAnimationFrame(tick);
+    }
+
+    async function jumpToNode(index, { autoplay = false } = {}) {
+      stopPlayback();
+      state.activeIndex = index;
+      elements.statNode.textContent = String(index + 1);
+      await primeNode(index);
+      renderNodeTrack();
+      updateTimelineUI(state.nodes
+        .slice(0, state.activeIndex)
+        .reduce((sum, _, i) => sum + getNodeDuration(i), 0));
+      if (autoplay) {
+        playActive().catch(() => {});
+      }
     }
 
     function loadTimeline() {
@@ -462,18 +848,43 @@
       } catch (error) {
         fallback = null;
       }
-      const timeline = payload && Array.isArray(payload.nodes) ? payload : fallback;
+      let timeline = payload && Array.isArray(payload.nodes) ? payload : fallback;
 
       if (!timeline || !Array.isArray(timeline.nodes) || !timeline.nodes.length) {
-        elements.stageMeta.textContent = "No timeline data provided.";
-        setStatus("Missing timeline payload. Provide ?data= in the URL.");
-        return;
+        timeline = {
+          nodes: [
+            { text: "about:blank", durationOverride: "4" },
+            { text: "about:blank", durationOverride: "4" },
+            { text: "about:blank", durationOverride: "4" }
+          ]
+        };
+        setStatus("Using fallback nodes.");
       }
 
       state.nodes = timeline.nodes;
       state.activeIndex = 0;
+      state.nodeDurations = state.nodes.map(getNodeDurationEstimate);
+      updateTimelineDuration();
       elements.statTotal.textContent = String(state.nodes.length);
-      elements.stageMeta.textContent = name ? `Project: ${name}` : `Nodes: ${state.nodes.length}`;
+      elements.stageMeta.textContent = name
+        ? `Project: ${name}`
+        : `${state.nodes.length} nodes • ${formatTime(state.timelineDuration)}`;
+    }
+
+    function scrubToPosition(clientX) {
+      const rect = elements.timelineTrack.getBoundingClientRect();
+      const percent = Math.min(Math.max((clientX - rect.left) / rect.width, 0), 1);
+      const targetTime = percent * state.timelineDuration;
+
+      let elapsed = 0;
+      for (let i = 0; i < state.nodes.length; i += 1) {
+        const duration = getNodeDuration(i);
+        if (targetTime <= elapsed + duration) {
+          jumpToNode(i, { autoplay: state.playing });
+          return;
+        }
+        elapsed += duration;
+      }
     }
 
     document.getElementById("btnPlay").addEventListener("click", () => {
@@ -485,17 +896,41 @@
     document.getElementById("btnPause").addEventListener("click", () => pauseAll());
     document.getElementById("btnStop").addEventListener("click", () => stopAll());
     document.getElementById("btnRestart").addEventListener("click", () => {
-      stopAll();
+      stopPlayback();
       state.activeIndex = 0;
       playActive().catch(() => {});
+    });
+
+    let scrubbing = false;
+    elements.timelineTrack.addEventListener("pointerdown", (event) => {
+      scrubbing = true;
+      elements.timelineTrack.setPointerCapture(event.pointerId);
+      scrubToPosition(event.clientX);
+    });
+
+    elements.timelineTrack.addEventListener("pointermove", (event) => {
+      if (!scrubbing) {
+        return;
+      }
+      scrubToPosition(event.clientX);
+    });
+
+    elements.timelineTrack.addEventListener("pointerup", (event) => {
+      scrubbing = false;
+      elements.timelineTrack.releasePointerCapture(event.pointerId);
+    });
+
+    elements.timelineTrack.addEventListener("pointercancel", (event) => {
+      scrubbing = false;
+      elements.timelineTrack.releasePointerCapture(event.pointerId);
     });
 
     loadTimeline();
 
     if (state.nodes.length) {
       primeNode(0).catch(() => {});
-      playActive().catch(() => {});
-      setStatus("Playing timeline preview.");
+      renderNodeTrack();
+      updateTimelineUI(0);
     }
   </script>
 </body>
