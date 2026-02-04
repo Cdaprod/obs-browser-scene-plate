@@ -191,6 +191,68 @@ body.preview-collapsed .previewPanel {
   height: var(--stageH);
 }
 
+.previewScrubber {
+  position: relative;
+  height: 32px;
+  border-radius: 12px;
+  background: #0b1a24;
+  border: 1px solid var(--line);
+  overflow: hidden;
+  margin-top: 10px;
+  touch-action: none;
+}
+
+.previewScrubberProgress {
+  position: absolute;
+  inset: 0;
+  width: 0;
+  background: rgba(76, 195, 255, 0.2);
+  pointer-events: none;
+}
+
+.previewScrubberSegments {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: stretch;
+  font-size: 10px;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.previewScrubberSegment {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.previewScrubberSegment:last-child {
+  border-right: 0;
+}
+
+.previewScrubberPlayhead {
+  position: absolute;
+  top: -4px;
+  width: 2px;
+  height: calc(100% + 8px);
+  background: #ef4444;
+  pointer-events: none;
+}
+
+.previewScrubberPlayhead::before {
+  content: "";
+  position: absolute;
+  top: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 7px solid #ef4444;
+}
+
 #baseVideo,
 #baseImage,
 #baseFrame {
