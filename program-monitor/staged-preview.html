@@ -15,6 +15,7 @@
       --nle-accent-strong: #2563eb;
       --nle-muted: #8fa3b8;
       --nle-playhead: #ef4444;
+      --nle-segment: rgba(255, 255, 255, 0.08);
     }
 
     body {
@@ -166,12 +167,34 @@
 
     .scrubber {
       position: relative;
-      height: 36px;
+      height: 44px;
       border-radius: 10px;
       background: var(--nle-panel-strong);
       border: 1px solid var(--nle-border);
       overflow: hidden;
       touch-action: none;
+    }
+
+    .scrubber-segments {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: stretch;
+      pointer-events: none;
+      font-size: 10px;
+      color: var(--nle-muted);
+    }
+
+    .scrubber-segment {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-right: 1px solid var(--nle-segment);
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+    }
+
+    .scrubber-segment:last-child {
+      border-right: 0;
     }
 
     .scrubber-progress {
@@ -324,6 +347,7 @@
 
       <div class="scrubber" id="timelineTrack" aria-label="Timeline scrubber">
         <div class="scrubber-progress" id="timelineProgress"></div>
+        <div class="scrubber-segments" id="scrubberSegments"></div>
         <div class="scrubber-playhead" id="timelinePlayhead"></div>
       </div>
 
@@ -364,6 +388,7 @@
       timelineProgress: document.getElementById("timelineProgress"),
       timelinePlayhead: document.getElementById("timelinePlayhead"),
       timelineTrack: document.getElementById("timelineTrack"),
+      scrubberSegments: document.getElementById("scrubberSegments"),
       nodeContainer: document.getElementById("nodeContainer"),
       nodeTrack: document.getElementById("nodeTrack")
     };
@@ -374,7 +399,12 @@
       playing: false,
       stopRequested: false,
       nodeDurations: [],
-      timelineDuration: 0
+      timelineDuration: 0,
+      currentTime: 0,
+      pausedAt: 0,
+      basePausedAt: 0,
+      scrubbing: false,
+      scrubWasPlaying: false
     };
 
     let overlayVideos = [];
@@ -495,6 +525,12 @@
       return state.nodeDurations[index] || getNodeDurationEstimate(state.nodes[index]);
     }
 
+    function getTimelineOffset(index) {
+      return state.nodes
+        .slice(0, index)
+        .reduce((sum, _, i) => sum + getNodeDuration(i), 0);
+    }
+
     function updateTimelineDuration() {
       state.timelineDuration = state.nodes.reduce((total, _, index) => total + getNodeDuration(index), 0);
       elements.statTotalDuration.textContent = formatTime(state.timelineDuration);
@@ -507,6 +543,7 @@
       elements.timelinePlayhead.style.left = `${progress * 100}%`;
       elements.statT.textContent = formatTime(currentTime);
       elements.statDur.textContent = formatTime(total);
+      state.currentTime = currentTime;
     }
 
     function getNodeLabel(node, index) {
@@ -524,6 +561,23 @@
         return parsed.baseUrl;
       }
       return parsed.baseUrl;
+    }
+
+    function renderScrubberSegments() {
+      elements.scrubberSegments.innerHTML = "";
+      const total = state.timelineDuration || 0;
+      if (!total) {
+        return;
+      }
+
+      state.nodes.forEach((_, index) => {
+        const duration = getNodeDuration(index);
+        const segment = document.createElement("div");
+        segment.className = "scrubber-segment";
+        segment.style.flex = `${duration} 0 0`;
+        segment.textContent = String(index + 1);
+        elements.scrubberSegments.appendChild(segment);
+      });
     }
 
     function renderNodeTrack() {
@@ -548,7 +602,7 @@
         `;
 
         clip.addEventListener("click", () => {
-          jumpToNode(index, { autoplay: state.playing });
+          seekToTime(getTimelineOffset(index), { autoplay: state.playing });
         });
 
         elements.nodeContainer.appendChild(clip);
@@ -571,28 +625,71 @@
       elements.baseVideo.pause();
       overlayVideos.forEach((video) => {
         video.pause();
-        video.currentTime = 0;
       });
       overlayAudios.forEach((audio) => {
         audio.pause();
-        audio.currentTime = 0;
       });
     }
 
     function stopAll() {
       stopPlayback();
       state.activeIndex = 0;
+      state.pausedAt = 0;
+      state.basePausedAt = 0;
       elements.statNode.textContent = "—";
       updateTimelineUI(0);
       renderNodeTrack();
+      setStatus("Stopped.");
+    }
+
+    function getBaseElapsed() {
+      if (activeBaseKind === "page") {
+        return state.basePausedAt || (performance.now() - baseStartTime) / 1000;
+      }
+      return elements.baseVideo.currentTime || 0;
     }
 
     function pauseAll() {
+      if (!state.playing) {
+        return;
+      }
       state.playing = false;
+      state.pausedAt = state.currentTime;
+      state.basePausedAt = getBaseElapsed();
       elements.baseVideo.pause();
       overlayVideos.forEach((video) => video.pause());
       overlayAudios.forEach((audio) => audio.pause());
       setStatus("Paused.");
+    }
+
+    function syncOverlayPlayback(elapsedSeconds, shouldPlay) {
+      overlayVideos.forEach((video) => {
+        const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0;
+        if (duration) {
+          video.currentTime = elapsedSeconds % duration;
+        } else {
+          video.currentTime = elapsedSeconds;
+        }
+        if (shouldPlay) {
+          video.play().catch(() => {});
+        } else {
+          video.pause();
+        }
+      });
+
+      overlayAudios.forEach((audio) => {
+        const duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0;
+        if (duration) {
+          audio.currentTime = elapsedSeconds % duration;
+        } else {
+          audio.currentTime = elapsedSeconds;
+        }
+        if (shouldPlay) {
+          audio.play().catch(() => {});
+        } else {
+          audio.pause();
+        }
+      });
     }
 
     async function primeNode(index) {
@@ -651,6 +748,7 @@
       const nodeDuration = resolvedDuration > 0 ? resolvedDuration : getNodeDurationEstimate(node);
       state.nodeDurations[index] = nodeDuration;
       updateTimelineDuration();
+      renderScrubberSegments();
       renderNodeTrack();
 
       parsed.layers.forEach((url) => {
@@ -695,32 +793,30 @@
       return nodeDuration;
     }
 
-    async function playActive() {
+    async function startNodePlayback({ index, offsetSeconds = 0, resume = false } = {}) {
       state.stopRequested = false;
       state.playing = true;
+      state.pausedAt = 0;
+      state.basePausedAt = 0;
       if (rafId) {
         cancelAnimationFrame(rafId);
         rafId = null;
       }
 
-      const startIndex = getPlaybackStartIndex(state.activeIndex, state.nodes.length);
+      const startIndex = getPlaybackStartIndex(index, state.nodes.length);
       if (startIndex === -1) {
         state.playing = false;
         setStatus("No nodes available.");
         return;
       }
 
-      if (startIndex !== state.activeIndex) {
-        state.activeIndex = startIndex;
-      }
+      state.activeIndex = startIndex;
+      const activeNode = state.nodes[state.activeIndex];
+      const overrideSeconds = Number(activeNode.durationOverride);
+      elements.statNode.textContent = String(state.activeIndex + 1);
 
-      const index = state.activeIndex;
-      const overrideSeconds = Number(state.nodes[index].durationOverride);
-      elements.statNode.textContent = String(index + 1);
-
-      const nodeDuration = await primeNode(index);
-
-      const parsed = parseNodeText(state.nodes[index].text);
+      const nodeDuration = await primeNode(state.activeIndex);
+      const parsed = parseNodeText(activeNode.text);
       const durationHintSeconds = getDurationHintSeconds(parsed.baseUrl);
       if (!parsed.baseUrl) {
         state.playing = false;
@@ -730,23 +826,20 @@
 
       const baseKind = parsed.baseUrl === "about:blank" ? "page" : classifyUrl(parsed.baseUrl);
       activeBaseKind = baseKind;
-      baseStartTime = performance.now();
-
-      overlayVideos.forEach((video) => {
-        video.currentTime = 0;
-        video.play().catch(() => {});
-      });
-      overlayAudios.forEach((audio) => {
-        audio.currentTime = 0;
-        audio.play().catch(() => {});
-      });
+      const safeOffset = Math.max(0, Math.min(offsetSeconds, nodeDuration || 0));
 
       if (baseKind !== "page") {
-        elements.baseVideo.currentTime = 0;
+        if (!resume || !Number.isFinite(elements.baseVideo.currentTime)) {
+          elements.baseVideo.currentTime = safeOffset || 0;
+        }
         await elements.baseVideo.play().catch(() => {
           state.playing = false;
         });
+      } else {
+        baseStartTime = performance.now() - safeOffset * 1000;
       }
+
+      syncOverlayPlayback(safeOffset, true);
 
       let advanced = false;
       const advance = () => {
@@ -766,7 +859,7 @@
 
         if (state.activeIndex < state.nodes.length - 1) {
           state.activeIndex += 1;
-          playActive().catch(() => {});
+          startNodePlayback({ index: state.activeIndex, offsetSeconds: 0 }).catch(() => {});
         } else {
           state.playing = false;
           setStatus("Reached end of timeline.");
@@ -801,10 +894,7 @@
         });
 
         const duration = durationInfo.duration || nodeDuration;
-        const timelineOffset = state.nodes
-          .slice(0, state.activeIndex)
-          .reduce((sum, _, i) => sum + getNodeDuration(i), 0);
-
+        const timelineOffset = getTimelineOffset(state.activeIndex);
         updateTimelineUI(timelineOffset + Math.min(current, duration));
 
         const shouldAdvanceOnDuration = duration > 0
@@ -818,21 +908,47 @@
         rafId = requestAnimationFrame(tick);
       };
 
-      setStatus(`Playing node ${index + 1}.`);
+      setStatus(`Playing node ${state.activeIndex + 1}.`);
       rafId = requestAnimationFrame(tick);
     }
 
-    async function jumpToNode(index, { autoplay = false } = {}) {
+    async function seekToTime(targetTime, { autoplay = false } = {}) {
+      const clamped = Math.max(0, Math.min(targetTime, state.timelineDuration));
+      let elapsed = 0;
+      let targetIndex = 0;
+      let offset = 0;
+
+      for (let i = 0; i < state.nodes.length; i += 1) {
+        const duration = getNodeDuration(i);
+        if (clamped <= elapsed + duration) {
+          targetIndex = i;
+          offset = clamped - elapsed;
+          break;
+        }
+        elapsed += duration;
+      }
+
       stopPlayback();
-      state.activeIndex = index;
-      elements.statNode.textContent = String(index + 1);
-      await primeNode(index);
+      state.activeIndex = targetIndex;
+      elements.statNode.textContent = String(targetIndex + 1);
+      await primeNode(targetIndex);
+      updateTimelineUI(clamped);
       renderNodeTrack();
-      updateTimelineUI(state.nodes
-        .slice(0, state.activeIndex)
-        .reduce((sum, _, i) => sum + getNodeDuration(i), 0));
+
+      if (activeBaseKind !== "page") {
+        elements.baseVideo.currentTime = offset;
+      } else {
+        baseStartTime = performance.now() - offset * 1000;
+      }
+
+      syncOverlayPlayback(offset, autoplay);
+
       if (autoplay) {
-        playActive().catch(() => {});
+        startNodePlayback({ index: targetIndex, offsetSeconds: offset, resume: true }).catch(() => {});
+      } else {
+        setStatus(`Scrubbed to node ${targetIndex + 1}.`);
+        state.pausedAt = clamped;
+        state.basePausedAt = offset;
       }
     }
 
@@ -865,64 +981,72 @@
       state.activeIndex = 0;
       state.nodeDurations = state.nodes.map(getNodeDurationEstimate);
       updateTimelineDuration();
+      renderScrubberSegments();
       elements.statTotal.textContent = String(state.nodes.length);
       elements.stageMeta.textContent = name
         ? `Project: ${name}`
         : `${state.nodes.length} nodes • ${formatTime(state.timelineDuration)}`;
     }
 
-    function scrubToPosition(clientX) {
+    function getTimeFromClientX(clientX) {
       const rect = elements.timelineTrack.getBoundingClientRect();
       const percent = Math.min(Math.max((clientX - rect.left) / rect.width, 0), 1);
-      const targetTime = percent * state.timelineDuration;
-
-      let elapsed = 0;
-      for (let i = 0; i < state.nodes.length; i += 1) {
-        const duration = getNodeDuration(i);
-        if (targetTime <= elapsed + duration) {
-          jumpToNode(i, { autoplay: state.playing });
-          return;
-        }
-        elapsed += duration;
-      }
+      return percent * state.timelineDuration;
     }
 
     document.getElementById("btnPlay").addEventListener("click", () => {
-      if (!state.playing) {
-        playActive().catch(() => {});
+      if (state.playing) {
+        return;
+      }
+      if (state.pausedAt > 0) {
+        startNodePlayback({ index: state.activeIndex, offsetSeconds: state.basePausedAt, resume: true }).catch(() => {});
+      } else {
+        startNodePlayback({ index: state.activeIndex, offsetSeconds: 0 }).catch(() => {});
       }
     });
 
     document.getElementById("btnPause").addEventListener("click", () => pauseAll());
     document.getElementById("btnStop").addEventListener("click", () => stopAll());
     document.getElementById("btnRestart").addEventListener("click", () => {
-      stopPlayback();
-      state.activeIndex = 0;
-      playActive().catch(() => {});
+      stopAll();
+      startNodePlayback({ index: 0, offsetSeconds: 0 }).catch(() => {});
     });
 
-    let scrubbing = false;
     elements.timelineTrack.addEventListener("pointerdown", (event) => {
-      scrubbing = true;
+      state.scrubbing = true;
+      state.scrubWasPlaying = state.playing;
       elements.timelineTrack.setPointerCapture(event.pointerId);
-      scrubToPosition(event.clientX);
+      if (state.playing) {
+        pauseAll();
+      }
+      seekToTime(getTimeFromClientX(event.clientX), { autoplay: false }).catch(() => {});
     });
 
     elements.timelineTrack.addEventListener("pointermove", (event) => {
-      if (!scrubbing) {
+      if (!state.scrubbing) {
         return;
       }
-      scrubToPosition(event.clientX);
+      seekToTime(getTimeFromClientX(event.clientX), { autoplay: false }).catch(() => {});
     });
 
+    const finishScrub = () => {
+      if (!state.scrubbing) {
+        return;
+      }
+      state.scrubbing = false;
+      if (state.scrubWasPlaying) {
+        startNodePlayback({ index: state.activeIndex, offsetSeconds: state.basePausedAt, resume: true }).catch(() => {});
+      }
+    };
+
     elements.timelineTrack.addEventListener("pointerup", (event) => {
-      scrubbing = false;
       elements.timelineTrack.releasePointerCapture(event.pointerId);
+      finishScrub();
     });
 
     elements.timelineTrack.addEventListener("pointercancel", (event) => {
-      scrubbing = false;
       elements.timelineTrack.releasePointerCapture(event.pointerId);
+      finishScrub();
     });
 
     loadTimeline();

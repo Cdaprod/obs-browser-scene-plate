@@ -13,6 +13,7 @@ const html = fs.readFileSync(filePath, "utf8");
 test("staged preview includes NLE timeline scaffold", () => {
   assert.ok(html.includes("NLE Timeline Stage Preview"));
   assert.ok(html.includes("timelineTrack"));
+  assert.ok(html.includes("scrubberSegments"));
   assert.ok(html.includes("nodeContainer"));
 });
 
