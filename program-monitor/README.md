@@ -71,6 +71,12 @@ Run the Program Monitor import listener tests:
 node --test program-monitor/import_listener.test.mjs
 ```
 
+Run the staged preview markup tests:
+
+```sh
+node --test program-monitor/staged-preview.test.mjs
+```
+
 Optional render-api tests (from repo root):
 
 ```sh
