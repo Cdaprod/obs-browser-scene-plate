@@ -405,6 +405,11 @@ const state = {
   stopRequested: false,
   pausedAt: 0,
   basePausedAt: 0,
+  nodeDurations: [],
+  timelineDuration: 0,
+  currentTime: 0,
+  scrubbing: false,
+  scrubWasPlaying: false,
   validationResults: [],
   durationInfo: { duration: 0, source: "none" }
 };
@@ -419,6 +424,10 @@ const elements = {
   baseImage: $("#baseImage"),
   baseFrame: $("#baseFrame"),
   overlayLayer: $("#overlayLayer"),
+  previewScrubber: $("#previewScrubber"),
+  previewScrubberProgress: $("#previewScrubberProgress"),
+  previewScrubberSegments: $("#previewScrubberSegments"),
+  previewScrubberPlayhead: $("#previewScrubberPlayhead"),
   statNode: $("#statNode"),
   statTotal: $("#statTotal"),
   statT: $("#statT"),
@@ -465,6 +474,7 @@ const webPort = window.location.port || 8789;
 const renderApiBase = `http://${host}:${renderApiPort}`;
 const downloadBase = `http://${host}:${webPort}`;
 const DEFAULT_IMAGE_DURATION_SECONDS = 5;
+const DEFAULT_NODE_DURATION_SECONDS = 4;
 const DELETE_LONG_PRESS_MS = 3500;
 
 function autogrow(el) {
@@ -529,6 +539,72 @@ function updateStatusDisplay() {
   if (elements.statDurSource) {
     elements.statDurSource.textContent = getDurationSourceLabel(state.durationInfo?.source);
   }
+}
+
+function getNodeDurationEstimate(node) {
+  const overrideSeconds = Number(node.durationOverride);
+  if (Number.isFinite(overrideSeconds) && overrideSeconds > 0) {
+    return overrideSeconds;
+  }
+  const parsed = parseNodeText(node.text);
+  const hint = getDurationHintSeconds(parsed.baseUrl);
+  if (Number.isFinite(hint) && hint > 0) {
+    return hint;
+  }
+  return DEFAULT_NODE_DURATION_SECONDS;
+}
+
+function getNodeDuration(index) {
+  if (!state.nodes[index]) {
+    return DEFAULT_NODE_DURATION_SECONDS;
+  }
+  return state.nodeDurations[index] || getNodeDurationEstimate(state.nodes[index]);
+}
+
+function getTimelineOffset(index) {
+  return state.nodes
+    .slice(0, index)
+    .reduce((sum, _, i) => sum + getNodeDuration(i), 0);
+}
+
+function updatePreviewScrubber(currentTime) {
+  if (!elements.previewScrubber) {
+    return;
+  }
+  const total = state.timelineDuration || 0;
+  const progress = total > 0 ? Math.min(Math.max(currentTime / total, 0), 1) : 0;
+  if (elements.previewScrubberProgress) {
+    elements.previewScrubberProgress.style.width = `${progress * 100}%`;
+  }
+  if (elements.previewScrubberPlayhead) {
+    elements.previewScrubberPlayhead.style.left = `${progress * 100}%`;
+  }
+  state.currentTime = currentTime;
+}
+
+function renderPreviewScrubberSegments() {
+  if (!elements.previewScrubberSegments) {
+    return;
+  }
+  elements.previewScrubberSegments.innerHTML = "";
+  if (!state.timelineDuration) {
+    return;
+  }
+  state.nodes.forEach((_, index) => {
+    const duration = getNodeDuration(index);
+    const segment = document.createElement("div");
+    segment.className = "previewScrubberSegment";
+    segment.style.flex = `${duration} 0 0`;
+    segment.textContent = String(index + 1);
+    elements.previewScrubberSegments.appendChild(segment);
+  });
+}
+
+function updateTimelineMetrics() {
+  state.nodeDurations = state.nodes.map(getNodeDurationEstimate);
+  state.timelineDuration = state.nodeDurations.reduce((sum, duration) => sum + duration, 0);
+  renderPreviewScrubberSegments();
+  updatePreviewScrubber(state.currentTime || 0);
 }
 
 function buildStagePreviewUrl(timeline, name) {
@@ -900,6 +976,7 @@ function renderNodes() {
   elements.nodeList.innerHTML = "";
   elements.statTotal.textContent = String(state.nodes.length);
   const selectedIndex = getSelectedIndex();
+  updateTimelineMetrics();
 
   state.nodes.forEach((node, index) => {
     const card = document.createElement("div");
@@ -1239,6 +1316,7 @@ async function primeNode(index) {
 
   elements.statDur.textContent = duration.toFixed(2);
   updateStatusDisplay();
+  updateTimelineMetrics();
 
   parsed.layers.forEach((url) => {
     const kind = classifyUrl(url);
@@ -1284,6 +1362,7 @@ function stopAll() {
   state.playing = false;
   state.pausedAt = 0;
   state.basePausedAt = 0;
+  state.currentTime = 0;
   if (rafId) {
     cancelAnimationFrame(rafId);
     rafId = null;
@@ -1314,6 +1393,7 @@ function stopAll() {
   } else {
     updateStatusDisplay();
   }
+  updatePreviewScrubber(0);
 }
 
 function clearNodeContent(node) {
@@ -1331,6 +1411,7 @@ function resetAllNodes() {
   state.validationResults = [];
   state.pausedAt = 0;
   state.basePausedAt = 0;
+  state.currentTime = 0;
   renderNodes();
   primeNode(state.activeIndex).catch(() => {});
   saveLocal();
@@ -1375,7 +1456,48 @@ function pauseAll() {
   state.basePausedAt = getBaseElapsed();
   elements.baseVideo.pause();
   syncOverlayPlayback(state.basePausedAt, false);
+  updatePreviewScrubber(state.pausedAt);
   updateStatusDisplay();
+}
+
+async function seekToTime(targetTime, { autoplay = false } = {}) {
+  const clamped = Math.max(0, Math.min(targetTime, state.timelineDuration));
+  let elapsed = 0;
+  let targetIndex = 0;
+  let offset = 0;
+
+  for (let i = 0; i < state.nodes.length; i += 1) {
+    const duration = getNodeDuration(i);
+    if (clamped <= elapsed + duration) {
+      targetIndex = i;
+      offset = clamped - elapsed;
+      break;
+    }
+    elapsed += duration;
+  }
+
+  stopAll();
+  state.activeIndex = targetIndex;
+  state.selectedIndex = null;
+  await primeNode(targetIndex);
+  renderNodes();
+  updatePreviewScrubber(clamped);
+
+  if (activeBaseKind !== "page" && activeBaseKind !== "image") {
+    elements.baseVideo.currentTime = offset;
+  } else {
+    baseStartTime = performance.now() - offset * 1000;
+  }
+
+  syncOverlayPlayback(offset, autoplay);
+  elements.statT.textContent = offset.toFixed(2);
+  if (autoplay) {
+    playActive({ resume: true, startOffsetSeconds: offset }).catch(() => {});
+  } else {
+    state.pausedAt = clamped;
+    state.basePausedAt = offset;
+    updateStatusDisplay();
+  }
 }
 
 async function playActive({ resume = false, startOffsetSeconds = 0 } = {}) {
@@ -1496,6 +1618,7 @@ async function playActive({ resume = false, startOffsetSeconds = 0 } = {}) {
     const duration = Number.isFinite(durationInfo.duration) ? durationInfo.duration : 0;
     elements.statT.textContent = current.toFixed(2);
     elements.statDur.textContent = (Number.isFinite(duration) ? duration : 0).toFixed(2);
+    updatePreviewScrubber(getTimelineOffset(state.activeIndex) + current);
 
     const shouldAdvanceOnDuration = duration > 0
       && (activeBaseKind === "page" || activeBaseKind === "image" || durationInfo.source === "override");
@@ -2030,6 +2153,50 @@ $("#btnNext").addEventListener("click", async () => {
   await primeNode(state.activeIndex);
   saveLocal();
 });
+
+const getPreviewTimeFromClientX = (clientX) => {
+  if (!elements.previewScrubber) {
+    return 0;
+  }
+  const rect = elements.previewScrubber.getBoundingClientRect();
+  const percent = Math.min(Math.max((clientX - rect.left) / rect.width, 0), 1);
+  return percent * state.timelineDuration;
+};
+
+if (elements.previewScrubber) {
+  elements.previewScrubber.addEventListener("pointerdown", (event) => {
+    state.scrubbing = true;
+    state.scrubWasPlaying = state.playing;
+    elements.previewScrubber.setPointerCapture(event.pointerId);
+    if (state.playing) {
+      pauseAll();
+    }
+    seekToTime(getPreviewTimeFromClientX(event.clientX), { autoplay: false }).catch(() => {});
+  });
+
+  elements.previewScrubber.addEventListener("pointermove", (event) => {
+    if (!state.scrubbing) {
+      return;
+    }
+    seekToTime(getPreviewTimeFromClientX(event.clientX), { autoplay: false }).catch(() => {});
+  });
+
+  const finishScrub = (event) => {
+    if (!state.scrubbing) {
+      return;
+    }
+    state.scrubbing = false;
+    if (elements.previewScrubber?.hasPointerCapture(event.pointerId)) {
+      elements.previewScrubber.releasePointerCapture(event.pointerId);
+    }
+    if (state.scrubWasPlaying) {
+      playActive({ resume: true, startOffsetSeconds: state.basePausedAt }).catch(() => {});
+    }
+  };
+
+  elements.previewScrubber.addEventListener("pointerup", finishScrub);
+  elements.previewScrubber.addEventListener("pointercancel", finishScrub);
+}
 
 $("#btnPlay").addEventListener("click", () => {
   if (state.playing) {
