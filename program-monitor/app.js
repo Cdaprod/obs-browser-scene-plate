@@ -403,6 +403,8 @@ const state = {
   selectedIndex: null,
   playing: false,
   stopRequested: false,
+  pausedAt: 0,
+  basePausedAt: 0,
   validationResults: [],
   durationInfo: { duration: 0, source: "none" }
 };
@@ -1280,6 +1282,8 @@ async function primeNode(index) {
 function stopAll() {
   state.stopRequested = true;
   state.playing = false;
+  state.pausedAt = 0;
+  state.basePausedAt = 0;
   if (rafId) {
     cancelAnimationFrame(rafId);
     rafId = null;
@@ -1325,23 +1329,62 @@ function resetAllNodes() {
   state.activeIndex = 0;
   state.selectedIndex = 0;
   state.validationResults = [];
+  state.pausedAt = 0;
+  state.basePausedAt = 0;
   renderNodes();
   primeNode(state.activeIndex).catch(() => {});
   saveLocal();
   setMessage("Cleared all nodes.");
 }
 
+function getBaseElapsed() {
+  if (activeBaseKind === "page" || activeBaseKind === "image") {
+    return state.basePausedAt || (performance.now() - baseStartTime) / 1000;
+  }
+  return elements.baseVideo.currentTime || 0;
+}
+
+function syncOverlayPlayback(elapsedSeconds, shouldPlay) {
+  overlayVideos.forEach((video) => {
+    const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0;
+    video.currentTime = duration ? elapsedSeconds % duration : elapsedSeconds;
+    if (shouldPlay) {
+      video.play().catch(() => {});
+    } else {
+      video.pause();
+    }
+  });
+
+  overlayAudios.forEach((audio) => {
+    const duration = Number.isFinite(audio.duration) && audio.duration > 0 ? audio.duration : 0;
+    audio.currentTime = duration ? elapsedSeconds % duration : elapsedSeconds;
+    if (shouldPlay) {
+      audio.play().catch(() => {});
+    } else {
+      audio.pause();
+    }
+  });
+}
+
 function pauseAll() {
+  if (!state.playing) {
+    return;
+  }
   state.playing = false;
+  state.pausedAt = Number(elements.statT?.textContent || 0) || 0;
+  state.basePausedAt = getBaseElapsed();
   elements.baseVideo.pause();
-  overlayVideos.forEach((video) => video.pause());
-  overlayAudios.forEach((audio) => audio.pause());
+  syncOverlayPlayback(state.basePausedAt, false);
   updateStatusDisplay();
 }
 
-async function playActive({ resume = false } = {}) {
+async function playActive({ resume = false, startOffsetSeconds = 0 } = {}) {
   state.stopRequested = false;
   state.playing = true;
+  if (!resume) {
+    state.pausedAt = 0;
+    state.basePausedAt = 0;
+  }
   if (rafId) {
     cancelAnimationFrame(rafId);
     rafId = null;
@@ -1384,19 +1427,13 @@ async function playActive({ resume = false } = {}) {
   }
   const baseKind = classifyUrl(parsed.baseUrl);
   activeBaseKind = baseKind;
-  baseStartTime = performance.now();
+  const safeOffset = Math.max(0, startOffsetSeconds);
+  baseStartTime = performance.now() - safeOffset * 1000;
 
-  overlayVideos.forEach((video) => {
-    video.currentTime = 0;
-    video.play().catch(() => {});
-  });
-  overlayAudios.forEach((audio) => {
-    audio.currentTime = 0;
-    audio.play().catch(() => {});
-  });
+  syncOverlayPlayback(safeOffset, true);
 
   if (baseKind !== "page" && baseKind !== "image") {
-    elements.baseVideo.currentTime = 0;
+    elements.baseVideo.currentTime = safeOffset;
     await elements.baseVideo.play().catch(() => {
       state.playing = false;
     });
@@ -1429,7 +1466,7 @@ async function playActive({ resume = false } = {}) {
     if (state.activeIndex < state.nodes.length - 1) {
       state.activeIndex += 1;
       renderNodes();
-      playActive({ resume: true }).catch(() => {});
+      playActive({ resume: false, startOffsetSeconds: 0 }).catch(() => {});
     } else {
       state.playing = false;
       setMessage("Reached end of timeline.");
@@ -1998,7 +2035,11 @@ $("#btnPlay").addEventListener("click", () => {
   if (state.playing) {
     return;
   }
-  playActive().catch(() => {});
+  if (state.pausedAt > 0) {
+    playActive({ resume: true, startOffsetSeconds: state.basePausedAt }).catch(() => {});
+    return;
+  }
+  playActive({ resume: false, startOffsetSeconds: 0 }).catch(() => {});
 });
 
 $("#btnPause").addEventListener("click", () => pauseAll());

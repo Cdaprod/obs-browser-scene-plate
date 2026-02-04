@@ -77,6 +77,12 @@ Run the staged preview markup tests:
 node --test program-monitor/staged-preview.test.mjs
 ```
 
+Run the preview playback wiring tests:
+
+```sh
+node --test program-monitor/app-preview.test.mjs
+```
+
 Optional render-api tests (from repo root):
 
 ```sh
