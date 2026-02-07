@@ -1,0 +1,690 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,height=device-height,initial-scale=1" />
+  <title>OBS Annotation Item</title>
+
+  <!--
+  Default URL (one line):
+  annotation_item.html?t=arrowright&color=ffffff&stroke=14&opacity=1&dur=0.9&w=800&h=450
+
+  Parameters you can change:
+  - t: highlight | oval | arrow | arrowleft | arrowright | underline | blurbox | censorbar
+  - w,h: canvas size in pixels (default 800x450)  (match your Browser Source size)
+  - color: hex color (ffffff or #ffffff). Default: white for drawn items
+  - opacity: 0..1 overall opacity (default 1 for drawn, 0.95 for censorbar)
+  - stroke: stroke width px for drawn items (default 10)
+  - dur: animation seconds for drawn items (default 0.9)
+  - anim: 1 or 0 (force animation on/off). Default: ON for drawn, OFF for blurbox/censorbar
+  - blend: mix-blend-mode for highlight (default multiply). Examples: multiply | screen | overlay | lighten
+  - fill: 0..1 highlight fill alpha (default 0.25)
+  - blur: blur px for blurbox (default 18)
+  - radius: px corner radius for blurbox/censorbar (default 14)
+  - pad: px padding inset from edges for the shape (default 30)
+  - picker: 1 forces picker UI (even if t is set)
+  -->
+
+  <style>
+    :root{
+      --bg: transparent;
+      --fg: #fff;
+      --opacity: 1;
+      --stroke: 10;
+      --dur: 0.9s;
+
+      /* highlight-specific */
+      --hl-fill: rgba(255, 255, 0, 0.25);
+      --hl-blend: multiply;
+
+      /* box-specific */
+      --radius: 14px;
+      --pad: 30px;
+      --blur: 18px;
+      --censor: rgba(0,0,0,0.95);
+    }
+
+    html, body{
+      margin:0;
+      width:100%;
+      height:100%;
+      background: var(--bg);
+      overflow:hidden;
+    }
+
+    #stage{
+      width:100%;
+      height:100%;
+      position:relative;
+      background:transparent;
+    }
+
+    /* ---------- PICKER MODE (FIXED SO IT NEVER RUNS OFF SCREEN) ---------- */
+    #stage.hint-mode{
+      display:flex;
+      align-items:center;
+      justify-content:center;
+
+      /* Safe-area aware padding (iOS notch + home bar) */
+      padding:
+        calc(18px + env(safe-area-inset-top))
+        18px
+        calc(18px + env(safe-area-inset-bottom))
+        18px;
+
+      box-sizing:border-box;
+      min-height: 100vh;
+    }
+
+    #hints{
+      width: min(980px, 94vw);
+
+      /* KEY FIX: clamp height to viewport and scroll internally */
+      max-height: calc(100vh - (36px + env(safe-area-inset-top) + env(safe-area-inset-bottom)));
+      overflow:auto;
+
+      background: rgba(0,0,0,0.35);
+      border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 16px;
+      backdrop-filter: blur(10px);
+      color: rgba(255,255,255,0.92);
+      font: 14px/1.35 system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      padding: 14px 16px;
+      box-sizing: border-box;
+    }
+
+    #hints .top{
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    #hints .title{
+      font-weight: 700;
+      font-size: 16px;
+      margin-bottom: 2px;
+    }
+
+    #hints .muted{ opacity: .78; }
+
+    #hints .controls{
+      display:flex;
+      align-items:center;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .ctl{
+      display:flex;
+      align-items:center;
+      gap: 8px;
+      background: rgba(0,0,0,0.28);
+      border: 1px solid rgba(255,255,255,0.16);
+      padding: 8px 10px;
+      border-radius: 12px;
+    }
+
+    .ctl label{
+      font-size: 12px;
+      opacity: 0.85;
+      white-space: nowrap;
+    }
+
+    .ctl input[type="color"]{
+      width: 34px;
+      height: 26px;
+      border: 0;
+      background: transparent;
+      padding: 0;
+    }
+
+    .ctl input[type="range"]{
+      width: 120px;
+    }
+
+    #hintGrid{
+      display:grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 12px;
+    }
+
+    .card{
+      display:flex;
+      gap: 10px;
+      align-items:center;
+      padding: 10px 10px;
+      border-radius: 14px;
+      background: rgba(0,0,0,0.22);
+      border: 1px solid rgba(255,255,255,0.14);
+      cursor: pointer;
+      user-select:none;
+      transition: transform 120ms ease, background 120ms ease, border-color 120ms ease;
+    }
+    .card:hover{
+      transform: translateY(-1px);
+      background: rgba(0,0,0,0.28);
+      border-color: rgba(255,255,255,0.22);
+    }
+
+    .icon{
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.14);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      overflow:hidden;
+      flex: 0 0 auto;
+    }
+
+    .card .meta{
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+    .card .name{
+      font-weight: 700;
+      margin-bottom: 2px;
+    }
+    .card .desc{
+      font-size: 12px;
+      opacity: 0.75;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    #examples{
+      margin-top: 12px;
+      opacity: 0.9;
+      font-size: 12px;
+    }
+
+    /* KEY FIX: huge example URL should NOT expand the card off-screen */
+    #examples code{
+      display:block;
+      font: 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      color: rgba(255,255,255,0.95);
+      background: rgba(0,0,0,0.35);
+      border: 1px solid rgba(255,255,255,0.16);
+      padding: 8px 10px;
+      border-radius: 10px;
+      margin: 8px 0;
+
+      max-height: 6.5em;
+      overflow:auto;
+
+      white-space: pre-wrap;
+      overflow-wrap:anywhere;
+    }
+
+    /* SVG container */
+    svg{ width:100%; height:100%; display:block; }
+
+    /* Pen-stroke-ish look: rounded ends + subtle glow */
+    .stroke{
+      fill: none;
+      stroke: var(--fg);
+      stroke-width: var(--stroke);
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      opacity: var(--opacity);
+      filter: url(#softGlow);
+    }
+
+    /* Animation: stroke draw */
+    .draw{
+      stroke-dasharray: var(--dash, 1);
+      stroke-dashoffset: var(--dash, 1);
+      animation: draw var(--dur) ease-out forwards;
+    }
+    @keyframes draw{ to{ stroke-dashoffset: 0; } }
+
+    /* Highlight: translucent fill with blend mode */
+    .highlight-fill{
+      fill: var(--hl-fill);
+      mix-blend-mode: var(--hl-blend);
+      opacity: 1;
+    }
+    .highlight-outline{
+      fill: none;
+      stroke: var(--fg);
+      stroke-width: calc(var(--stroke) * 0.75);
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      opacity: calc(var(--opacity) * 0.9);
+      filter: url(#softGlow);
+    }
+
+    /* Functional boxes */
+    .box{
+      position:absolute;
+      left: var(--pad);
+      top: var(--pad);
+      right: var(--pad);
+      bottom: var(--pad);
+      border-radius: var(--radius);
+    }
+    .blurbox{
+      backdrop-filter: blur(var(--blur));
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.22);
+      opacity: 1;
+    }
+    .censorbar{
+      background: var(--censor);
+      opacity: var(--opacity);
+    }
+
+    .no-anim{
+      animation: none !important;
+      stroke-dasharray:none !important;
+      stroke-dashoffset:0 !important;
+    }
+  </style>
+</head>
+<body>
+  <div id="stage"></div>
+
+  <script>
+  (function () {
+    const qs = new URLSearchParams(location.search);
+    const get = (k, d=null) => qs.has(k) ? qs.get(k) : d;
+    const has = (k) => qs.has(k);
+
+    const num = (k, d) => {
+      const v = parseFloat(get(k, d));
+      return Number.isFinite(v) ? v : d;
+    };
+
+    const normHex = (s) => {
+      if (!s) return null;
+      s = String(s).trim();
+      if (s.startsWith('#')) s = s.slice(1);
+      if (s.length === 3) s = s.split('').map(c => c + c).join('');
+      if (!/^[0-9a-fA-F]{6}$/.test(s)) return null;
+      return '#' + s.toLowerCase();
+    };
+
+    const stage = document.getElementById('stage');
+
+    const t = (get('t','') || '').toLowerCase();
+    const forcePicker = (get('picker','0') === '1');
+
+    const W = Math.max(1, Math.round(num('w',800)));
+    const H = Math.max(1, Math.round(num('h',450)));
+
+    const isBox = (t === 'blurbox' || t === 'censorbar');
+
+    const color = normHex(get('color','ffffff')) || '#ffffff';
+    const opacity = Math.min(1, Math.max(0, num('opacity', isBox ? 0.95 : 1)));
+    const stroke = Math.max(1, num('stroke',10));
+    const dur = Math.max(0, num('dur',0.9));
+    const anim = has('anim') ? (get('anim')==='1'?1:0) : (isBox?0:1);
+
+    const pad = Math.max(0, num('pad',30));
+    const radius = Math.max(0, num('radius',14));
+    const blur = Math.max(0, num('blur',18));
+
+    const blend = (get('blend','multiply')||'multiply').toLowerCase();
+    const fillAlpha = Math.min(1, Math.max(0, num('fill',0.25)));
+
+    const root = document.documentElement;
+    root.style.setProperty('--fg', color);
+    root.style.setProperty('--opacity', opacity);
+    root.style.setProperty('--stroke', stroke);
+    root.style.setProperty('--dur', dur+'s');
+    root.style.setProperty('--pad', pad+'px');
+    root.style.setProperty('--radius', radius+'px');
+    root.style.setProperty('--blur', blur+'px');
+    root.style.setProperty('--hl-blend', blend);
+
+    const r=parseInt(color.slice(1,3),16),
+          g=parseInt(color.slice(3,5),16),
+          b=parseInt(color.slice(5,7),16);
+    root.style.setProperty('--hl-fill',`rgba(${r},${g},${b},${fillAlpha})`);
+
+    function buildUrl(nextT, overrides = {}) {
+      const p = new URLSearchParams(location.search);
+      p.set('t', nextT);
+      p.delete('picker');
+      if (!p.has('w')) p.set('w', String(W));
+      if (!p.has('h')) p.set('h', String(H));
+      for (const [k,v] of Object.entries(overrides)) {
+        if (v === null) p.delete(k);
+        else p.set(k, String(v));
+      }
+      return location.pathname + '?' + p.toString();
+    }
+
+    function setUrl(nextT, overrides = {}) {
+      const url = buildUrl(nextT, overrides);
+      history.replaceState(null, '', url);
+      location.reload();
+    }
+
+    function iconSVG(type) {
+      const c = color;
+      const sw = Math.max(6, Math.min(12, stroke));
+
+      const defs = `
+        <defs>
+          <filter id="g" x="-30%" y="-30%" width="160%" height="160%">
+            <feGaussianBlur stdDeviation="2.5" result="b"/>
+            <feMerge>
+              <feMergeNode in="b"/><feMergeNode in="SourceGraphic"/>
+            </feMerge>
+          </filter>
+        </defs>`;
+
+      if (type === 'oval') {
+        return `<svg viewBox="0 0 64 64">${defs}
+          <ellipse cx="32" cy="32" rx="22" ry="14" fill="none" stroke="${c}" stroke-width="${sw}" stroke-linecap="round" filter="url(#g)"/>
+        </svg>`;
+      }
+      if (type === 'underline') {
+        return `<svg viewBox="0 0 64 64">${defs}
+          <path d="M10 40 Q32 48 54 40" fill="none" stroke="${c}" stroke-width="${sw}" stroke-linecap="round" filter="url(#g)"/>
+        </svg>`;
+      }
+
+      /* FIXED ICON ARROWS (no sideways-cross look) */
+      if (type === 'arrow' || type === 'arrowright') {
+        return `<svg viewBox="0 0 64 64">${defs}
+          <path d="M12 32 L48 32" fill="none" stroke="${c}" stroke-width="${sw}" stroke-linecap="round" filter="url(#g)"/>
+          <path d="M48 32 L36 22" fill="none" stroke="${c}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" filter="url(#g)"/>
+          <path d="M48 32 L36 42" fill="none" stroke="${c}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" filter="url(#g)"/>
+        </svg>`;
+      }
+      if (type === 'arrowleft') {
+        return `<svg viewBox="0 0 64 64">${defs}
+          <path d="M52 32 L16 32" fill="none" stroke="${c}" stroke-width="${sw}" stroke-linecap="round" filter="url(#g)"/>
+          <path d="M16 32 L28 22" fill="none" stroke="${c}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" filter="url(#g)"/>
+          <path d="M16 32 L28 42" fill="none" stroke="${c}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" filter="url(#g)"/>
+        </svg>`;
+      }
+
+      if (type === 'highlight') {
+        return `<svg viewBox="0 0 64 64">
+          <rect x="10" y="18" width="44" height="28" rx="10" fill="rgba(${r},${g},${b},0.25)"/>
+          <rect x="10" y="18" width="44" height="28" rx="10" fill="none" stroke="${c}" stroke-width="${Math.max(4, sw-3)}"/>
+        </svg>`;
+      }
+      if (type === 'blurbox') {
+        return `<svg viewBox="0 0 64 64">
+          <rect x="10" y="14" width="44" height="36" rx="10" fill="rgba(255,255,255,0.10)" stroke="rgba(255,255,255,0.35)" stroke-width="2"/>
+          <text x="32" y="38" text-anchor="middle" font-size="10" fill="rgba(255,255,255,0.85)">blur</text>
+        </svg>`;
+      }
+      if (type === 'censorbar') {
+        return `<svg viewBox="0 0 64 64">
+          <rect x="10" y="26" width="44" height="12" rx="6" fill="rgba(0,0,0,0.85)" stroke="rgba(255,255,255,0.25)" stroke-width="2"/>
+        </svg>`;
+      }
+      return `<svg viewBox="0 0 64 64"></svg>`;
+    }
+
+    function renderPicker() {
+      stage.classList.add('hint-mode');
+
+      const types = [
+        { t:'highlight',  desc:'blend-through marker block' },
+        { t:'oval',       desc:'animated pen oval' },
+        { t:'arrow',      desc:'right arrow' },
+        { t:'arrowleft',  desc:'left arrow' },
+        { t:'arrowright', desc:'right arrow' },
+        { t:'underline',  desc:'animated underline' },
+        { t:'blurbox',    desc:'functional blur censor' },
+        { t:'censorbar',  desc:'solid blackout bar' },
+      ];
+
+      stage.innerHTML = `
+        <div id="hints">
+          <div class="top">
+            <div>
+              <div class="title">Annotation overlay picker</div>
+              <div class="muted">Click an item to load it via URL parameters.</div>
+            </div>
+
+            <div class="controls">
+              <div class="ctl">
+                <label for="uiColor">Color</label>
+                <input id="uiColor" type="color" value="${color}">
+              </div>
+              <div class="ctl">
+                <label for="uiStroke">Stroke</label>
+                <input id="uiStroke" type="range" min="4" max="30" step="1" value="${stroke}">
+              </div>
+            </div>
+          </div>
+
+          <div id="hintGrid">
+            ${types.map(it => `
+              <div class="card" data-t="${it.t}">
+                <div class="icon">${iconSVG(it.t)}</div>
+                <div class="meta">
+                  <div class="name">${it.t}</div>
+                  <div class="desc">${it.desc}</div>
+                </div>
+              </div>
+            `).join('')}
+          </div>
+
+          <div id="examples">
+            <div class="muted">Example:</div>
+            <code>${buildUrl('oval')}</code>
+          </div>
+        </div>
+      `;
+
+      const uiColor = document.getElementById('uiColor');
+      const uiStroke = document.getElementById('uiStroke');
+
+      // lightweight: re-render picker when tweaking controls
+      function updatePickerParams() {
+        const p = new URLSearchParams(location.search);
+        p.set('picker','1');
+        p.set('color', uiColor.value.replace('#',''));
+        p.set('stroke', uiStroke.value);
+        if (!p.has('w')) p.set('w', String(W));
+        if (!p.has('h')) p.set('h', String(H));
+        history.replaceState(null, '', location.pathname + '?' + p.toString());
+        location.reload();
+      }
+
+      uiColor.addEventListener('input', updatePickerParams);
+      uiStroke.addEventListener('input', updatePickerParams);
+
+      stage.querySelectorAll('.card').forEach(card => {
+        card.addEventListener('click', () => {
+          const nextT = card.getAttribute('data-t');
+          setUrl(nextT, {
+            color: uiColor.value.replace('#',''),
+            stroke: uiStroke.value
+          });
+        });
+      });
+    }
+
+    if (!t || forcePicker) {
+      renderPicker();
+      return;
+    }
+
+    /* -------- BOX TYPES (functional, non-animated by default) -------- */
+    if (t === 'blurbox') { stage.innerHTML = `<div class="box blurbox"></div>`; return; }
+    if (t === 'censorbar') { stage.innerHTML = `<div class="box censorbar"></div>`; return; }
+
+    /* -------- SVG HELPERS -------- */
+    const svgOpen = () => `
+      <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">
+        <defs>
+          <filter id="softGlow" x="-30%" y="-30%" width="160%" height="160%">
+            <feGaussianBlur stdDeviation="6" result="b"/>
+            <feMerge>
+              <feMergeNode in="b"/>
+              <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+          </filter>
+        </defs>
+    `;
+    const svgClose = () => `</svg>`;
+    const drawClass = anim ? 'draw' : 'no-anim';
+
+    const x0 = pad, y0 = pad, x1 = W-pad, y1 = H-pad;
+
+    function setDash(len){
+      return `style="--dash:${Math.max(1, Math.ceil(len))}"`;
+    }
+
+    /* -------- OVAL -------- */
+    if (t === 'oval') {
+      const cx=(x0+x1)/2, cy=(y0+y1)/2;
+      const rx=(x1-x0)/2, ry=(y1-y0)/2;
+
+      const d=`M ${cx-rx} ${cy}
+               A ${rx} ${ry} 0 1 0 ${cx+rx} ${cy}
+               A ${rx} ${ry} 0 1 0 ${cx-rx} ${cy}`;
+
+      const a=rx, bb=ry;
+      const per = Math.PI * (3*(a+bb) - Math.sqrt((3*a+bb)*(a+3*bb)));
+
+      stage.innerHTML = `${svgOpen()}
+        <path class="stroke ${drawClass}" d="${d}" ${setDash(per)} />
+      ${svgClose()}`;
+      return;
+    }
+
+    /* -------- UNDERLINE -------- */
+    if (t === 'underline') {
+      const midY=(y0+y1)*0.65;
+      const midX=(x0+x1)/2;
+      const lift = Math.max(10, (y1-y0)*0.06);
+      const d=`M ${x0} ${midY}
+               Q ${midX} ${midY+lift}
+                 ${x1} ${midY}`;
+      const approxLen = (x1-x0) * 1.15;
+
+      stage.innerHTML = `${svgOpen()}
+        <path class="stroke ${drawClass}" d="${d}" ${setDash(approxLen)} />
+      ${svgClose()}`;
+      return;
+    }
+
+    /* -------- ARROWS (distinct types) -------- */
+    /**
+     * arrow      = callout arrow (shaft + head)
+     * arrowright = chevron only (>)
+     * arrowleft  = chevron only (<)
+     */
+    
+    const setDashFromPath = (el) => {
+      try {
+        const L = el.getTotalLength();
+        el.style.setProperty('--dash', Math.ceil(L));
+      } catch (_) {}
+    };
+    
+    const renderCalloutArrow = (dir) => {
+      const midY = (y0 + y1) / 2;
+    
+      const startX = (dir === 'left') ? x1 : x0;
+      const endX   = (dir === 'left') ? x0 : x1;
+    
+      const len = Math.abs(endX - startX);
+    
+      // pull in from edges so it doesn't pin to the sides
+      const inset = Math.max(20, Math.min(90, len * 0.08));
+      const sX = (dir === 'left') ? (startX - inset) : (startX + inset);
+      const eX = (dir === 'left') ? (endX + inset)   : (endX - inset);
+    
+      const headLen = Math.max(44, Math.min(180, len * 0.18));
+      const ang = 28 * Math.PI / 180;
+      const dx = headLen * Math.cos(ang);
+      const dy = headLen * Math.sin(ang);
+    
+      const wingX = (dir === 'left') ? (eX + dx) : (eX - dx);
+    
+      const d = [
+        `M ${sX} ${midY} L ${eX} ${midY}`,
+        `M ${eX} ${midY} L ${wingX} ${midY - dy}`,
+        `M ${eX} ${midY} L ${wingX} ${midY + dy}`,
+      ].join(' ');
+    
+      stage.innerHTML = `${svgOpen()}
+        <path id="arrowPath" class="stroke ${drawClass} alive" d="${d}" />
+      ${svgClose()}`;
+    
+      setDashFromPath(document.getElementById('arrowPath'));
+    };
+    
+    const renderChevron = (dir) => {
+      const midY = (y0 + y1) / 2;
+      const lenY = Math.max(120, (y1 - y0) * 0.55);
+      const half = lenY / 2;
+    
+      // put chevron near the right/left side
+      const x = (dir === 'left')
+        ? (x0 + Math.max(30, (x1-x0) * 0.12))
+        : (x1 - Math.max(30, (x1-x0) * 0.12));
+    
+      const yTop = midY - half;
+      const yBot = midY + half;
+    
+      // Chevron: two strokes meeting at the point
+      const tipX = (dir === 'left') ? (x - Math.max(60, (x1-x0) * 0.10)) : (x + Math.max(60, (x1-x0) * 0.10));
+      const d = [
+        `M ${x} ${yTop} L ${tipX} ${midY}`,
+        `M ${x} ${yBot} L ${tipX} ${midY}`,
+      ].join(' ');
+    
+      stage.innerHTML = `${svgOpen()}
+        <path id="chevPath" class="stroke ${drawClass} alive" d="${d}" />
+      ${svgClose()}`;
+    
+      setDashFromPath(document.getElementById('chevPath'));
+    };
+    
+    if (t === 'arrow')      { renderCalloutArrow('right'); return; }
+    if (t === 'arrowright') { renderChevron('right'); return; }
+    if (t === 'arrowleft')  { renderChevron('left'); return; }
+
+    /* -------- HIGHLIGHT -------- */
+    if (t==='highlight'){
+      const rr = Math.max(10, radius);
+      const d = [
+        `M ${x0+rr} ${y0}`,
+        `H ${x1-rr}`,
+        `Q ${x1} ${y0} ${x1} ${y0+rr}`,
+        `V ${y1-rr}`,
+        `Q ${x1} ${y1} ${x1-rr} ${y1}`,
+        `H ${x0+rr}`,
+        `Q ${x0} ${y1} ${x0} ${y1-rr}`,
+        `V ${y0+rr}`,
+        `Q ${x0} ${y0} ${x0+rr} ${y0}`,
+        `Z`
+      ].join(' ');
+
+      const approxPer = 2*((x1-x0)+(y1-y0));
+
+      stage.innerHTML = `${svgOpen()}
+        <path class="highlight-fill" d="${d}"></path>
+        <path class="highlight-outline ${drawClass}" d="${d}" ${setDash(approxPer)}></path>
+      ${svgClose()}`;
+      return;
+    }
+
+    // Unknown -> bounce to picker
+    const p = new URLSearchParams(location.search);
+    p.set('picker','1');
+    p.delete('t');
+    history.replaceState(null, '', location.pathname + '?' + p.toString());
+    location.reload();
+  })();
+  </script>
+</body>
+</html>

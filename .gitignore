@@ -5,3 +5,4 @@ renders/*
 wall-api/.env
 /program-monitor/localStorage.json
 /site/localStorage.json
+/docs/IGNORE/**
