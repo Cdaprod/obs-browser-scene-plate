@@ -1,4 +1,3 @@
-/overlays/topic_dial_custom.html
 <!doctype html>
 <html lang="en">
 <head>
@@ -15,11 +14,11 @@
       --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 
       --fg: rgba(255,255,255,0.94);
-      --fg-dim: rgba(255,255,255,0.44);
       --stroke: rgba(255,255,255,0.14);
       --shadow: rgba(0,0,0,0.45);
 
       --post-hold-opacity: 0.90;
+      --ready-fade-ms: 520ms;
     }
 
     html, body {
@@ -38,20 +37,40 @@
       place-items: center;
     }
 
-    .hud{
+    /* Shadow wrapper (prevents iOS/Safari drop-shadow+clip flash boxes) */
+    .hudShadow{
       width: var(--dial-size);
       height: var(--dial-size);
-      position: relative;
       filter:
         drop-shadow(0 14px 28px var(--shadow))
         drop-shadow(0 2px 6px rgba(0,0,0,0.22));
       transform: translateZ(0);
-      opacity: 1;
+      will-change: opacity, transform;
+      overflow: visible; /* IMPORTANT: never clip labels */
     }
-    .hud.boot{ animation: bootIn 520ms ease-out both; }
-    @keyframes bootIn{
-      from { opacity: 0; transform: translateY(10px) scale(0.985); }
-      to   { opacity: 1; transform: translateY(0px) scale(1.0); }
+
+    /* Actual HUD content */
+    .hud{
+      width: 100%;
+      height: 100%;
+      position: relative;
+
+      /* IMPORTANT: do not paint-contain (it can clip on iOS) */
+      contain: none;
+      overflow: visible;
+
+      opacity: 0; /* hidden until ready */
+      transform: translateY(10px) scale(0.985);
+      will-change: opacity, transform;
+      isolation: isolate;
+    }
+
+    .hud.is-ready{
+      opacity: 1;
+      transform: translateY(0px) scale(1.0);
+      transition:
+        opacity var(--ready-fade-ms) ease-out,
+        transform var(--ready-fade-ms) ease-out;
     }
 
     .plate{
@@ -83,13 +102,26 @@
       border-radius: 999px;
       border: 2px solid var(--stroke);
       box-sizing: border-box;
-      overflow: hidden;
+      overflow: hidden; /* clip ring visuals only */
+      background: transparent;
+      transform: translateZ(0);
+      backface-visibility: hidden;
+    }
+
+    /* Move gradients into pseudo layers to keep clipping stable */
+    .ring::before{
+      content:"";
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
       background:
         radial-gradient(circle at 50% 50%, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.02) 38%, rgba(255,255,255,0.00) 66%),
         radial-gradient(circle at 50% 50%, rgba(0,0,0,0.12) 0%, rgba(0,0,0,0.00) 62%);
+      pointer-events: none;
+      transform: translateZ(0);
     }
 
-    .ring::before{
+    .ring::after{
       content:"";
       position: absolute;
       inset: 10.5%;
@@ -97,20 +129,22 @@
       border: 1px solid rgba(255,255,255,0.10);
       background: radial-gradient(circle at 50% 30%, rgba(255,255,255,0.05), rgba(255,255,255,0.00) 55%);
       pointer-events: none;
+      transform: translateZ(0);
     }
 
     .pointer{
       position: absolute;
       left: 50%;
       top: -2px;
-      transform: translateX(-50%);
+      transform: translateX(-50%) translateZ(0);
       width: 0; height: 0;
       border-left: 12px solid transparent;
       border-right: 12px solid transparent;
       border-bottom: 18px solid rgba(255,255,255,0.86);
       filter: drop-shadow(0 6px 10px rgba(0,0,0,0.36));
       opacity: 0.95;
-      z-index: 4;
+      z-index: 6;
+      backface-visibility: hidden;
     }
     .pointer::after{
       content:"";
@@ -137,18 +171,21 @@
           rgba(255,255,255,0.44) 345deg 358deg,
           rgba(255,255,255,0.00) 358deg 360deg
         );
-      mask: radial-gradient(circle, transparent 86%, #000 87%);
+      -webkit-mask: radial-gradient(circle, transparent 86%, #000 87%);
+              mask: radial-gradient(circle, transparent 86%, #000 87%);
       opacity: 0.85;
-      z-index: 3;
+      z-index: 5;
+      transform: translateZ(0);
     }
 
     .dial{
       position: absolute;
       inset: 0;
       border-radius: 999px;
-      transform: rotate(0deg);
+      transform: rotate(0deg) translateZ(0);
       will-change: transform;
-      z-index: 1;
+      z-index: 2;
+      backface-visibility: hidden;
     }
 
     .ticks{
@@ -161,10 +198,12 @@
           rgba(255,255,255,0.0) 0deg 4deg,
           rgba(255,255,255,0.10) 4deg 4.5deg
         );
-      mask: radial-gradient(circle, transparent 60%, #000 61%);
+      -webkit-mask: radial-gradient(circle, transparent 60%, #000 61%);
+              mask: radial-gradient(circle, transparent 60%, #000 61%);
       opacity: 0.55;
       filter: blur(0.15px);
       pointer-events: none;
+      transform: translateZ(0);
     }
 
     .sweep{
@@ -181,14 +220,17 @@
       opacity: 0.65;
       mix-blend-mode: screen;
       pointer-events: none;
+      transform: translateZ(0);
     }
 
+    /* Labels are outside ring clipping — must never be clipped by HUD container */
     .label-layer{
       position: absolute;
       inset: 0;
       border-radius: 999px;
       pointer-events: none;
-      z-index: 5;
+      z-index: 7;
+      overflow: visible;
     }
 
     .label{
@@ -203,6 +245,7 @@
       will-change: transform, opacity, filter;
       opacity: 0.55;
       transition: opacity 180ms ease, filter 180ms ease;
+      backface-visibility: hidden;
     }
 
     .label > span{
@@ -216,6 +259,7 @@
       background: rgba(0,0,0,0.14);
       border: 1px solid rgba(255,255,255,0.12);
       backdrop-filter: blur(2px);
+      -webkit-backdrop-filter: blur(2px);
       white-space: nowrap;
     }
 
@@ -243,7 +287,8 @@
       color: var(--fg);
       box-sizing: border-box;
       pointer-events: none;
-      z-index: 2;
+      z-index: 4;
+      transform: translateZ(0);
     }
 
     .center .topic{
@@ -268,34 +313,36 @@
 
     @media (prefers-reduced-motion: reduce){
       .label, .center .topic { transition: none !important; }
-      .hud.boot { animation: none !important; }
+      .hud.is-ready { transition: none !important; }
     }
   </style>
 </head>
 
 <body>
   <div class="stage">
-    <div class="hud boot" id="hud">
-      <div class="plate">
-        <div>DIRECTION</div>
-        <div class="right" id="meta">—</div>
-      </div>
-
-      <div class="ring" aria-hidden="true">
-        <div class="active-arc"></div>
-        <div class="pointer"></div>
-
-        <div class="dial" id="dial">
-          <div class="ticks"></div>
-          <div class="sweep"></div>
+    <div class="hudShadow" id="hudShadow" aria-hidden="true">
+      <div class="hud" id="hud">
+        <div class="plate">
+          <div>DIRECTION</div>
+          <div class="right" id="meta">—</div>
         </div>
 
-        <div class="center" aria-hidden="true">
-          <div class="topic" id="topicReadout">—</div>
-        </div>
-      </div>
+        <div class="ring" aria-hidden="true">
+          <div class="active-arc"></div>
+          <div class="pointer"></div>
 
-      <div class="label-layer" id="labelLayer" aria-hidden="true"></div>
+          <div class="dial" id="dial">
+            <div class="ticks"></div>
+            <div class="sweep"></div>
+          </div>
+
+          <div class="center" aria-hidden="true">
+            <div class="topic" id="topicReadout">—</div>
+          </div>
+        </div>
+
+        <div class="label-layer" id="labelLayer" aria-hidden="true"></div>
+      </div>
     </div>
   </div>
 
@@ -304,61 +351,44 @@
    * topic_dial_custom.html
    *
    * Cinematic topic “dial” / selector for OBS browser sources.
-   * - Orbiting label pills stay upright + readable while the dial visuals rotate.
-   * - Lands on a specific wedge via URL (index or label), seeded random, or plain random.
-   * - Optional dynamic topic lists via URL (labels / t1..tN) or runtime API (setTopics).
+   * - Orbiting label pills stay upright + readable while dial visuals rotate.
+   * - Lands cleanly on a wedge (no “between wedges then jump”).
+   * - No “ring flash / square mask” on load (staged reveal + shadow wrapper).
    *
    * Default URL (full params):
-   *  http://<HOST_IP>:8789/overlays/topic_dial_custom.html?n=6&labels=FAMILY|THE%20STORY|THE%20BUILD|THE%20CRAFT|PRINCIPLES|PROCESS&landTopic=THE%20BUILD&autospin=1
+   *  http://<HOST_IP>:8789/overlays/topic_dial_custom.html?n=6&labels=FAMILY|THE%20STORY|THE%20BUILD|THE%20CRAFT|PRINCIPLES|PROCESS&landTopic=THE%20BUILD&autospin=1&spinMode=cinematic&intro=3000&spin=10000&driftDps=24&turns=6
    *
    * Topic list params:
    *   n=6 | count=6
-   *     Number of wedges/slots (1..24). If omitted, inferred from labels/defaults.
+   *   labels=A|B|C (pipe or comma separated)
+   *   t1=...&t2=... per-slot overrides (1-based)
    *
-   *   labels=FAMILY|THE%20STORY|THE%20BUILD|THE%20CRAFT|PRINCIPLES|PROCESS
-   *     Pipe (|) or comma-separated label list.
+   * Landing params (priority):
+   *   index=3 | land=3 | landing=3     (1-based)
+   *   landTopic=THE%20BUILD            (label match, normalized)
+   *   topic=THE%20BUILD                (back-compat alias)
    *
-   *   t1=...&t2=...&t3=... (overrides by slot)
-   *     Per-slot explicit labels (1-based). Overrides labels order.
-   *     Example:
-   *       ?n=4&t1=FAMILY&t2=THE%20STORY&t3=THE%20BUILD&t4=PROCESS
-   *
-   * Landing params (priority order):
-   *   index=3 | land=3 | landing=3
-   *     1-based wedge index to land on.
-   *
-   *   landTopic=THE%20BUILD
-   *     Land on the wedge whose label matches (normalized match).
-   *     Aliases accepted: land_topic, landtopic.
-   *
-   *   topic=THE%20BUILD
-   *     Backwards-compatible label landing (same match rules as landTopic).
-   *
-   * Randomness params:
+   * Randomness:
    *   seed=abc123
-   *     Deterministic pick (same seed => same landing result for given topics).
    *
-   *   autospin=1 | autospin=0
-   *     Auto-start the spin on load (default: 1). Set 0 to disable.
+   * Auto-start:
+   *   autospin=1 | autospin=0 (default 1)
    *
-   * Runtime API (JS):
-   *   window.spin()
-   *   window.setIndex(3)                 // 1-based
-   *   window.setTopic("THE BUILD")       // label match (normalized)
-   *   window.setTopics("A|B|C", 3)       // labels string + optional count
-   *   window.setTopics(["A","B","C","D"])// array form
+   * Spin style:
+   *   spinMode=cinematic | instant
    *
-   * Examples:
-   *   ?index=1&autospin=1
-   *   ?landTopic=PROCESS&autospin=1
-   *   ?labels=A|B|C|D&seed=42
-   *   ?n=5&t1=ONE&t2=TWO&t3=THREE&t4=FOUR&t5=FIVE&index=4
+   * Cinematic timing:
+   *   intro=3000    (ms) slow readable drift phase
+   *   spin=10000    (ms) accel + long decel phase
+   *   driftDps=24   (deg/sec) drift speed in intro
+   *   turns=6       (integer) extra turns during main spin
    */
 
     const TOPICS_DEFAULT = ["FAMILY","THE STORY","THE BUILD","THE CRAFT","PRINCIPLES","PROCESS"];
 
     const SPIN_MIN_MS = 2200;
     const SPIN_MAX_MS = 3200;
+
     const HOLD_AFTER_LAND_MS = 900;
     const POST_HOLD_DIM = true;
 
@@ -368,6 +398,7 @@
     const MICRO_SETTLE_DEG = 1.15;
     const MICRO_SETTLE_MS  = 170;
 
+    const hudShadow = document.getElementById("hudShadow");
     const hud = document.getElementById("hud");
     const dial = document.getElementById("dial");
     const labelLayer = document.getElementById("labelLayer");
@@ -389,12 +420,6 @@
       const mm = String(d.getMinutes()).padStart(2,"0");
       const ss = String(d.getSeconds()).padStart(2,"0");
       return `${hh}:${mm}:${ss}`;
-    }
-
-    function easeOutResist(t){
-      const c = 1 - Math.pow(1 - t, 3);
-      const resist = 1 - Math.pow(1 - t, 6);
-      return lerp(c, resist, 0.35);
     }
 
     function showReadout(text){
@@ -439,22 +464,26 @@
     function parseParams(){
       const u = new URL(location.href);
       const p = u.searchParams;
-      const nParam = p.get("n");
-      const indexParam = p.get("index");
+
+      const spinMode = (p.get("spinMode") || "").trim().toLowerCase() || "cinematic";
+
       return {
-        // dynamic topics
-        n: nParam !== null ? nParam : p.get("count"),
+        n: p.get("n") ?? p.get("count"),
         labels: p.get("labels"),
         t: (i) => p.get(`t${i}`),
 
-        // landing controls
-        index: indexParam || p.get("land") || p.get("landing"),
-        topic: p.get("topic"),                      // existing alias
+        index: p.get("index") || p.get("land") || p.get("landing"),
+        topic: p.get("topic"),
         landTopic: p.get("landTopic") || p.get("land_topic") || p.get("landtopic"),
 
-        // randomness controls
         seed: p.get("seed"),
         autospin: p.get("autospin") !== "0",
+
+        spinMode,
+        intro: p.get("intro"),
+        spin: p.get("spin"),
+        driftDps: p.get("driftDps"),
+        turns: p.get("turns"),
       };
     }
 
@@ -551,6 +580,67 @@
       return topics.length ? topics : safeDefaults.map(formatTopicDisplay);
     }
 
+    const labelEls = [];
+
+    function buildLabels(){
+      labelLayer.innerHTML = "";
+      labelEls.length = 0;
+
+      for (let i = 0; i < state.N; i++){
+        const div = document.createElement("div");
+        div.className = "label";
+        div.dataset.idx = String(i);
+
+        const span = document.createElement("span");
+        span.textContent = state.topics[i] ?? "—";
+        div.appendChild(span);
+
+        labelLayer.appendChild(div);
+        labelEls.push(div);
+      }
+    }
+
+    function setActiveIndex(idx){
+      for (let i = 0; i < labelEls.length; i++){
+        labelEls[i].classList.toggle("is-active", i === idx);
+      }
+    }
+
+    function updateLabelOrbit(dialRotDeg){
+      const rect = hudShadow.getBoundingClientRect();
+      const size = Math.min(rect.width, rect.height);
+
+      /* Slightly smaller radius so pills stay inside typical OBS crop,
+         BUT never clipped now because we removed paint containment. */
+      const R = size * 0.405;
+
+      const rot = normalizeDeg(dialRotDeg);
+
+      for (let i = 0; i < state.N; i++){
+        const ang = (rot + i * state.SEG) - 90;
+        const rad = ang * Math.PI / 180;
+
+        const x = Math.cos(rad) * R;
+        const y = Math.sin(rad) * R;
+
+        const el = labelEls[i];
+        if (!el) continue;
+        el.style.setProperty("--x", `${x.toFixed(2)}px`);
+        el.style.setProperty("--y", `${y.toFixed(2)}px`);
+        el.style.setProperty("--rot", `0deg`);
+      }
+    }
+
+    function activeIndexFromRotation(rotDeg){
+      const rot = normalizeDeg(rotDeg);
+      const idx = Math.round(((360 - rot) % 360) / state.SEG) % state.N;
+      return idx;
+    }
+
+    function targetRotationForIndex(i){
+      return -(i * state.SEG);
+    }
+
     function applyTopics(topics){
       state.topics = (topics || []).map(formatTopicDisplay);
       recomputeState();
@@ -559,180 +649,75 @@
       setActiveIndex(activeIndexFromRotation(currentDeg));
     }
 
-    function activeIndexFromRotation(rotDeg){
-      const rot = normalizeDeg(rotDeg);
-      const idx = Math.round(((360 - rot) % 360) / state.SEG) % state.N;
-      return idx;
-    }
-    function targetRotationForIndex(i){
-      return -(i * state.SEG);
-    }
-
-    const labelEls = [];
-    function buildLabels(){
-      labelLayer.innerHTML = "";
-      labelEls.length = 0;
-      for (let i = 0; i < state.N; i++){
-        const div = document.createElement("div");
-        div.className = "label";
-        div.dataset.idx = String(i);
-        const span = document.createElement("span");
-        span.textContent = state.topics[i] ?? "—";
-        div.appendChild(span);
-        labelLayer.appendChild(div);
-        labelEls.push(div);
-      }
-    }
-    function setActiveIndex(idx){
-      for (let i = 0; i < labelEls.length; i++){
-        labelEls[i].classList.toggle("is-active", i === idx);
-      }
-    }
-    function updateLabelOrbit(dialRotDeg){
-      const rect = hud.getBoundingClientRect();
-      const size = Math.min(rect.width, rect.height);
-      const R = size * 0.40;
-      const rot = normalizeDeg(dialRotDeg);
-
-      for (let i = 0; i < state.N; i++){
-        const ang = (rot + i * state.SEG) - 90;
-        const rad = ang * Math.PI / 180;
-        const x = Math.cos(rad) * R;
-        const y = Math.sin(rad) * R;
-        labelEls[i].style.setProperty("--x", `${x.toFixed(2)}px`);
-        labelEls[i].style.setProperty("--y", `${y.toFixed(2)}px`);
-        labelEls[i].style.setProperty("--rot", `0deg`);
-      }
-    }
-
     let currentDeg = 0;
     let isSpinning = false;
     let forcedIndex = null;
 
     function setDialRotation(deg){
-      dial.style.transform = `rotate(${deg}deg)`;
+      dial.style.transform = `rotate(${deg}deg) translateZ(0)`;
     }
 
     function chooseIndex(params){
-      // 1) explicit index
       const landingIndex = parseLandingIndex(params.index, state.N);
-      if (landingIndex != null){
-        return { index: landingIndex - 1, mode: "index" };
-      }
+      if (landingIndex != null) return { index: landingIndex - 1, mode: "index" };
 
-      // 2) explicit landTopic (preferred for "default landing" via URL)
       if (params.landTopic){
         const want = normTopic(params.landTopic);
         const idx = state.topics.findIndex(t => normTopic(t) === want);
         if (idx >= 0) return { index: idx, mode: "landTopic" };
       }
 
-      // 3) existing topic alias (kept for backwards compatibility)
       if (params.topic){
         const want = normTopic(params.topic);
         const idx = state.topics.findIndex(t => normTopic(t) === want);
         if (idx >= 0) return { index: idx, mode: "topic" };
       }
 
-      // 4) forced by API
       if (forcedIndex !== null && forcedIndex >= 0 && forcedIndex < state.N){
         return { index: forcedIndex, mode: "forced" };
       }
 
-      // 5) seeded random
       if (params.seed){
         const rng = makeRng(String(params.seed));
         return { index: weightedPickIndex(state.weights, rng), mode: "seed" };
       }
 
-      // 6) random
       return { index: weightedPickIndex(state.weights, Math.random), mode: "random" };
     }
 
-    async function spinToIndex(index, opts = {}){
-      if (isSpinning) return;
-      isSpinning = true;
+    // Easings
+    function easeInCubic(t){ return t*t*t; }
+    function easeOutQuint(t){ return 1 - Math.pow(1 - t, 5); }
 
-      hud.classList.remove("post-hold");
-      hideReadout();
-
-      const duration = opts.duration ?? Math.floor(lerp(SPIN_MIN_MS, SPIN_MAX_MS, Math.random()));
-      const turns = opts.turns ?? Math.floor(lerp(BASE_TURNS_MIN, BASE_TURNS_MAX + 0.999, Math.random()));
-      const base = turns * 360;
-
-      const target = targetRotationForIndex(index);
-
-      const cur = currentDeg;
-      const curNorm = normalizeDeg(cur);
-      const targetNorm = normalizeDeg(target);
-
-      let deltaToTarget = targetNorm - curNorm;
-      if (deltaToTarget < 0) deltaToTarget += 360;
-
-      const end = cur + base + deltaToTarget;
-
-      const start = performance.now();
-      const startDeg = cur;
-      const endDeg = end;
-
-      const animate = (tNow) => {
-        const t = clamp((tNow - start) / duration, 0, 1);
-        const e = easeOutResist(t);
-        const d = lerp(startDeg, endDeg, e);
-
-        currentDeg = d;
-
-        setDialRotation(d);
-        updateLabelOrbit(d);
-        setActiveIndex(activeIndexFromRotation(d));
-
-        if (t < 1) requestAnimationFrame(animate);
-        else {
-          microSettle(index).then(() => {
-            setActiveIndex(index);
-            const landed = state.topics[index] ?? "—";
-            showReadout(landed);
-            meta.textContent = `${nowStamp()}  •  ${landed}`;
-
-            setTimeout(() => {
-              if (POST_HOLD_DIM) hud.classList.add("post-hold");
-              isSpinning = false;
-            }, HOLD_AFTER_LAND_MS);
-          });
-        }
-      };
-
-      requestAnimationFrame(animate);
+    // endDeg EXACTLY aligned to wedge center, guaranteed > currentDeg
+    function computeExactEndDeg(curDeg, targetBaseDeg, extraTurns){
+      const minK = Math.floor((curDeg - targetBaseDeg) / 360) + 1;
+      const k = minK + Math.max(0, extraTurns | 0);
+      return targetBaseDeg + 360 * k;
     }
 
-    function microSettle(index){
+    function microSettleToBase(baseTargetDeg){
       return new Promise((resolve) => {
-        const baseTarget = targetRotationForIndex(index);
-
-        const cur = currentDeg;
-        const curNorm = normalizeDeg(cur);
-        const baseNorm = normalizeDeg(baseTarget);
-
-        let snapDelta = baseNorm - curNorm;
-        snapDelta = (((snapDelta % 360) + 540) % 360) - 180;
-        const snapped = cur + snapDelta;
-
-        currentDeg = snapped;
-        setDialRotation(snapped);
-        updateLabelOrbit(snapped);
-
+        const snapped = baseTargetDeg;
         const overshoot = snapped + MICRO_SETTLE_DEG;
+
         const start = performance.now();
+        const dur = MICRO_SETTLE_MS;
 
         const animate = (tNow) => {
-          const t = clamp((tNow - start) / MICRO_SETTLE_MS, 0, 1);
-          const mid = t < 0.55
-            ? lerp(snapped, overshoot, easeOutResist(t / 0.55))
-            : lerp(overshoot, snapped, easeOutResist((t - 0.55) / 0.45));
+          const t = clamp((tNow - start) / dur, 0, 1);
+
+          let mid;
+          if (t < 0.55){
+            mid = lerp(snapped, overshoot, easeOutQuint(t / 0.55));
+          } else {
+            mid = lerp(overshoot, snapped, easeOutQuint((t - 0.55) / 0.45));
+          }
 
           currentDeg = mid;
           setDialRotation(mid);
           updateLabelOrbit(mid);
+          setActiveIndex(activeIndexFromRotation(mid));
 
           if (t < 1) requestAnimationFrame(animate);
           else resolve();
@@ -742,11 +727,152 @@
       });
     }
 
-    // Public API
+    async function finishLanding(index){
+      const landed = state.topics[index] ?? "—";
+      setActiveIndex(index);
+      showReadout(landed);
+      meta.textContent = `${nowStamp()}  •  ${landed}`;
+
+      setTimeout(() => {
+        if (POST_HOLD_DIM) hud.classList.add("post-hold");
+        isSpinning = false;
+      }, HOLD_AFTER_LAND_MS);
+    }
+
+    async function spinToIndexInstant(index, opts = {}){
+      if (isSpinning) return;
+      isSpinning = true;
+
+      hud.classList.remove("post-hold");
+      hideReadout();
+
+      const duration = opts.duration ?? Math.floor(lerp(SPIN_MIN_MS, SPIN_MAX_MS, Math.random()));
+      const turns = opts.turns ?? Math.floor(lerp(BASE_TURNS_MIN, BASE_TURNS_MAX + 0.999, Math.random()));
+
+      const targetBase = targetRotationForIndex(index);
+      const endDeg = computeExactEndDeg(currentDeg, targetBase, turns);
+
+      const start = performance.now();
+      const startDeg = currentDeg;
+
+      const easeOutResist = (t) => {
+        const c = 1 - Math.pow(1 - t, 3);
+        const resist = 1 - Math.pow(1 - t, 6);
+        return lerp(c, resist, 0.35);
+      };
+
+      const animate = (tNow) => {
+        const t = clamp((tNow - start) / duration, 0, 1);
+        const e = easeOutResist(t);
+
+        const d = lerp(startDeg, endDeg, e);
+
+        currentDeg = d;
+        setDialRotation(d);
+        updateLabelOrbit(d);
+        setActiveIndex(activeIndexFromRotation(d));
+
+        if (t < 1) requestAnimationFrame(animate);
+        else {
+          currentDeg = endDeg;
+          setDialRotation(endDeg);
+          updateLabelOrbit(endDeg);
+          setActiveIndex(activeIndexFromRotation(endDeg));
+
+          microSettleToBase(targetBase).then(() => finishLanding(index));
+        }
+      };
+
+      requestAnimationFrame(animate);
+    }
+
+    async function spinToIndexCinematic(index, params){
+      if (isSpinning) return;
+      isSpinning = true;
+
+      hud.classList.remove("post-hold");
+      hideReadout();
+
+      const introMs  = clamp(parseInt(params.intro ?? "4000", 10) || 4000, 0, 120000);
+      const spinMs   = clamp(parseInt(params.spin  ?? "11000", 10) || 11000, 600, 120000);
+
+      // Make the drift and the ramp clearly visible by default
+      const driftDps = clamp(parseFloat(params.driftDps ?? "24") || 24, 0, 360);
+
+      const turnsParam = params.turns != null ? parseInt(params.turns, 10) : null;
+      const turns = Number.isFinite(turnsParam) ? clamp(turnsParam, 0, 24) : 6;
+
+      const targetBase = targetRotationForIndex(index);
+
+      // A) Readable drift
+      const startA = performance.now();
+      const startDegA = currentDeg;
+      const driftTotal = driftDps * (introMs / 1000);
+
+      const phaseA = (tNow) => {
+        const t = introMs <= 0 ? 1 : clamp((tNow - startA) / introMs, 0, 1);
+        const d = startDegA + driftTotal * t;
+
+        currentDeg = d;
+        setDialRotation(d);
+        updateLabelOrbit(d);
+        setActiveIndex(activeIndexFromRotation(d));
+
+        if (t < 1) requestAnimationFrame(phaseA);
+        else {
+          // B) Strong accel then long decel (VERY cinematic, very noticeable)
+          const endDeg = computeExactEndDeg(currentDeg, targetBase, turns);
+
+          const startB = performance.now();
+          const startDegB = currentDeg;
+
+          const accelPortion = 0.22;   // fast ramp window
+          const accelShare = 0.42;     // how much distance is consumed during accel (makes it feel “kick”)
+
+          const phaseB = (tNowB) => {
+            const tB = clamp((tNowB - startB) / spinMs, 0, 1);
+
+            let e;
+            if (tB < accelPortion){
+              // accelerate hard
+              e = accelShare * easeInCubic(tB / accelPortion);
+            } else {
+              // then coast + long decel
+              const u = (tB - accelPortion) / (1 - accelPortion);
+              e = accelShare + (1 - accelShare) * easeOutQuint(u);
+            }
+
+            const dB = lerp(startDegB, endDeg, e);
+
+            currentDeg = dB;
+            setDialRotation(dB);
+            updateLabelOrbit(dB);
+            setActiveIndex(activeIndexFromRotation(dB));
+
+            if (tB < 1) requestAnimationFrame(phaseB);
+            else {
+              // hard lock EXACT, no “between wedges then jump”
+              currentDeg = endDeg;
+              setDialRotation(endDeg);
+              updateLabelOrbit(endDeg);
+              setActiveIndex(activeIndexFromRotation(endDeg));
+
+              microSettleToBase(targetBase).then(() => finishLanding(index));
+            }
+          };
+
+          requestAnimationFrame(phaseB);
+        }
+      };
+
+      requestAnimationFrame(phaseA);
+    }
+
     window.spin = () => {
       const params = parseParams();
       const chosen = chooseIndex(params);
-      spinToIndex(chosen.index);
+      if (params.spinMode === "instant") spinToIndexInstant(chosen.index);
+      else spinToIndexCinematic(chosen.index, params);
     };
 
     window.setTopic = (topicString) => {
@@ -754,7 +880,9 @@
       const idx = state.topics.findIndex(t => normTopic(t) === want);
       if (idx >= 0){
         forcedIndex = idx;
-        spinToIndex(idx);
+        const params = parseParams();
+        if (params.spinMode === "instant") spinToIndexInstant(idx);
+        else spinToIndexCinematic(idx, params);
       }
     };
 
@@ -762,7 +890,9 @@
       const idx = Number(oneBasedIndex) - 1;
       if (Number.isFinite(idx) && idx >= 0 && idx < state.N){
         forcedIndex = idx;
-        spinToIndex(idx);
+        const params = parseParams();
+        if (params.spinMode === "instant") spinToIndexInstant(idx);
+        else spinToIndexCinematic(idx, params);
       }
     };
 
@@ -783,29 +913,17 @@
       applyTopics(topics);
 
       const idx = activeIndexFromRotation(currentDeg);
-      const snapped = targetRotationForIndex(idx);
-      currentDeg = snapped;
-      setDialRotation(snapped);
-      updateLabelOrbit(snapped);
+      const baseTarget = targetRotationForIndex(idx);
+
+      currentDeg = baseTarget;
+      setDialRotation(baseTarget);
+      updateLabelOrbit(baseTarget);
       setActiveIndex(idx);
+
       meta.textContent = `${nowStamp()}  •  TOPICS SET`;
     };
 
-    window.addEventListener("keydown", (e) => {
-      if (e.code === "Space"){
-        e.preventDefault();
-        window.spin();
-        return;
-      }
-      if (e.key >= "1" && e.key <= "9"){
-        const idx = Number(e.key) - 1;
-        if (idx >= 0 && idx < state.N){
-          e.preventDefault();
-          forcedIndex = idx;
-          spinToIndex(idx);
-        }
-      }
-    });
+    window.addEventListener("resize", () => updateLabelOrbit(currentDeg));
 
     (function boot(){
       const params = parseParams();
@@ -813,23 +931,34 @@
       const topics = buildTopicsFromParams({ params, defaults: TOPICS_DEFAULT, maxCount: 24 });
       applyTopics(topics);
 
+      // start snapped so it never appears “halfway” at rest
+      const initialIdx = activeIndexFromRotation(currentDeg);
+      currentDeg = targetRotationForIndex(initialIdx);
+      setDialRotation(currentDeg);
+      updateLabelOrbit(currentDeg);
+      setActiveIndex(initialIdx);
+
       const chosen = chooseIndex(params);
       meta.textContent = `${nowStamp()}  •  ${chosen.mode.toUpperCase()}`;
 
-      updateLabelOrbit(currentDeg);
-      setActiveIndex(activeIndexFromRotation(currentDeg));
+      // staged reveal (kills ring flash / square mask)
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          hud.classList.add("is-ready");
 
-      if (params.autospin){
-        setTimeout(() => {
-          const p2 = parseParams();
-          const chosen2 = chooseIndex(p2);
-          meta.textContent = `${nowStamp()}  •  ${chosen2.mode.toUpperCase()}`;
-          spinToIndex(chosen2.index);
-        }, 120);
-      }
+          if (params.autospin){
+            setTimeout(() => {
+              const p2 = parseParams();
+              const chosen2 = chooseIndex(p2);
+              meta.textContent = `${nowStamp()}  •  ${chosen2.mode.toUpperCase()}`;
+
+              if (p2.spinMode === "instant") spinToIndexInstant(chosen2.index);
+              else spinToIndexCinematic(chosen2.index, p2);
+            }, 140);
+          }
+        });
+      });
     })();
-
-    window.addEventListener("resize", () => updateLabelOrbit(currentDeg));
   </script>
 </body>
 </html>
