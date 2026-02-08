@@ -21,3 +21,9 @@ test("preview includes scrubber markup", () => {
   assert.ok(html.includes("previewScrubber"));
   assert.ok(html.includes("previewScrubberSegments"));
 });
+
+test("stage includes export timeline and recent exports controls", () => {
+  assert.ok(html.includes("btnExportTimelineStage"));
+  assert.ok(html.includes("recentMenu"));
+  assert.ok(html.includes("exportModal"));
+});

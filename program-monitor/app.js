@@ -417,6 +417,8 @@ const state = {
 const PROJECTS_KEY = "program-monitor.projects.v1";
 const PROJECTS_LIMIT = 20;
 const OBS_SETTINGS_KEY = "program-monitor.obs.v1";
+const EXPORT_HISTORY_KEY = "obs-browser-export-history";
+const EXPORT_HISTORY_LIMIT = 8;
 
 const elements = {
   nodeList: $("#nodeList"),
@@ -438,6 +440,16 @@ const elements = {
   message: $("#message"),
   exportStatus: $("#exportStatus"),
   downloadLink: $("#downloadLink"),
+  exportTimelineStage: $("#btnExportTimelineStage"),
+  recentBtn: $("#recentBtn"),
+  recentMenu: $("#recentMenu"),
+  exportModal: $("#exportModal"),
+  exportModalTitle: $("#exportModalTitle"),
+  exportModalMeta: $("#exportModalMeta"),
+  exportModalVideo: $("#exportModalVideo"),
+  exportModalDownload: $("#exportModalDownload"),
+  exportModalOpen: $("#exportModalOpen"),
+  exportModalClose: $("#exportModalClose"),
   togglePreview: $("#btnTogglePreview"),
   projectToolbar: $("#projectToolbar"),
   projectName: $("#projectName"),
@@ -498,6 +510,219 @@ function setDownloadLink(url) {
   }
   elements.downloadLink.href = url;
   elements.downloadLink.classList.remove("hidden");
+}
+
+function buildRenderDownloadUrl({ downloadBase: base, downloadPath, filename }) {
+  if (!base) {
+    return downloadPath || "";
+  }
+  const normalizedBase = base.replace(/\/+$/, "");
+  if (filename) {
+    return `${normalizedBase}/renders/${encodeURIComponent(filename)}`;
+  }
+  if (downloadPath) {
+    const normalizedPath = downloadPath.startsWith("/") ? downloadPath : `/${downloadPath}`;
+    return `${normalizedBase}${normalizedPath}`;
+  }
+  return normalizedBase;
+}
+
+function extractFilenameFromPath(path) {
+  if (!path) return "";
+  const trimmed = String(path).split("?")[0];
+  const parts = trimmed.split("/");
+  const last = parts[parts.length - 1] || "";
+  try {
+    return decodeURIComponent(last);
+  } catch (_) {
+    return last;
+  }
+}
+
+function loadExportHistory() {
+  try {
+    const stored = window.localStorage.getItem(EXPORT_HISTORY_KEY);
+    if (!stored) return [];
+    const parsed = JSON.parse(stored);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function saveExportHistory(entries) {
+  try {
+    window.localStorage.setItem(EXPORT_HISTORY_KEY, JSON.stringify(entries));
+  } catch (_) {
+    // Ignore storage errors
+  }
+}
+
+function formatExportTime(timestamp) {
+  if (!timestamp) return "";
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "";
+  const units = ["B", "KB", "MB", "GB"];
+  let index = 0;
+  let value = bytes;
+  while (value >= 1024 && index < units.length - 1) {
+    value /= 1024;
+    index += 1;
+  }
+  return `${value.toFixed(value >= 10 || index === 0 ? 0 : 1)} ${units[index]}`;
+}
+
+function renderExportHistory(entries) {
+  if (!elements.recentMenu) return;
+  elements.recentMenu.innerHTML = "";
+
+  if (!entries.length) {
+    const empty = document.createElement("div");
+    empty.className = "recent-empty";
+    empty.textContent = "No recent exports yet.";
+    elements.recentMenu.appendChild(empty);
+    return;
+  }
+
+  entries.forEach((entry) => {
+    const link = document.createElement("button");
+    link.type = "button";
+    link.className = "recent-item";
+    link.dataset.url = entry.url;
+    link.dataset.name = entry.name || "export";
+    link.dataset.createdAt = entry.createdAt ? String(entry.createdAt) : "";
+    link.dataset.sizeBytes = Number.isFinite(entry.sizeBytes) ? String(entry.sizeBytes) : "";
+
+    const name = document.createElement("div");
+    name.className = "recent-name";
+    name.textContent = entry.name || "export";
+
+    const meta = document.createElement("div");
+    meta.className = "recent-meta";
+
+    const time = document.createElement("span");
+    time.textContent = formatExportTime(entry.createdAt) || "just now";
+    meta.appendChild(time);
+
+    const size = document.createElement("span");
+    size.textContent = formatBytes(entry.sizeBytes) || "Download MOV";
+    meta.appendChild(size);
+
+    const urlText = document.createElement("div");
+    urlText.className = "recent-url";
+    urlText.textContent = entry.url;
+
+    link.appendChild(name);
+    link.appendChild(meta);
+    link.appendChild(urlText);
+    elements.recentMenu.appendChild(link);
+  });
+}
+
+function positionRecentMenu() {
+  if (!elements.recentMenu || elements.recentMenu.classList.contains("hidden")) return;
+  elements.recentMenu.style.left = "0";
+  elements.recentMenu.style.right = "auto";
+  elements.recentMenu.style.transform = "translateX(0)";
+  const menuRect = elements.recentMenu.getBoundingClientRect();
+  const viewportPadding = 8;
+  let shift = 0;
+  const overflowRight = menuRect.right - (window.innerWidth - viewportPadding);
+  if (overflowRight > 0) {
+    shift -= overflowRight;
+  }
+  const overflowLeft = viewportPadding - (menuRect.left + shift);
+  if (overflowLeft > 0) {
+    shift += overflowLeft;
+  }
+  elements.recentMenu.style.transform = `translateX(${shift}px)`;
+}
+
+function updateExportHistory(entry) {
+  if (!entry || !entry.url) return;
+  const history = loadExportHistory();
+  const next = [entry, ...history.filter((item) => item.url !== entry.url)].slice(0, EXPORT_HISTORY_LIMIT);
+  saveExportHistory(next);
+  renderExportHistory(next);
+}
+
+async function fetchRecentExports() {
+  const url = `${renderApiBase}/api/renders?limit=${EXPORT_HISTORY_LIMIT}`;
+  try {
+    const res = await fetch(url, { cache: "no-store" });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || "recent_failed");
+    }
+    const entries = (data.renders || []).map((item) => {
+      const downloadUrl = buildRenderDownloadUrl({
+        downloadBase,
+        downloadPath: item.download_url,
+        filename: item.filename
+      });
+      return {
+        url: downloadUrl,
+        name: item.filename || "export",
+        createdAt: item.updated_at ? Date.parse(item.updated_at) : Date.now(),
+        sizeBytes: item.size_bytes ?? null
+      };
+    });
+    const sorted = entries.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    saveExportHistory(sorted);
+    return sorted;
+  } catch (err) {
+    console.warn("Recent exports unavailable, using cached history.", err);
+    return loadExportHistory();
+  }
+}
+
+function openExportModal(entry) {
+  if (!entry || !entry.url || !elements.exportModal) return;
+  elements.exportModalTitle.textContent = entry.name || "Export Preview";
+  const timeLabel = formatExportTime(entry.createdAt);
+  const sizeLabel = formatBytes(entry.sizeBytes);
+  elements.exportModalMeta.textContent = [timeLabel, sizeLabel].filter(Boolean).join(" • ");
+  elements.exportModalVideo.src = entry.url;
+  elements.exportModalDownload.href = entry.url;
+  elements.exportModalDownload.download = entry.name || "";
+  elements.exportModalOpen.onclick = () => window.open(entry.url, "_blank");
+  elements.exportModal.classList.remove("hidden");
+  elements.exportModal.setAttribute("aria-hidden", "false");
+}
+
+function closeExportModal() {
+  if (!elements.exportModal) return;
+  elements.exportModal.classList.add("hidden");
+  elements.exportModal.setAttribute("aria-hidden", "true");
+  elements.exportModalVideo.pause();
+  elements.exportModalVideo.removeAttribute("src");
+  elements.exportModalVideo.load();
+}
+
+function handleExportReady({ downloadPath, filename, sizeBytes, createdAt }) {
+  const downloadUrl = buildRenderDownloadUrl({
+    downloadBase,
+    downloadPath,
+    filename
+  });
+  setExportStatus("Ready");
+  setDownloadLink(downloadUrl);
+  updateExportHistory({
+    url: downloadUrl,
+    name: filename || "export",
+    createdAt: createdAt || Date.now(),
+    sizeBytes: sizeBytes ?? null
+  });
 }
 
 function getSelectedIndex() {
@@ -1934,11 +2159,8 @@ async function pollJobStatus(statusUrl) {
   }
 
   if (data.state === "ready") {
-    const downloadUrl = data.download_url
-      ? `${downloadBase}${data.download_url}`
-      : null;
-    setExportStatus("Ready");
-    setDownloadLink(downloadUrl);
+    const filename = data.filename || extractFilenameFromPath(data.download_url);
+    handleExportReady({ downloadPath: data.download_url, filename });
     clearExportPoll();
   } else if (data.state === "error") {
     setExportStatus("Error");
@@ -1983,8 +2205,10 @@ async function exportNode() {
   }
 
   if (data.download_url) {
-    setExportStatus("Ready");
-    setDownloadLink(`${downloadBase}${data.download_url}`);
+    handleExportReady({
+      downloadPath: data.download_url,
+      filename: extractFilenameFromPath(data.download_url)
+    });
     return;
   }
 
@@ -2032,8 +2256,10 @@ async function exportTimeline() {
   }
 
   if (data.download_url) {
-    setExportStatus("Ready");
-    setDownloadLink(`${downloadBase}${data.download_url}`);
+    handleExportReady({
+      downloadPath: data.download_url,
+      filename: extractFilenameFromPath(data.download_url)
+    });
     return;
   }
 
@@ -2249,6 +2475,68 @@ $("#btnExportTimeline").addEventListener("click", () => {
     setExportStatus("Error");
   });
 });
+if (elements.exportTimelineStage) {
+  elements.exportTimelineStage.addEventListener("click", () => {
+    exportTimeline().catch((error) => {
+      console.error(error);
+      setExportStatus("Error");
+    });
+  });
+}
+
+if (elements.recentBtn && elements.recentMenu) {
+  elements.recentBtn.addEventListener("click", () => {
+    fetchRecentExports().then((history) => {
+      renderExportHistory(history);
+      elements.recentMenu.classList.toggle("hidden");
+      if (!elements.recentMenu.classList.contains("hidden")) {
+        requestAnimationFrame(positionRecentMenu);
+      }
+    });
+  });
+
+  document.addEventListener("click", (event) => {
+    if (elements.recentMenu.classList.contains("hidden")) return;
+    if (event.target.closest(".recent-wrap")) return;
+    elements.recentMenu.classList.add("hidden");
+  });
+
+  window.addEventListener("resize", () => {
+    if (elements.recentMenu.classList.contains("hidden")) return;
+    positionRecentMenu();
+  });
+
+  elements.recentMenu.addEventListener("click", (event) => {
+    const item = event.target.closest(".recent-item");
+    if (!item) return;
+    const entry = {
+      url: item.dataset.url,
+      name: item.dataset.name,
+      createdAt: item.dataset.createdAt ? Number(item.dataset.createdAt) : null,
+      sizeBytes: item.dataset.sizeBytes ? Number(item.dataset.sizeBytes) : null
+    };
+    openExportModal(entry);
+    elements.recentMenu.classList.add("hidden");
+  });
+}
+
+if (elements.exportModalClose) {
+  elements.exportModalClose.addEventListener("click", closeExportModal);
+}
+
+if (elements.exportModal) {
+  elements.exportModal.addEventListener("click", (event) => {
+    if (event.target === elements.exportModal) {
+      closeExportModal();
+    }
+  });
+}
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && elements.exportModal && !elements.exportModal.classList.contains("hidden")) {
+    closeExportModal();
+  }
+});
 
 if (elements.togglePreview) {
   elements.togglePreview.addEventListener("click", () => {
@@ -2351,6 +2639,9 @@ try {
   setExportStatus("Idle");
   setProjectToolbarOpen(false);
   renderProjects();
+  if (elements.recentMenu) {
+    fetchRecentExports().then(renderExportHistory);
+  }
 } catch (error) {
   console.error(error);
   setMessage(`Startup error: ${error?.message || error}`);

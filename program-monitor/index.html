@@ -106,6 +106,13 @@
             <div class="previewScrubberPlayhead" id="previewScrubberPlayhead"></div>
           </div>
           <div class="message" id="message"></div>
+          <div class="stageActions">
+            <button id="btnExportTimelineStage" type="button">Export Timeline MOV</button>
+            <div class="recent-wrap">
+              <button id="recentBtn" type="button">Recent Exports</button>
+              <div class="recent-menu hidden" id="recentMenu"></div>
+            </div>
+          </div>
         </div>
       </aside>
 
@@ -130,6 +137,22 @@
   </div>
 
   <input id="fileImport" type="file" accept="application/json" hidden />
+  <div class="modal hidden" id="exportModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="exportModalTitle">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title" id="exportModalTitle">Export Preview</div>
+          <div class="modal-meta" id="exportModalMeta"></div>
+        </div>
+        <button id="exportModalClose" type="button">Close</button>
+      </div>
+      <video class="modal-video" id="exportModalVideo" controls playsinline></video>
+      <div class="modal-actions">
+        <a id="exportModalDownload" download>Download MOV</a>
+        <button id="exportModalOpen" type="button">Open in New Tab</button>
+      </div>
+    </div>
+  </div>
   <script src="./obs-auth.js"></script>
   <script src="./timeline-utils.js"></script>
   <script src="./app.js" defer></script>
