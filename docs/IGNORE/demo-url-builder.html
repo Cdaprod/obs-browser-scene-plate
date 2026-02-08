@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Mobile URL Builder</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0a0a0a;
+      color: #e0e0e0;
+      overscroll-behavior: none;
+    }
+
+    /* Main container with video player below */
+    .page-container {
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+
+    /* Controls section - takes minimal space */
+    .controls-section {
+      flex-shrink: 0;
+      background: #0a0a0a;
+      border-bottom: 1px solid #2d3139;
+    }
+
+    /* Video section - fills remaining space */
+    .video-section {
+      flex: 1;
+      background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 200px;
+      position: relative;
+    }
+
+    .video-placeholder {
+      color: #444;
+      font-size: 14px;
+      text-align: center;
+    }
+
+    /* Compact header */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      background: #1a1d23;
+      border-bottom: 1px solid #2d3139;
+      min-height: 44px;
+    }
+
+    .header-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #9da5b4;
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .collapse-btn {
+      background: none;
+      border: none;
+      color: #7a8090;
+      font-size: 18px;
+      padding: 4px 8px;
+      cursor: pointer;
+      transition: transform 0.3s ease;
+      flex-shrink: 0;
+    }
+
+    .controls-section.collapsed .collapse-btn {
+      transform: rotate(-90deg);
+    }
+
+    /* Collapsible content */
+    .controls-content {
+      max-height: 70vh;
+      overflow-y: auto;
+      overflow-x: hidden;
+      transition: max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .controls-section.collapsed .controls-content {
+      max-height: 0;
+      overflow: hidden;
+    }
+
+    /* URL display - compact */
+    .url-section {
+      padding: 8px 12px;
+      background: #0d0f14;
+      border-bottom: 1px solid #2d3139;
+    }
+
+    .url-display {
+      font-family: 'Monaco', 'Courier New', monospace;
+      font-size: 10px;
+      line-height: 1.4;
+      color: #5eb3f6;
+      word-break: break-all;
+      max-height: 60px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .url-display.expanded {
+      max-height: none;
+    }
+
+    .url-toggle {
+      text-align: center;
+      padding: 4px;
+      font-size: 10px;
+      color: #7a8090;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    /* Warning pills - horizontally scrollable */
+    .warnings-section {
+      padding: 8px 12px;
+      background: #1a1d23;
+      border-bottom: 1px solid #2d3139;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+    }
+
+    .warnings-section::-webkit-scrollbar {
+      display: none;
+    }
+
+    .warnings-container {
+      display: flex;
+      gap: 6px;
+      min-width: min-content;
+    }
+
+    .warning-pill {
+      background: #2c5282;
+      border: 1px solid #3d7ac2;
+      border-radius: 12px;
+      padding: 4px 10px;
+      font-size: 9px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    /* Parameters - compact grid */
+    .params-section {
+      padding: 8px 12px;
+      background: #1a1d23;
+      border-bottom: 1px solid #2d3139;
+    }
+
+    .params-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+    }
+
+    .param-group {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .param-label {
+      font-size: 9px;
+      color: #7a8090;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .param-value {
+      background: #3d5a7e;
+      border: 1px solid #4d6a8e;
+      border-radius: 8px;
+      padding: 6px 8px;
+      font-size: 12px;
+      font-weight: 500;
+      color: #fff;
+      text-align: center;
+      border: none;
+      outline: none;
+      width: 100%;
+      font-family: inherit;
+    }
+
+    .param-value:focus {
+      background: #5d8abe;
+      box-shadow: 0 0 0 2px rgba(93, 138, 190, 0.3);
+    }
+
+    /* Quick actions - always visible */
+    .quick-actions {
+      display: flex;
+      gap: 6px;
+      padding: 8px 12px;
+      background: #252930;
+      border-bottom: 1px solid #2d3139;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+    }
+
+    .quick-actions::-webkit-scrollbar {
+      display: none;
+    }
+
+    .btn {
+      background: #3d4350;
+      border: none;
+      border-radius: 6px;
+      padding: 8px 14px;
+      font-size: 11px;
+      color: #e0e0e0;
+      cursor: pointer;
+      font-weight: 600;
+      white-space: nowrap;
+      flex-shrink: 0;
+      transition: background 0.2s;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .btn:active {
+      background: #4d5360;
+      transform: scale(0.97);
+    }
+
+    .btn-primary {
+      background: #2c5282;
+    }
+
+    .btn-primary:active {
+      background: #3d7ac2;
+    }
+
+    /* Advanced section - collapsible */
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      background: #1a1d23;
+      border-bottom: 1px solid #2d3139;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+
+    .section-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: #7a8090;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .section-icon {
+      font-size: 12px;
+      color: #7a8090;
+      transition: transform 0.3s ease;
+    }
+
+    .section.collapsed .section-icon {
+      transform: rotate(-90deg);
+    }
+
+    .section-content {
+      max-height: 500px;
+      overflow: hidden;
+      transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .section.collapsed .section-content {
+      max-height: 0;
+    }
+
+    /* Toast notification */
+    .toast {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      background: #2c5282;
+      border: 1px solid #3d7ac2;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-size: 12px;
+      opacity: 0;
+      transition: all 0.3s ease;
+      z-index: 1000;
+      pointer-events: none;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    /* Mode indicator */
+    .mode-indicator {
+      display: inline-block;
+      padding: 2px 6px;
+      background: #2d3139;
+      border-radius: 4px;
+      font-size: 9px;
+      color: #7a8090;
+      margin-left: 8px;
+    }
+
+    /* Minimize everything further for ultra-compact mode */
+    body.ultra-compact .params-grid {
+      grid-template-columns: repeat(4, 1fr);
+      gap: 4px;
+    }
+
+    body.ultra-compact .param-value {
+      padding: 4px 6px;
+      font-size: 11px;
+    }
+
+    body.ultra-compact .param-label {
+      font-size: 8px;
+    }
+
+    body.ultra-compact .warnings-section {
+      padding: 6px 12px;
+    }
+
+    body.ultra-compact .warning-pill {
+      padding: 3px 8px;
+      font-size: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="page-container">
+    <!-- Controls section -->
+    <div class="controls-section" id="controlsSection">
+      <div class="header">
+        <div class="header-title">
+          Preview Builder
+          <span class="mode-indicator">Mobile Optimized</span>
+        </div>
+        <button class="collapse-btn" onclick="toggleControls()">▼</button>
+      </div>
+
+      <div class="controls-content">
+        <!-- Quick Actions - Always visible when expanded -->
+        <div class="quick-actions">
+          <button class="btn btn-primary" onclick="copyURL()">Copy URL</button>
+          <button class="btn" onclick="openTab()">Open</button>
+          <button class="btn">Reload</button>
+          <button class="btn" onclick="toggleCompact()">Compact</button>
+        </div>
+
+        <!-- URL Display -->
+        <div class="url-section">
+          <div class="url-display" id="urlDisplay">
+            <span style="color: #7a8090;">http://192.168.0.25:8789/overlays/centered_text_segmented_typewriter.html</span><span style="color: #f39c12;">?s1=</span><span style="color: #5eb3f6;">THIS%20VIDEO%20CONTAINS%20SENSITIVE%20MATERIAL.</span><span style="color: #f39c12;">&s2=</span><span style="color: #5eb3f6;">THE%20FOLLOWING%20CONTENT%20MAY%20BE%20DISTURBING.</span>
+          </div>
+          <div class="url-toggle" onclick="toggleURL()">Show Full URL ▼</div>
+        </div>
+
+        <!-- Warnings -->
+        <div class="warnings-section">
+          <div class="warnings-container">
+            <div class="warning-pill">⚠️ SENSITIVE MATERIAL</div>
+            <div class="warning-pill" style="background: #c27803; border-color: #d39a2c;">⚠️ DISTURBING</div>
+            <div class="warning-pill" style="background: #7c3103; border-color: #8d4c2c;">⚠️ DISCRETION</div>
+          </div>
+        </div>
+
+        <!-- Main Parameters -->
+        <div class="params-section">
+          <div class="params-grid">
+            <div class="param-group">
+              <div class="param-label">In</div>
+              <input type="number" class="param-value" value="420">
+            </div>
+            <div class="param-group">
+              <div class="param-label">Out</div>
+              <input type="number" class="param-value" value="360">
+            </div>
+            <div class="param-group">
+              <div class="param-label">Hold</div>
+              <input type="number" class="param-value" value="2600">
+            </div>
+            <div class="param-group">
+              <div class="param-label">Gap</div>
+              <input type="number" class="param-value" value="320">
+            </div>
+            <div class="param-group">
+              <div class="param-label">CPS</div>
+              <input type="number" class="param-value" value="22">
+            </div>
+            <div class="param-group">
+              <div class="param-label">Pause</div>
+              <input type="number" class="param-value" value="650">
+            </div>
+          </div>
+        </div>
+
+        <!-- Advanced Parameters - Collapsible -->
+        <div class="section collapsed" id="advancedSection">
+          <div class="section-header" onclick="toggleSection('advancedSection')">
+            <div class="section-title">Advanced Parameters</div>
+            <div class="section-icon">▼</div>
+          </div>
+          <div class="section-content">
+            <div class="params-section">
+              <div class="params-grid">
+                <div class="param-group">
+                  <div class="param-label">Start</div>
+                  <input type="number" class="param-value" value="0">
+                </div>
+                <div class="param-group">
+                  <div class="param-label">Jitter</div>
+                  <input type="number" class="param-value" value="0">
+                </div>
+                <div class="param-group">
+                  <div class="param-label">Micro</div>
+                  <input type="number" class="param-value" value="0">
+                </div>
+                <div class="param-group">
+                  <div class="param-label">Mode</div>
+                  <input type="text" class="param-value" value="once">
+                </div>
+                <div class="param-group">
+                  <div class="param-label">Spot</div>
+                  <input type="text" class="param-value" value="0.20">
+                </div>
+                <div class="param-group">
+                  <div class="param-label">Audio</div>
+                  <input type="number" class="param-value" value="0">
+                </div>
+                <div class="param-group">
+                  <div class="param-label">Vol</div>
+                  <input type="text" class="param-value" value="0.65">
+                </div>
+                <div class="param-group">
+                  <div class="param-label">Rate</div>
+                  <input type="text" class="param-value" value="tick">
+                </div>
+                <div class="param-group">
+                  <div class="param-label">Space</div>
+                  <input type="number" class="param-value" value="0">
+                </div>
+                <div class="param-group">
+                  <div class="param-label">Unlock</div>
+                  <input type="text" class="param-value" value="auto">
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Video section - fills remaining space -->
+    <div class="video-section">
+      <div class="video-placeholder">
+        <div style="font-size: 48px; margin-bottom: 8px;">▶️</div>
+        <div>Video Player Area</div>
+        <div style="font-size: 11px; margin-top: 8px; color: #333;">This space is reserved for your video content</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast">URL copied to clipboard!</div>
+
+  <script>
+    function toggleControls() {
+      document.getElementById('controlsSection').classList.toggle('collapsed');
+    }
+
+    function toggleSection(id) {
+      document.getElementById(id).classList.toggle('collapsed');
+    }
+
+    function toggleURL() {
+      const display = document.getElementById('urlDisplay');
+      display.classList.toggle('expanded');
+      event.target.textContent = display.classList.contains('expanded') 
+        ? 'Show Less ▲' 
+        : 'Show Full URL ▼';
+    }
+
+    function toggleCompact() {
+      document.body.classList.toggle('ultra-compact');
+      event.target.textContent = document.body.classList.contains('ultra-compact')
+        ? 'Standard'
+        : 'Compact';
+    }
+
+    function copyURL() {
+      const urlText = document.getElementById('urlDisplay').textContent;
+      navigator.clipboard.writeText(urlText).then(() => {
+        showToast('URL copied to clipboard!');
+      });
+    }
+
+    function openTab() {
+      const urlText = document.getElementById('urlDisplay').textContent;
+      window.open(urlText, '_blank');
+    }
+
+    function showToast(message) {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 2000);
+    }
+
+    // Prevent scroll bounce on iOS
+    document.querySelector('.controls-content').addEventListener('touchmove', function(e) {
+      if (this.scrollTop === 0 && e.touches[0].clientY > this.getBoundingClientRect().top) {
+        e.preventDefault();
+      }
+      if (this.scrollTop + this.clientHeight >= this.scrollHeight && 
+          e.touches[0].clientY < this.getBoundingClientRect().bottom) {
+        e.preventDefault();
+      }
+    });
+  </script>
+</body>
+</html>

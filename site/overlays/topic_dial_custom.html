@@ -1,3 +1,4 @@
+/overlays/topic_dial_custom.html
 <!doctype html>
 <html lang="en">
 <head>
@@ -13,7 +14,6 @@
       --title-size: clamp(12px, 1.2vmin, 16px);
       --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 
-      /* Ascetic palette (but legible) */
       --fg: rgba(255,255,255,0.94);
       --fg-dim: rgba(255,255,255,0.44);
       --stroke: rgba(255,255,255,0.14);
@@ -83,7 +83,7 @@
       border-radius: 999px;
       border: 2px solid var(--stroke);
       box-sizing: border-box;
-      overflow: hidden; /* ring visuals clipped; labels are in separate layer */
+      overflow: hidden;
       background:
         radial-gradient(circle at 50% 50%, rgba(255,255,255,0.06) 0%, rgba(255,255,255,0.02) 38%, rgba(255,255,255,0.00) 66%),
         radial-gradient(circle at 50% 50%, rgba(0,0,0,0.12) 0%, rgba(0,0,0,0.00) 62%);
@@ -142,7 +142,6 @@
       z-index: 3;
     }
 
-    /* Rotating visuals only */
     .dial{
       position: absolute;
       inset: 0;
@@ -184,13 +183,12 @@
       pointer-events: none;
     }
 
-    /* Labels are NOT inside the rotating dial. */
     .label-layer{
       position: absolute;
       inset: 0;
       border-radius: 999px;
       pointer-events: none;
-      z-index: 5; /* above visuals */
+      z-index: 5;
     }
 
     .label{
@@ -297,45 +295,68 @@
         </div>
       </div>
 
-      <!-- labels are outside ring clipping -->
       <div class="label-layer" id="labelLayer" aria-hidden="true"></div>
     </div>
   </div>
 
-  <script src="topic_dial_custom_logic.js"></script>
   <script>
-    /**
-     * Default URL (full params):
-     *  http://<HOST_IP>:8789/overlays/topic_dial_custom.html?n=6&labels=FAMILY|THE%20STORY|THE%20BUILD|THE%20CRAFT|PRINCIPLES|PROCESS&index=random&autospin=1
-     *
-     * URL PARAMS
-     * - n / count: number of categories on the dial
-     * - labels: pipe or comma-separated labels
-     *     Example:
-     *       ?n=6&labels=FAMILY|THE%20STORY|THE%20BUILD|THE%20CRAFT|PRINCIPLES|PROCESS
-     *   Commas also work:
-     *       ?count=3&labels=FAMILY,THE%20BUILD,PROCESS
-     * - t1..tN: explicit per-slot labels (overrides labels order)
-     *     Example:
-     *       ?n=4&t1=FAMILY&t2=THE%20STORY&t3=THE%20BUILD&t4=PROCESS
-     * - index / land / landing: 1-based index to force landing (use random/auto/off to opt out)
-     *
-     * Existing behavior preserved:
-     * - topic=... forces landing on a matching label (normalized match)
-     * - seed=... seeded random selection
-     * - autospin=0 disables auto spin
-     */
+  /**
+   * topic_dial_custom.html
+   *
+   * Cinematic topic “dial” / selector for OBS browser sources.
+   * - Orbiting label pills stay upright + readable while the dial visuals rotate.
+   * - Lands on a specific wedge via URL (index or label), seeded random, or plain random.
+   * - Optional dynamic topic lists via URL (labels / t1..tN) or runtime API (setTopics).
+   *
+   * Default URL (full params):
+   *  http://<HOST_IP>:8789/overlays/topic_dial_custom.html?n=6&labels=FAMILY|THE%20STORY|THE%20BUILD|THE%20CRAFT|PRINCIPLES|PROCESS&landTopic=THE%20BUILD&autospin=1
+   *
+   * Topic list params:
+   *   n=6 | count=6
+   *     Number of wedges/slots (1..24). If omitted, inferred from labels/defaults.
+   *
+   *   labels=FAMILY|THE%20STORY|THE%20BUILD|THE%20CRAFT|PRINCIPLES|PROCESS
+   *     Pipe (|) or comma-separated label list.
+   *
+   *   t1=...&t2=...&t3=... (overrides by slot)
+   *     Per-slot explicit labels (1-based). Overrides labels order.
+   *     Example:
+   *       ?n=4&t1=FAMILY&t2=THE%20STORY&t3=THE%20BUILD&t4=PROCESS
+   *
+   * Landing params (priority order):
+   *   index=3 | land=3 | landing=3
+   *     1-based wedge index to land on.
+   *
+   *   landTopic=THE%20BUILD
+   *     Land on the wedge whose label matches (normalized match).
+   *     Aliases accepted: land_topic, landtopic.
+   *
+   *   topic=THE%20BUILD
+   *     Backwards-compatible label landing (same match rules as landTopic).
+   *
+   * Randomness params:
+   *   seed=abc123
+   *     Deterministic pick (same seed => same landing result for given topics).
+   *
+   *   autospin=1 | autospin=0
+   *     Auto-start the spin on load (default: 1). Set 0 to disable.
+   *
+   * Runtime API (JS):
+   *   window.spin()
+   *   window.setIndex(3)                 // 1-based
+   *   window.setTopic("THE BUILD")       // label match (normalized)
+   *   window.setTopics("A|B|C", 3)       // labels string + optional count
+   *   window.setTopics(["A","B","C","D"])// array form
+   *
+   * Examples:
+   *   ?index=1&autospin=1
+   *   ?landTopic=PROCESS&autospin=1
+   *   ?labels=A|B|C|D&seed=42
+   *   ?n=5&t1=ONE&t2=TWO&t3=THREE&t4=FOUR&t5=FIVE&index=4
+   */
 
-    const TOPICS_DEFAULT = [
-      "FAMILY",
-      "THE STORY",
-      "THE BUILD",
-      "THE CRAFT",
-      "PRINCIPLES",
-      "PROCESS",
-    ];
+    const TOPICS_DEFAULT = ["FAMILY","THE STORY","THE BUILD","THE CRAFT","PRINCIPLES","PROCESS"];
 
-    // Spin feel (unchanged)
     const SPIN_MIN_MS = 2200;
     const SPIN_MAX_MS = 3200;
     const HOLD_AFTER_LAND_MS = 900;
@@ -352,99 +373,6 @@
     const labelLayer = document.getElementById("labelLayer");
     const topicReadout = document.getElementById("topicReadout");
     const meta = document.getElementById("meta");
-
-    const TopicDialLogic = window.TopicDialLogic || (() => {
-      const clampLocal = (n, a, b) => Math.max(a, Math.min(b, n));
-
-      function formatTopicDisplayLocal(value){
-        const text = String(value === null || value === undefined ? "" : value)
-          .trim()
-          .replace(/\s+/g, " ");
-        return text.length ? text.toUpperCase() : "—";
-      }
-
-      function splitLabelsStringLocal(value){
-        if (!value) return [];
-        const raw = String(value).trim();
-        if (!raw) return [];
-        const parts = raw.includes("|") ? raw.split("|") : raw.split(",");
-        return parts.map((part) => part.trim()).filter(Boolean);
-      }
-
-      function buildTopicsFromParamsLocal({ params, defaults, maxCount = 24 }){
-        const safeDefaults = Array.isArray(defaults) && defaults.length ? defaults : ["TOPIC"];
-        const safeParams = params || {};
-        const nRaw = safeParams.n;
-        const n = nRaw != null ? clampLocal(parseInt(nRaw, 10) || 0, 1, maxCount) : null;
-
-        let fromLabels = splitLabelsStringLocal(safeParams.labels);
-
-        const cap = n !== null && n !== undefined
-          ? n
-          : Math.max(fromLabels.length, safeDefaults.length, 1);
-        const slotOverrides = [];
-        for (let i = 1; i <= cap; i += 1){
-          const override = safeParams.t ? safeParams.t(i) : null;
-          if (override != null && String(override).trim().length){
-            slotOverrides[i - 1] = String(override).trim();
-          }
-        }
-
-        let topics = fromLabels.length ? [...fromLabels] : [...safeDefaults];
-
-        if (slotOverrides.length){
-          const needLen = Math.max(topics.length, slotOverrides.length);
-          if (topics.length < needLen){
-            for (let i = topics.length; i < needLen; i += 1){
-              topics[i] = safeDefaults[i % safeDefaults.length];
-            }
-          }
-          for (let i = 0; i < slotOverrides.length; i += 1){
-            if (slotOverrides[i] != null && String(slotOverrides[i]).trim().length){
-              topics[i] = slotOverrides[i];
-            }
-          }
-        }
-
-        if (n != null){
-          if (topics.length > n) topics = topics.slice(0, n);
-          if (topics.length < n){
-            for (let i = topics.length; i < n; i += 1){
-              topics.push(safeDefaults[i % safeDefaults.length]);
-            }
-          }
-        }
-
-        topics = topics.map(formatTopicDisplayLocal);
-        return topics.length ? topics : safeDefaults.map(formatTopicDisplayLocal);
-      }
-
-      function parseLandingIndexLocal(value, maxCount){
-        if (value === null || value === undefined) return null;
-        const cleaned = String(value).trim().toLowerCase();
-        if (!cleaned || cleaned === "random" || cleaned === "auto" || cleaned === "off") return null;
-        const num = parseInt(cleaned, 10);
-        if (!Number.isFinite(num) || num <= 0) return null;
-        if (Number.isFinite(maxCount)){
-          return clampLocal(num, 1, maxCount);
-        }
-        return num;
-      }
-
-      return {
-        formatTopicDisplay: formatTopicDisplayLocal,
-        splitLabelsString: splitLabelsStringLocal,
-        buildTopicsFromParams: buildTopicsFromParamsLocal,
-        parseLandingIndex: parseLandingIndexLocal
-      };
-    })();
-
-    const {
-      formatTopicDisplay,
-      splitLabelsString,
-      buildTopicsFromParams,
-      parseLandingIndex
-    } = TopicDialLogic;
 
     const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
     const lerp  = (a, b, t) => a + (b - a) * t;
@@ -463,6 +391,12 @@
       return `${hh}:${mm}:${ss}`;
     }
 
+    function easeOutResist(t){
+      const c = 1 - Math.pow(1 - t, 3);
+      const resist = 1 - Math.pow(1 - t, 6);
+      return lerp(c, resist, 0.35);
+    }
+
     function showReadout(text){
       topicReadout.textContent = text;
       topicReadout.classList.add("is-visible");
@@ -471,12 +405,35 @@
       topicReadout.classList.remove("is-visible");
     }
 
-    // Normalize for matching (keeps your existing forgiving match behavior)
     function normTopic(s){
       return String(s || "")
         .toUpperCase()
-        .replace(/[\s_-]+/g, "")   // ignore spaces/underscore/dashes for matching
+        .replace(/[\s_-]+/g, "")
         .trim();
+    }
+
+    function formatTopicDisplay(value){
+      const text = String(value === null || value === undefined ? "" : value)
+        .trim()
+        .replace(/\s+/g, " ");
+      return text.length ? text.toUpperCase() : "—";
+    }
+
+    function splitLabelsString(value){
+      if (!value) return [];
+      const raw = String(value).trim();
+      if (!raw) return [];
+      const parts = raw.includes("|") ? raw.split("|") : raw.split(",");
+      return parts.map((part) => part.trim()).filter(Boolean);
+    }
+
+    function parseLandingIndex(value, maxCount){
+      if (value === null || value === undefined) return null;
+      const cleaned = String(value).trim().toLowerCase();
+      if (!cleaned || cleaned === "random" || cleaned === "auto" || cleaned === "off") return null;
+      const num = parseInt(cleaned, 10);
+      if (!Number.isFinite(num) || num <= 0) return null;
+      return Number.isFinite(maxCount) ? clamp(num, 1, maxCount) : num;
     }
 
     function parseParams(){
@@ -485,19 +442,22 @@
       const nParam = p.get("n");
       const indexParam = p.get("index");
       return {
-        topic: p.get("topic"),     // force landing (existing)
-        seed: p.get("seed"),       // seeded random (existing)
-        autospin: p.get("autospin") !== "0",
-        // new:
+        // dynamic topics
         n: nParam !== null ? nParam : p.get("count"),
         labels: p.get("labels"),
-        index: indexParam || p.get("land") || p.get("landing"),
-        // per-index labels:
         t: (i) => p.get(`t${i}`),
+
+        // landing controls
+        index: indexParam || p.get("land") || p.get("landing"),
+        topic: p.get("topic"),                      // existing alias
+        landTopic: p.get("landTopic") || p.get("land_topic") || p.get("landtopic"),
+
+        // randomness controls
+        seed: p.get("seed"),
+        autospin: p.get("autospin") !== "0",
       };
     }
 
-    // seeded RNG helpers
     function xmur3(str) {
       let h = 1779033703 ^ str.length;
       for (let i = 0; i < str.length; i++) {
@@ -533,21 +493,7 @@
       return weights.length - 1;
     }
 
-    function easeOutResist(t){
-      const c = 1 - Math.pow(1 - t, 3);
-      const resist = 1 - Math.pow(1 - t, 6);
-      return lerp(c, resist, 0.35);
-    }
-
-    // -----------------------------
-    // Dynamic dial state (NEW)
-    // -----------------------------
-    const state = {
-      topics: [...TOPICS_DEFAULT],
-      weights: [],
-      N: 0,
-      SEG: 0,
-    };
+    const state = { topics: [...TOPICS_DEFAULT], weights: [], N: 0, SEG: 0 };
 
     function recomputeState(){
       state.N = Math.max(1, state.topics.length);
@@ -555,92 +501,110 @@
       state.weights = state.topics.map(() => 1);
     }
 
-    function buildTopicsFromParamsWithDefaults(params){
-      return buildTopicsFromParams({
-        params,
-        defaults: TOPICS_DEFAULT,
-        maxCount: 24
-      });
+    function buildTopicsFromParams({ params, defaults, maxCount = 24 }){
+      const safeDefaults = Array.isArray(defaults) && defaults.length ? defaults : ["TOPIC"];
+      const safeParams = params || {};
+
+      const nRaw = safeParams.n;
+      const n = nRaw != null ? clamp(parseInt(nRaw, 10) || 0, 1, maxCount) : null;
+
+      const fromLabels = splitLabelsString(safeParams.labels);
+
+      const cap = n !== null && n !== undefined
+        ? n
+        : Math.max(fromLabels.length, safeDefaults.length, 1);
+
+      const slotOverrides = [];
+      for (let i = 1; i <= cap; i += 1){
+        const override = safeParams.t ? safeParams.t(i) : null;
+        if (override != null && String(override).trim().length){
+          slotOverrides[i - 1] = String(override).trim();
+        }
+      }
+
+      let topics = fromLabels.length ? [...fromLabels] : [...safeDefaults];
+
+      if (slotOverrides.length){
+        const needLen = Math.max(topics.length, slotOverrides.length);
+        if (topics.length < needLen){
+          for (let i = topics.length; i < needLen; i += 1){
+            topics[i] = safeDefaults[i % safeDefaults.length];
+          }
+        }
+        for (let i = 0; i < slotOverrides.length; i += 1){
+          if (slotOverrides[i] != null && String(slotOverrides[i]).trim().length){
+            topics[i] = slotOverrides[i];
+          }
+        }
+      }
+
+      if (n != null){
+        if (topics.length > n) topics = topics.slice(0, n);
+        if (topics.length < n){
+          for (let i = topics.length; i < n; i += 1){
+            topics.push(safeDefaults[i % safeDefaults.length]);
+          }
+        }
+      }
+
+      topics = topics.map(formatTopicDisplay);
+      return topics.length ? topics : safeDefaults.map(formatTopicDisplay);
     }
 
     function applyTopics(topics){
-      state.topics = topics.map(formatTopicDisplay);
+      state.topics = (topics || []).map(formatTopicDisplay);
       recomputeState();
-      buildLabels();                // rebuild DOM nodes
-      updateLabelOrbit(currentDeg); // re-place immediately
+      buildLabels();
+      updateLabelOrbit(currentDeg);
       setActiveIndex(activeIndexFromRotation(currentDeg));
     }
 
-    // -----------------------------
-    // Geometry helpers (now dynamic)
-    // -----------------------------
     function activeIndexFromRotation(rotDeg){
       const rot = normalizeDeg(rotDeg);
       const idx = Math.round(((360 - rot) % 360) / state.SEG) % state.N;
       return idx;
     }
-
-    // Land index i under pointer at TOP: rot = -i*SEG
     function targetRotationForIndex(i){
       return -(i * state.SEG);
     }
 
-    // -----------------------------
-    // Labels
-    // -----------------------------
     const labelEls = [];
-
     function buildLabels(){
       labelLayer.innerHTML = "";
       labelEls.length = 0;
-
       for (let i = 0; i < state.N; i++){
         const div = document.createElement("div");
         div.className = "label";
         div.dataset.idx = String(i);
-
         const span = document.createElement("span");
-        const topicLabel = state.topics[i];
-        span.textContent = topicLabel === null || topicLabel === undefined ? "—" : topicLabel;
+        span.textContent = state.topics[i] ?? "—";
         div.appendChild(span);
-
         labelLayer.appendChild(div);
         labelEls.push(div);
       }
     }
-
     function setActiveIndex(idx){
       for (let i = 0; i < labelEls.length; i++){
         labelEls[i].classList.toggle("is-active", i === idx);
       }
     }
-
     function updateLabelOrbit(dialRotDeg){
-      // radius in px based on actual rendered size
       const rect = hud.getBoundingClientRect();
       const size = Math.min(rect.width, rect.height);
-
-      // tight enough to feel “mounted”, wide enough to read
       const R = size * 0.40;
-
       const rot = normalizeDeg(dialRotDeg);
 
       for (let i = 0; i < state.N; i++){
         const ang = (rot + i * state.SEG) - 90;
         const rad = ang * Math.PI / 180;
-
         const x = Math.cos(rad) * R;
         const y = Math.sin(rad) * R;
-
         labelEls[i].style.setProperty("--x", `${x.toFixed(2)}px`);
         labelEls[i].style.setProperty("--y", `${y.toFixed(2)}px`);
         labelEls[i].style.setProperty("--rot", `0deg`);
       }
     }
 
-    // -----------------------------
-    // Spin engine
-    // -----------------------------
     let currentDeg = 0;
     let isSpinning = false;
     let forcedIndex = null;
@@ -650,30 +614,38 @@
     }
 
     function chooseIndex(params){
-      // forced by topic string
+      // 1) explicit index
       const landingIndex = parseLandingIndex(params.index, state.N);
       if (landingIndex != null){
         return { index: landingIndex - 1, mode: "index" };
       }
 
+      // 2) explicit landTopic (preferred for "default landing" via URL)
+      if (params.landTopic){
+        const want = normTopic(params.landTopic);
+        const idx = state.topics.findIndex(t => normTopic(t) === want);
+        if (idx >= 0) return { index: idx, mode: "landTopic" };
+      }
+
+      // 3) existing topic alias (kept for backwards compatibility)
       if (params.topic){
         const want = normTopic(params.topic);
         const idx = state.topics.findIndex(t => normTopic(t) === want);
         if (idx >= 0) return { index: idx, mode: "topic" };
       }
 
-      // forced by API
+      // 4) forced by API
       if (forcedIndex !== null && forcedIndex >= 0 && forcedIndex < state.N){
         return { index: forcedIndex, mode: "forced" };
       }
 
-      // seeded random
+      // 5) seeded random
       if (params.seed){
         const rng = makeRng(String(params.seed));
         return { index: weightedPickIndex(state.weights, rng), mode: "seed" };
       }
 
-      // plain random
+      // 6) random
       return { index: weightedPickIndex(state.weights, Math.random), mode: "random" };
     }
 
@@ -684,12 +656,8 @@
       hud.classList.remove("post-hold");
       hideReadout();
 
-      const duration = opts.duration !== undefined
-        ? opts.duration
-        : Math.floor(lerp(SPIN_MIN_MS, SPIN_MAX_MS, Math.random()));
-      const turns = opts.turns !== undefined
-        ? opts.turns
-        : Math.floor(lerp(BASE_TURNS_MIN, BASE_TURNS_MAX + 0.999, Math.random()));
+      const duration = opts.duration ?? Math.floor(lerp(SPIN_MIN_MS, SPIN_MAX_MS, Math.random()));
+      const turns = opts.turns ?? Math.floor(lerp(BASE_TURNS_MIN, BASE_TURNS_MAX + 0.999, Math.random()));
       const base = turns * 360;
 
       const target = targetRotationForIndex(index);
@@ -722,10 +690,9 @@
         else {
           microSettle(index).then(() => {
             setActiveIndex(index);
-            const landedTopic = state.topics[index];
-            const landedLabel = landedTopic === null || landedTopic === undefined ? "—" : landedTopic;
-            showReadout(landedLabel);
-            meta.textContent = `${nowStamp()}  •  ${landedLabel}`;
+            const landed = state.topics[index] ?? "—";
+            showReadout(landed);
+            meta.textContent = `${nowStamp()}  •  ${landed}`;
 
             setTimeout(() => {
               if (POST_HOLD_DIM) hud.classList.add("post-hold");
@@ -775,9 +742,7 @@
       });
     }
 
-    // -----------------------------
-    // Public API (expanded)
-    // -----------------------------
+    // Public API
     window.spin = () => {
       const params = parseParams();
       const chosen = chooseIndex(params);
@@ -801,10 +766,8 @@
       }
     };
 
-    // NEW: set topics at runtime (string "A|B|C" OR array)
     window.setTopics = (labels, countMaybe) => {
-      const rawLabels = labels === null || labels === undefined ? "" : labels;
-      let topics = Array.isArray(rawLabels) ? rawLabels : splitLabelsString(String(rawLabels));
+      let topics = Array.isArray(labels) ? labels : splitLabelsString(String(labels ?? ""));
       if (!topics.length) topics = [...TOPICS_DEFAULT];
 
       const n = countMaybe != null ? clamp(parseInt(countMaybe, 10) || 0, 1, 24) : null;
@@ -817,10 +780,8 @@
         }
       }
 
-      // preserve where you are visually
       applyTopics(topics);
 
-      // keep the dial “snapped” to the closest wedge boundary so pointer stays clean
       const idx = activeIndexFromRotation(currentDeg);
       const snapped = targetRotationForIndex(idx);
       currentDeg = snapped;
@@ -836,8 +797,6 @@
         window.spin();
         return;
       }
-
-      // Digit shortcuts (1..9) adapt to current N (unchanged feel, now dynamic)
       if (e.key >= "1" && e.key <= "9"){
         const idx = Number(e.key) - 1;
         if (idx >= 0 && idx < state.N){
@@ -848,20 +807,15 @@
       }
     });
 
-    // -----------------------------
-    // Boot
-    // -----------------------------
     (function boot(){
       const params = parseParams();
 
-      // Apply dynamic topics BEFORE building labels
-      const topics = buildTopicsFromParamsWithDefaults(params);
+      const topics = buildTopicsFromParams({ params, defaults: TOPICS_DEFAULT, maxCount: 24 });
       applyTopics(topics);
 
       const chosen = chooseIndex(params);
       meta.textContent = `${nowStamp()}  •  ${chosen.mode.toUpperCase()}`;
 
-      // initial placement
       updateLabelOrbit(currentDeg);
       setActiveIndex(activeIndexFromRotation(currentDeg));
 
@@ -875,10 +829,7 @@
       }
     })();
 
-    // keep labels correct on resize/orientation change
-    window.addEventListener("resize", () => {
-      updateLabelOrbit(currentDeg);
-    });
+    window.addEventListener("resize", () => updateLabelOrbit(currentDeg));
   </script>
 </body>
 </html>
