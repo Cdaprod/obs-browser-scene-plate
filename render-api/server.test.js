@@ -12,7 +12,17 @@ const {
   normalizeRenderUrl,
   parseProgramMonitorText,
   classifyProgramMonitorUrl,
-  buildProgramMonitorFilename
+  buildProgramMonitorFilename,
+  createStageEntry,
+  readStageEntry,
+  writeStage,
+  readStage,
+  deleteStage,
+  gcStages,
+  atomicWriteJson,
+  projectTimelinePath,
+  readJsonSafe,
+  listProjectExports
 } = require('./server');
 
 test('safeName sanitizes unsafe characters and trims length', () => {
@@ -121,4 +131,102 @@ test('buildProgramMonitorFilename is deterministic', () => {
     seconds: null
   });
   assert.equal(filename, 'program-monitor-node_1080x1920_60fps_auto_abc123.mov');
+});
+
+test('stage cache stores and reads entries on disk', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stage-cache-'));
+  try {
+    const entry = createStageEntry({
+      dir: tempDir,
+      ttlSeconds: 120,
+      payload: {
+        timeline: { version: 1, nodes: [{ text: 'http://example.com/base.mp4' }] },
+        name: 'Test Stage',
+        createdBy: 'test'
+      }
+    });
+
+    const stored = readStageEntry({ stageId: entry.id, dir: tempDir });
+    assert.ok(stored);
+    assert.equal(stored.payload.name, 'Test Stage');
+    assert.equal(stored.payload.timeline.nodes.length, 1);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('gcStages deletes expired entries', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stage-cache-expire-'));
+  try {
+    const entry = createStageEntry({
+      dir: tempDir,
+      ttlSeconds: 1,
+      payload: { timeline: { version: 1, nodes: [{ text: 'http://example.com/base.mp4' }] } }
+    });
+
+    gcStages({ dir: tempDir, now: Date.now() + 5000 });
+    const stored = readStageEntry({ stageId: entry.id, dir: tempDir });
+    assert.equal(stored, null);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('stage cache survives restart via disk read', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'stage-cache-restart-'));
+  try {
+    const stageId = 'stage-restart';
+    writeStage({
+      dir: tempDir,
+      stageId,
+      expiresAt: new Date(Date.now() + 60000).toISOString(),
+      payload: { timeline: { version: 1, nodes: [{ text: 'http://example.com/base.mp4' }] } }
+    });
+    const stored = readStage({ stageId, dir: tempDir });
+    assert.ok(stored);
+    deleteStage({ stageId, dir: tempDir });
+    const deleted = readStage({ stageId, dir: tempDir });
+    assert.equal(deleted, null);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('project timeline writes and reads from disk', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'projects-'));
+  try {
+    const projectId = 'demo-project';
+    const timelinePath = projectTimelinePath(projectId, { baseDir: tempDir });
+    const timeline = { version: 1, nodes: [{ text: 'http://example.com/base.mp4' }], activeIndex: 0 };
+    atomicWriteJson(timelinePath, timeline);
+
+    const loaded = readJsonSafe(timelinePath, null);
+    assert.deepEqual(loaded, timeline);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('listProjectExports returns manifests in newest order', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'exports-'));
+  try {
+    const projectId = 'demo-project';
+    const exportDir = path.join(tempDir, projectId, 'exports', 'job-1');
+    fs.mkdirSync(exportDir, { recursive: true });
+    const manifestPath = path.join(exportDir, 'manifest.json');
+    const manifest = {
+      job_id: 'job-1',
+      filename: 'render.mov',
+      created_at: new Date('2024-02-01T00:00:00Z').toISOString(),
+      size_bytes: 10,
+      download_url: '/exports/demo-project/job-1/render.mov'
+    };
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+
+    const exportsList = listProjectExports(projectId, { baseDir: tempDir });
+    assert.equal(exportsList.length, 1);
+    assert.equal(exportsList[0].job_id, 'job-1');
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
 });

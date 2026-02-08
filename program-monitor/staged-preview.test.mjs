@@ -17,7 +17,10 @@ test("staged preview includes NLE timeline scaffold", () => {
   assert.ok(html.includes("nodeContainer"));
 });
 
-test("staged preview includes fallback blank nodes", () => {
-  assert.ok(html.includes("about:blank"));
-  assert.ok(html.includes("durationOverride: \"4\""));
+test("staged preview reports missing stage id", () => {
+  assert.ok(html.includes("Missing stage id."));
+});
+
+test("staged preview fetches stage payloads by id", () => {
+  assert.ok(html.includes("/api/program-monitor/stage/"));
 });

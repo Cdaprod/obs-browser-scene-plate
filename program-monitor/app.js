@@ -416,7 +416,11 @@ const state = {
 
 const PROJECTS_KEY = "program-monitor.projects.v1";
 const PROJECTS_LIMIT = 20;
+const PROJECT_ACTIVE_KEY = "program-monitor.project.active.v1";
+const PROJECT_SAVE_DEBOUNCE_MS = 600;
 const OBS_SETTINGS_KEY = "program-monitor.obs.v1";
+const EXPORT_HISTORY_KEY = "obs-browser-export-history";
+const EXPORT_HISTORY_LIMIT = 8;
 
 const elements = {
   nodeList: $("#nodeList"),
@@ -438,6 +442,17 @@ const elements = {
   message: $("#message"),
   exportStatus: $("#exportStatus"),
   downloadLink: $("#downloadLink"),
+  recentBtn: $("#recentBtn"),
+  recentMenu: $("#recentMenu"),
+  exportModal: $("#exportModal"),
+  exportModalTitle: $("#exportModalTitle"),
+  exportModalMeta: $("#exportModalMeta"),
+  exportModalVideo: $("#exportModalVideo"),
+  exportModalDownload: $("#exportModalDownload"),
+  exportModalManifest: $("#exportModalManifest"),
+  exportModalLog: $("#exportModalLog"),
+  exportModalOpen: $("#exportModalOpen"),
+  exportModalClose: $("#exportModalClose"),
   togglePreview: $("#btnTogglePreview"),
   projectToolbar: $("#projectToolbar"),
   projectName: $("#projectName"),
@@ -464,6 +479,9 @@ let baseEndedHandler = null;
 let exportPollTimer = null;
 let activeBaseKind = "video";
 let baseStartTime = 0;
+let projectSaveTimer = null;
+let currentProjectId = "";
+let uiBound = false;
 const PREVIEW_COLLAPSE_KEY = "program-monitor.preview-collapsed";
 const OBS_PANEL_COLLAPSE_KEY = "program-monitor.obs-collapsed";
 
@@ -498,6 +516,269 @@ function setDownloadLink(url) {
   }
   elements.downloadLink.href = url;
   elements.downloadLink.classList.remove("hidden");
+}
+
+function buildRenderDownloadUrl({ downloadBase: base, downloadPath, filename }) {
+  if (!base) {
+    return downloadPath || "";
+  }
+  const normalizedBase = base.replace(/\/+$/, "");
+  if (filename) {
+    return `${normalizedBase}/renders/${encodeURIComponent(filename)}`;
+  }
+  if (downloadPath) {
+    const normalizedPath = downloadPath.startsWith("/") ? downloadPath : `/${downloadPath}`;
+    return `${normalizedBase}${normalizedPath}`;
+  }
+  return normalizedBase;
+}
+
+function extractFilenameFromPath(path) {
+  if (!path) return "";
+  const trimmed = String(path).split("?")[0];
+  const parts = trimmed.split("/");
+  const last = parts[parts.length - 1] || "";
+  try {
+    return decodeURIComponent(last);
+  } catch (_) {
+    return last;
+  }
+}
+
+function getExportHistoryKey() {
+  return `${EXPORT_HISTORY_KEY}.${currentProjectId || "default"}`;
+}
+
+function loadExportHistory() {
+  try {
+    const stored = window.localStorage.getItem(getExportHistoryKey());
+    if (!stored) return [];
+    const parsed = JSON.parse(stored);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function saveExportHistory(entries) {
+  try {
+    window.localStorage.setItem(getExportHistoryKey(), JSON.stringify(entries));
+  } catch (_) {
+    // Ignore storage errors
+  }
+}
+
+function formatExportTime(timestamp) {
+  if (!timestamp) return "";
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "";
+  const units = ["B", "KB", "MB", "GB"];
+  let index = 0;
+  let value = bytes;
+  while (value >= 1024 && index < units.length - 1) {
+    value /= 1024;
+    index += 1;
+  }
+  return `${value.toFixed(value >= 10 || index === 0 ? 0 : 1)} ${units[index]}`;
+}
+
+function renderExportHistory(entries) {
+  if (!elements.recentMenu) return;
+  elements.recentMenu.innerHTML = "";
+
+  if (!entries.length) {
+    const empty = document.createElement("div");
+    empty.className = "recent-empty";
+    empty.textContent = "No recent exports yet.";
+    elements.recentMenu.appendChild(empty);
+    return;
+  }
+
+  entries.forEach((entry) => {
+    const link = document.createElement("button");
+    link.type = "button";
+    link.className = "recent-item";
+    link.dataset.url = entry.url;
+    link.dataset.name = entry.name || "export";
+    link.dataset.createdAt = entry.createdAt ? String(entry.createdAt) : "";
+    link.dataset.sizeBytes = Number.isFinite(entry.sizeBytes) ? String(entry.sizeBytes) : "";
+    link.dataset.manifestUrl = entry.manifestUrl || "";
+    link.dataset.logUrl = entry.logUrl || "";
+    link.dataset.status = entry.status || "";
+
+    const name = document.createElement("div");
+    name.className = "recent-name";
+    name.textContent = entry.name || "export";
+
+    const meta = document.createElement("div");
+    meta.className = "recent-meta";
+
+    const time = document.createElement("span");
+    time.textContent = formatExportTime(entry.createdAt) || "just now";
+    meta.appendChild(time);
+
+    if (entry.status) {
+      const status = document.createElement("span");
+      status.textContent = entry.status;
+      meta.appendChild(status);
+    }
+
+    const size = document.createElement("span");
+    size.textContent = formatBytes(entry.sizeBytes) || "Download MOV";
+    meta.appendChild(size);
+
+    const urlText = document.createElement("div");
+    urlText.className = "recent-url";
+    urlText.textContent = entry.url;
+
+    link.appendChild(name);
+    link.appendChild(meta);
+    link.appendChild(urlText);
+    elements.recentMenu.appendChild(link);
+  });
+}
+
+function positionRecentMenu() {
+  if (!elements.recentMenu || elements.recentMenu.classList.contains("hidden")) return;
+  elements.recentMenu.style.left = "0";
+  elements.recentMenu.style.right = "auto";
+  elements.recentMenu.style.transform = "translateX(0)";
+  const menuRect = elements.recentMenu.getBoundingClientRect();
+  const viewportPadding = 8;
+  let shift = 0;
+  const overflowRight = menuRect.right - (window.innerWidth - viewportPadding);
+  if (overflowRight > 0) {
+    shift -= overflowRight;
+  }
+  const overflowLeft = viewportPadding - (menuRect.left + shift);
+  if (overflowLeft > 0) {
+    shift += overflowLeft;
+  }
+  elements.recentMenu.style.transform = `translateX(${shift}px)`;
+}
+
+function updateExportHistory(entry) {
+  if (!entry || !entry.url) return;
+  const history = loadExportHistory();
+  const next = [entry, ...history.filter((item) => item.url !== entry.url)].slice(0, EXPORT_HISTORY_LIMIT);
+  saveExportHistory(next);
+  renderExportHistory(next);
+}
+
+async function fetchRecentExports() {
+  const projectId = currentProjectId || "default";
+  const url = `${renderApiBase}/api/projects/${encodeURIComponent(projectId)}/exports`;
+  try {
+    const res = await fetch(url, { cache: "no-store" });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || "recent_failed");
+    }
+    const entries = (data.exports || []).map((item) => {
+      const downloadUrl = buildRenderDownloadUrl({
+        downloadBase,
+        downloadPath: item.download_url,
+        filename: item.filename
+      });
+      return {
+        url: downloadUrl,
+        name: item.filename || "export",
+        createdAt: item.created_at ? Date.parse(item.created_at) : Date.now(),
+        sizeBytes: item.size_bytes ?? null,
+        status: item.status || "",
+        manifestUrl: item.manifest_url
+          ? buildRenderDownloadUrl({
+            downloadBase,
+            downloadPath: item.manifest_url,
+            filename: null
+          })
+          : "",
+        logUrl: item.log_url
+          ? buildRenderDownloadUrl({
+            downloadBase,
+            downloadPath: item.log_url,
+            filename: null
+          })
+          : ""
+      };
+    });
+    const sorted = entries.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    saveExportHistory(sorted);
+    return sorted;
+  } catch (err) {
+    console.warn("Recent exports unavailable, using cached history.", err);
+    return loadExportHistory();
+  }
+}
+
+function openExportModal(entry) {
+  if (!entry || !entry.url || !elements.exportModal) return;
+  elements.exportModalTitle.textContent = entry.name || "Export Preview";
+  const timeLabel = formatExportTime(entry.createdAt);
+  const sizeLabel = formatBytes(entry.sizeBytes);
+  elements.exportModalMeta.textContent = [timeLabel, sizeLabel].filter(Boolean).join(" • ");
+  elements.exportModalVideo.src = entry.url;
+  elements.exportModalDownload.href = entry.url;
+  elements.exportModalDownload.download = entry.name || "";
+  if (elements.exportModalManifest) {
+    if (entry.manifestUrl) {
+      elements.exportModalManifest.href = entry.manifestUrl;
+      elements.exportModalManifest.classList.remove("hidden");
+    } else {
+      elements.exportModalManifest.removeAttribute("href");
+      elements.exportModalManifest.classList.add("hidden");
+    }
+  }
+  if (elements.exportModalLog) {
+    if (entry.logUrl) {
+      elements.exportModalLog.href = entry.logUrl;
+      elements.exportModalLog.classList.remove("hidden");
+    } else {
+      elements.exportModalLog.removeAttribute("href");
+      elements.exportModalLog.classList.add("hidden");
+    }
+  }
+  elements.exportModalOpen.onclick = () => window.open(entry.url, "_blank");
+  elements.exportModal.classList.remove("hidden");
+  elements.exportModal.setAttribute("aria-hidden", "false");
+}
+
+function closeExportModal() {
+  if (!elements.exportModal) return;
+  elements.exportModal.classList.add("hidden");
+  elements.exportModal.setAttribute("aria-hidden", "true");
+  elements.exportModalVideo.pause();
+  elements.exportModalVideo.removeAttribute("src");
+  elements.exportModalVideo.load();
+}
+
+function handleExportReady({ downloadPath, filename, sizeBytes, createdAt, manifestUrl, logUrl }) {
+  const downloadUrl = buildRenderDownloadUrl({
+    downloadBase,
+    downloadPath,
+    filename
+  });
+  setExportStatus("Ready");
+  setDownloadLink(downloadUrl);
+  updateExportHistory({
+    url: downloadUrl,
+    name: filename || "export",
+    createdAt: createdAt || Date.now(),
+    sizeBytes: sizeBytes ?? null,
+    status: "ready",
+    manifestUrl: manifestUrl || "",
+    logUrl: logUrl || ""
+  });
 }
 
 function getSelectedIndex() {
@@ -632,6 +913,163 @@ function buildStagePreviewUrl(timeline, name) {
   return url.toString();
 }
 
+async function createStageSession({ timeline, name } = {}) {
+  if (isFileProtocol) {
+    return { stageId: "", expiresAt: null };
+  }
+  const payload = buildTimelineDescriptor(
+    timeline || {
+      version: 1,
+      nodes: state.nodes,
+      activeIndex: state.activeIndex
+    }
+  );
+  const res = await fetch(`${renderApiBase}/api/program-monitor/stage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      timeline: payload,
+      name: name || "",
+      createdBy: "program-monitor"
+    })
+  });
+  const data = await res.json();
+  if (!res.ok || !data.ok || !data.stage_id) {
+    throw new Error(data.error || "stage_create_failed");
+  }
+  return { stageId: data.stage_id, expiresAt: data.expires_at || null };
+}
+
+async function buildStagePreviewUrlWithCache(timeline, name) {
+  if (isFileProtocol) {
+    return buildStagePreviewUrl(timeline, name);
+  }
+  try {
+    const { stageId } = await createStageSession({ timeline, name });
+    const url = new URL("/program-monitor/staged-preview.html", window.location.origin);
+    url.searchParams.set("id", stageId);
+    return url.toString();
+  } catch (error) {
+    console.warn("Stage cache unavailable, unable to open stage.", error);
+    setMessage("Stage cache unavailable. Ensure render-api is reachable.");
+    return "";
+  }
+}
+
+async function buildTimelinePlayerUrlWithCache({ origin, timeline, name, autoplay = true, hud = false } = {}) {
+  if (!origin) {
+    return "";
+  }
+  if (isFileProtocol) {
+    return buildTimelinePlayerUrl({ origin, timeline, name, autoplay, hud });
+  }
+  try {
+    const { stageId } = await createStageSession({ timeline, name });
+    const url = new URL("/program-monitor/timeline_player.html", origin);
+    url.searchParams.set("id", stageId);
+    url.searchParams.set("autoplay", autoplay ? "1" : "0");
+    url.searchParams.set("hud", hud ? "1" : "0");
+    if (name) {
+      url.searchParams.set("name", name);
+    }
+    return url.toString();
+  } catch (error) {
+    console.warn("Stage cache unavailable, unable to build player URL.", error);
+    return "";
+  }
+}
+
+function getStoredProjectId() {
+  try {
+    return localStorage.getItem(PROJECT_ACTIVE_KEY) || "";
+  } catch (error) {
+    return "";
+  }
+}
+
+function persistProjectId(projectId) {
+  try {
+    localStorage.setItem(PROJECT_ACTIVE_KEY, projectId);
+  } catch (error) {
+    console.warn("Failed to persist project id", error);
+  }
+}
+
+function setCurrentProjectId(projectId) {
+  currentProjectId = projectId || "";
+  if (currentProjectId) {
+    persistProjectId(currentProjectId);
+  }
+  if (elements.recentMenu) {
+    fetchRecentExports().then(renderExportHistory);
+  }
+}
+
+function buildProjectId(name) {
+  const normalized = String(name || "").trim().toLowerCase();
+  return normalized
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48) || uuid();
+}
+
+async function loadProjectTimeline(projectId) {
+  if (isFileProtocol) {
+    return null;
+  }
+  if (!projectId) {
+    return null;
+  }
+  const res = await fetch(`${renderApiBase}/api/projects/${encodeURIComponent(projectId)}/timeline`, {
+    cache: "no-store"
+  });
+  const data = await res.json();
+  if (!res.ok || !data.ok) {
+    throw new Error(data.error || "project_load_failed");
+  }
+  return data.timeline || null;
+}
+
+async function saveProjectTimeline(projectId) {
+  if (isFileProtocol) {
+    return;
+  }
+  if (!projectId) {
+    return;
+  }
+  const payload = {
+    version: 1,
+    nodes: state.nodes,
+    activeIndex: state.activeIndex
+  };
+  const res = await fetch(`${renderApiBase}/api/projects/${encodeURIComponent(projectId)}/timeline`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json();
+  if (!res.ok || !data.ok) {
+    throw new Error(data.error || "project_save_failed");
+  }
+}
+
+function scheduleProjectSave() {
+  if (isFileProtocol) {
+    return;
+  }
+  if (!currentProjectId) {
+    return;
+  }
+  if (projectSaveTimer) {
+    clearTimeout(projectSaveTimer);
+  }
+  projectSaveTimer = setTimeout(() => {
+    saveProjectTimeline(currentProjectId).catch((error) => {
+      console.warn("Failed to save project draft", error);
+    });
+  }, PROJECT_SAVE_DEBOUNCE_MS);
+}
+
 function setPreviewCollapsed(collapsed) {
   const isCollapsed = Boolean(collapsed);
   document.body.classList.toggle("preview-collapsed", isCollapsed);
@@ -663,14 +1101,18 @@ function setObsPanelCollapsed(collapsed) {
 }
 
 function saveLocal() {
+  if (!isFileProtocol) {
+    scheduleProjectSave();
+    return;
+  }
   try {
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify(buildTimelineDescriptor({
+      JSON.stringify({
         version: 1,
         nodes: state.nodes,
         activeIndex: state.activeIndex
-      }))
+      })
     );
   } catch (error) {
     console.warn("Failed to persist timeline", error);
@@ -678,6 +1120,9 @@ function saveLocal() {
 }
 
 function loadLocal() {
+  if (!isFileProtocol) {
+    return;
+  }
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) {
@@ -708,10 +1153,9 @@ function loadProjects() {
     const parsed = JSON.parse(raw);
     const entries = Array.isArray(parsed.entries) ? parsed.entries : [];
     return entries
-      .filter((entry) => entry && entry.name && entry.timeline && Array.isArray(entry.timeline.nodes))
+      .filter((entry) => entry && entry.name)
       .map((entry) => ({
         ...entry,
-        timeline: buildTimelineDescriptor(entry.timeline),
         id: entry.id || uuid()
       }));
   } catch (error) {
@@ -749,7 +1193,8 @@ function getDefaultObsSettings() {
     inputName: "ASSET_MEDIA",
     takeScene: false,
     autoplay: true,
-    hud: false
+    hud: false,
+    lastGoodAddress: ""
   };
 }
 
@@ -818,9 +1263,32 @@ function readObsSettingsFromInputs() {
 }
 
 function persistObsSettingsFromInputs() {
-  const settings = readObsSettingsFromInputs();
+  const settings = {
+    ...loadObsSettings(),
+    ...readObsSettingsFromInputs()
+  };
   saveObsSettings(settings);
   return settings;
+}
+
+function parseObsAddressList(value, lastGoodAddress) {
+  const parts = String(value || "")
+    .split(/[\s,]+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const seen = new Set();
+  const addresses = [];
+  if (lastGoodAddress) {
+    addresses.push(lastGoodAddress);
+    seen.add(lastGoodAddress);
+  }
+  parts.forEach((address) => {
+    if (!seen.has(address)) {
+      seen.add(address);
+      addresses.push(address);
+    }
+  });
+  return addresses;
 }
 
 function setProjectToolbarOpen(isOpen) {
@@ -858,22 +1326,27 @@ function renderProjects() {
     name.textContent = entry.name;
     name.title = "Click to load this project";
     name.addEventListener("click", async () => {
-      const timeline = entry.timeline;
-      if (!timeline || !Array.isArray(timeline.nodes) || !timeline.nodes.length) {
-        setMessage("Saved project is empty.");
-        return;
+      try {
+        const timeline = await loadProjectTimeline(entry.id);
+        if (!timeline || !Array.isArray(timeline.nodes) || !timeline.nodes.length) {
+          setMessage("Saved project is empty.");
+          return;
+        }
+        state.nodes = timeline.nodes;
+        state.activeIndex = Number.isFinite(timeline.activeIndex) ? timeline.activeIndex : 0;
+        state.selectedIndex = null;
+        state.validationResults = [];
+        renderNodes();
+        await primeNode(state.activeIndex);
+        setCurrentProjectId(entry.id);
+        if (elements.projectName) {
+          elements.projectName.value = entry.name;
+        }
+        setMessage(`Loaded project: ${entry.name}`);
+      } catch (error) {
+        console.error(error);
+        setMessage("Failed to load project.");
       }
-      state.nodes = timeline.nodes;
-      state.activeIndex = Number.isFinite(timeline.activeIndex) ? timeline.activeIndex : 0;
-      state.selectedIndex = null;
-      state.validationResults = [];
-      renderNodes();
-      await primeNode(state.activeIndex);
-      saveLocal();
-      if (elements.projectName) {
-        elements.projectName.value = entry.name;
-      }
-      setMessage(`Loaded project: ${entry.name}`);
     });
 
     const actions = document.createElement("div");
@@ -883,31 +1356,42 @@ function renderProjects() {
     loadBtn.type = "button";
     loadBtn.textContent = "Load";
     loadBtn.addEventListener("click", async () => {
-      const timeline = entry.timeline;
-      if (!timeline || !Array.isArray(timeline.nodes) || !timeline.nodes.length) {
-        setMessage("Saved project is empty.");
-        return;
+      try {
+        const timeline = await loadProjectTimeline(entry.id);
+        if (!timeline || !Array.isArray(timeline.nodes) || !timeline.nodes.length) {
+          setMessage("Saved project is empty.");
+          return;
+        }
+        state.nodes = timeline.nodes;
+        state.activeIndex = Number.isFinite(timeline.activeIndex) ? timeline.activeIndex : 0;
+        state.selectedIndex = null;
+        state.validationResults = [];
+        renderNodes();
+        await primeNode(state.activeIndex);
+        setCurrentProjectId(entry.id);
+        if (elements.projectName) {
+          elements.projectName.value = entry.name;
+        }
+        setMessage(`Loaded project: ${entry.name}`);
+      } catch (error) {
+        console.error(error);
+        setMessage("Failed to load project.");
       }
-      state.nodes = timeline.nodes;
-      state.activeIndex = Number.isFinite(timeline.activeIndex) ? timeline.activeIndex : 0;
-      state.selectedIndex = null;
-      state.validationResults = [];
-      renderNodes();
-      await primeNode(state.activeIndex);
-      saveLocal();
-      if (elements.projectName) {
-        elements.projectName.value = entry.name;
-      }
-      setMessage(`Loaded project: ${entry.name}`);
     });
 
     const stageBtn = document.createElement("button");
     stageBtn.type = "button";
     stageBtn.textContent = "Open Stage";
-    stageBtn.addEventListener("click", () => {
-      const url = buildStagePreviewUrl(entry.timeline, entry.name);
-      if (url) {
-        window.open(url, "_blank", "noopener");
+    stageBtn.addEventListener("click", async () => {
+      try {
+        const timeline = await loadProjectTimeline(entry.id);
+        const url = await buildStagePreviewUrlWithCache(timeline, entry.name);
+        if (url) {
+          window.open(url, "_blank", "noopener");
+        }
+      } catch (error) {
+        console.error(error);
+        setMessage("Failed to open stage.");
       }
     });
 
@@ -1658,25 +2142,24 @@ function saveProject() {
     return;
   }
 
-  const timeline = buildTimelineDescriptor({
-    version: 1,
-    nodes: state.nodes,
-    activeIndex: state.activeIndex
-  });
-
   const existing = loadProjects();
   const current = existing.find((entry) => entry.name === name);
   const entries = existing.filter((entry) => entry.name !== name);
+  const projectId = current ? current.id : buildProjectId(name);
   entries.unshift({
-    id: current ? current.id : uuid(),
+    id: projectId,
     name,
-    savedAt: Date.now(),
-    timeline
+    savedAt: Date.now()
   });
 
   const trimmed = entries.slice(0, PROJECTS_LIMIT);
   saveProjects(trimmed);
   renderProjects();
+  setCurrentProjectId(projectId);
+  saveProjectTimeline(projectId).catch((error) => {
+    console.error(error);
+    setMessage("Failed to save project draft.");
+  });
   setMessage(`Saved project: ${name}`);
 }
 
@@ -1870,7 +2353,8 @@ async function sendTimelineToObs() {
   }
 
   const settings = persistObsSettingsFromInputs();
-  if (!settings.address) {
+  const addressCandidates = parseObsAddressList(settings.address, settings.lastGoodAddress);
+  if (!addressCandidates.length) {
     setMessage("Set the OBS WebSocket address before connecting.");
     return;
   }
@@ -1891,7 +2375,7 @@ async function sendTimelineToObs() {
     activeIndex: 0
   };
   const name = elements.projectName ? elements.projectName.value.trim() : "";
-  const timelineUrl = buildTimelinePlayerUrl({
+  const timelineUrl = await buildTimelinePlayerUrlWithCache({
     origin,
     timeline,
     name,
@@ -1904,26 +2388,32 @@ async function sendTimelineToObs() {
     return;
   }
 
-  setMessage("Connecting to OBS...");
+  let lastError = null;
+  for (const address of addressCandidates) {
+    setMessage(`Connecting to OBS (${address})...`);
+    try {
+      const client = await connectObs({ ...settings, address });
+      await client.call("SetInputSettings", {
+        inputName: settings.inputName,
+        inputSettings: { url: timelineUrl },
+        overlay: true
+      });
 
-  try {
-    const client = await connectObs(settings);
-    await client.call("SetInputSettings", {
-      inputName: settings.inputName,
-      inputSettings: { url: timelineUrl },
-      overlay: true
-    });
+      if (settings.takeScene && settings.sceneName) {
+        await client.call("SetCurrentProgramScene", { sceneName: settings.sceneName });
+      }
 
-    if (settings.takeScene && settings.sceneName) {
-      await client.call("SetCurrentProgramScene", { sceneName: settings.sceneName });
+      client.close();
+      const nextSettings = { ...settings, address, lastGoodAddress: address };
+      saveObsSettings(nextSettings);
+      setMessage(`Sent timeline player URL to OBS (${address}).`);
+      return;
+    } catch (error) {
+      console.error(error);
+      lastError = error;
     }
-
-    client.close();
-    setMessage("Sent timeline player URL to OBS.");
-  } catch (error) {
-    console.error(error);
-    setMessage(`OBS error: ${error.message || error}`);
   }
+  setMessage(`OBS error: ${lastError?.message || lastError || "connection_failed"}`);
 }
 
 async function pollJobStatus(statusUrl) {
@@ -1934,11 +2424,36 @@ async function pollJobStatus(statusUrl) {
   }
 
   if (data.state === "ready") {
-    const downloadUrl = data.download_url
-      ? `${downloadBase}${data.download_url}`
-      : null;
-    setExportStatus("Ready");
-    setDownloadLink(downloadUrl);
+    const filename = data.filename || extractFilenameFromPath(data.download_url);
+    handleExportReady({
+      downloadPath: data.download_url,
+      filename,
+      manifestUrl: data.manifest_url || "",
+      logUrl: data.log_url || ""
+    });
+    clearExportPoll();
+  } else if (data.state === "error") {
+    setExportStatus("Error");
+    clearExportPoll();
+  } else if (data.state === "encoding") {
+    setExportStatus("Encoding");
+  } else if (data.state === "rendering") {
+    setExportStatus("Rendering");
+  } else {
+    setExportStatus("Queued");
+  }
+}
+
+async function pollExportStatus(statusUrl) {
+  const res = await fetch(statusUrl);
+  const data = await res.json();
+  if (!res.ok || !data.ok) {
+    throw new Error(data.error || "export_status_failed");
+  }
+
+  if (data.state === "ready") {
+    const filename = data.filename || extractFilenameFromPath(data.download_url);
+    handleExportReady({ downloadPath: data.download_url, filename });
     clearExportPoll();
   } else if (data.state === "error") {
     setExportStatus("Error");
@@ -1983,8 +2498,10 @@ async function exportNode() {
   }
 
   if (data.download_url) {
-    setExportStatus("Ready");
-    setDownloadLink(`${downloadBase}${data.download_url}`);
+    handleExportReady({
+      downloadPath: data.download_url,
+      filename: extractFilenameFromPath(data.download_url)
+    });
     return;
   }
 
@@ -2017,11 +2534,32 @@ async function exportTimeline() {
     return;
   }
 
-  const res = await fetch(`${renderApiBase}/api/program-monitor/export-timeline`, {
+  const timelinePayload = {
+    version: 1,
+    nodes: state.nodes,
+    activeIndex: state.activeIndex
+  };
+  let stageId = "";
+  try {
+    const stage = await createStageSession({
+      timeline: timelinePayload,
+      name: elements.projectName ? elements.projectName.value.trim() : ""
+    });
+    stageId = stage.stageId;
+  } catch (error) {
+    console.error(error);
+    setMessage("Stage cache unavailable for export.");
+  }
+
+  const projectId = currentProjectId || "default";
+  const res = await fetch(`${renderApiBase}/api/exports`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      timeline: { version: 1, nodes: state.nodes },
+      project_id: projectId,
+      stage_id: stageId || undefined,
+      timeline: stageId ? undefined : timelinePayload,
+      format: "mov",
       options: { fps: 60, width: 1080, height: 1920 }
     })
   });
@@ -2031,19 +2569,13 @@ async function exportTimeline() {
     throw new Error(data.error || "export_failed");
   }
 
-  if (data.download_url) {
-    setExportStatus("Ready");
-    setDownloadLink(`${downloadBase}${data.download_url}`);
-    return;
-  }
-
   if (!data.status_url) {
     throw new Error("missing_status_url");
   }
 
   const statusUrl = `${renderApiBase}${data.status_url}`;
   exportPollTimer = setInterval(() => {
-    pollJobStatus(statusUrl).catch((error) => {
+    pollExportStatus(statusUrl).catch((error) => {
       console.error(error);
       setExportStatus("Error");
       clearExportPoll();
@@ -2198,107 +2730,171 @@ if (elements.previewScrubber) {
   elements.previewScrubber.addEventListener("pointercancel", finishScrub);
 }
 
-$("#btnPlay").addEventListener("click", () => {
-  if (state.playing) {
+function bindUIOnce() {
+  if (uiBound) {
     return;
   }
-  if (state.pausedAt > 0) {
-    playActive({ resume: true, startOffsetSeconds: state.basePausedAt }).catch(() => {});
-    return;
-  }
-  playActive({ resume: false, startOffsetSeconds: 0 }).catch(() => {});
-});
+  uiBound = true;
 
-$("#btnPause").addEventListener("click", () => pauseAll());
-$("#btnStop").addEventListener("click", () => stopAll());
-
-$("#btnSave").addEventListener("click", () => saveLocal());
-$("#btnExport").addEventListener("click", () => exportJSON());
-$("#btnImport").addEventListener("click", () => elements.fileImport.click());
-$("#btnValidate").addEventListener("click", () => validateNodes());
-$("#btnOpenBase").addEventListener("click", () => openBaseInNewTab());
-if (elements.projectSave) {
-  elements.projectSave.addEventListener("click", () => saveProject());
-}
-if (elements.projectsToggle) {
-  elements.projectsToggle.addEventListener("click", () => {
-    const isHidden = elements.projectToolbar?.classList.contains("hidden");
-    setProjectToolbarOpen(isHidden);
-    if (isHidden) {
-      renderProjects();
-    }
-  });
-}
-if (elements.openStage) {
-  elements.openStage.addEventListener("click", () => {
-    const url = buildStagePreviewUrl();
-    if (url) {
-      window.open(url, "_blank", "noopener");
-    }
-  });
-}
-$("#btnExportNode").addEventListener("click", () => {
-  exportNode().catch((error) => {
-    console.error(error);
-    setExportStatus("Error");
-  });
-});
-$("#btnExportTimeline").addEventListener("click", () => {
-  exportTimeline().catch((error) => {
-    console.error(error);
-    setExportStatus("Error");
-  });
-});
-
-if (elements.togglePreview) {
-  elements.togglePreview.addEventListener("click", () => {
-    const isCollapsed = document.body.classList.contains("preview-collapsed");
-    setPreviewCollapsed(!isCollapsed);
-  });
-}
-
-if (elements.obsToggle) {
-  elements.obsToggle.addEventListener("click", () => {
-    const isCollapsed = elements.obsPanelBody
-      ? elements.obsPanelBody.getAttribute("aria-hidden") !== "false"
-      : true;
-    setObsPanelCollapsed(!isCollapsed);
-  });
-}
-
-if (elements.nodeList) {
-  const nodesPanel = elements.nodeList.closest(".nodes") || elements.nodeList;
-  nodesPanel.addEventListener("click", (event) => {
+  $("#btnPlay").addEventListener("click", () => {
     if (state.playing) {
       return;
     }
-    if (event.target.closest(".nodeCard")) {
+    if (state.pausedAt > 0) {
+      playActive({ resume: true, startOffsetSeconds: state.basePausedAt }).catch(() => {});
       return;
     }
-    clearSelection();
+    playActive({ resume: false, startOffsetSeconds: 0 }).catch(() => {});
   });
-}
 
-elements.fileImport.addEventListener("change", async () => {
-  const file = elements.fileImport.files?.[0];
-  if (!file) {
-    return;
-  }
-  try {
-    await importJSONFile(file);
-  } catch (error) {
-    setMessage(`Import failed: ${error.message || error}`);
-  } finally {
-    elements.fileImport.value = "";
-  }
-});
+  $("#btnPause").addEventListener("click", () => pauseAll());
+  $("#btnStop").addEventListener("click", () => stopAll());
 
-if (elements.obsSendTimeline) {
-  elements.obsSendTimeline.addEventListener("click", () => {
-    sendTimelineToObs().catch((error) => {
+  $("#btnSave").addEventListener("click", () => saveLocal());
+  $("#btnExport").addEventListener("click", () => exportJSON());
+  $("#btnImport").addEventListener("click", () => elements.fileImport.click());
+  $("#btnValidate").addEventListener("click", () => validateNodes());
+  $("#btnOpenBase").addEventListener("click", () => openBaseInNewTab());
+  if (elements.projectSave) {
+    elements.projectSave.addEventListener("click", () => saveProject());
+  }
+  if (elements.projectsToggle) {
+    elements.projectsToggle.addEventListener("click", () => {
+      const isHidden = elements.projectToolbar?.classList.contains("hidden");
+      setProjectToolbarOpen(isHidden);
+      if (isHidden) {
+        renderProjects();
+      }
+    });
+  }
+  if (elements.openStage) {
+    elements.openStage.addEventListener("click", async () => {
+      const url = await buildStagePreviewUrlWithCache();
+      if (url) {
+        window.open(url, "_blank", "noopener");
+      }
+    });
+  }
+  $("#btnExportNode").addEventListener("click", () => {
+    exportNode().catch((error) => {
       console.error(error);
+      setExportStatus("Error");
     });
   });
+  $("#btnExportTimeline").addEventListener("click", () => {
+    exportTimeline().catch((error) => {
+      console.error(error);
+      setExportStatus("Error");
+    });
+  });
+
+  if (elements.recentBtn && elements.recentMenu) {
+    elements.recentBtn.addEventListener("click", () => {
+      fetchRecentExports().then((history) => {
+        renderExportHistory(history);
+        elements.recentMenu.classList.toggle("hidden");
+        if (!elements.recentMenu.classList.contains("hidden")) {
+          requestAnimationFrame(positionRecentMenu);
+        }
+      });
+    });
+
+    document.addEventListener("click", (event) => {
+      if (elements.recentMenu.classList.contains("hidden")) return;
+      if (event.target.closest(".recent-wrap")) return;
+      elements.recentMenu.classList.add("hidden");
+    });
+
+    window.addEventListener("resize", () => {
+      if (elements.recentMenu.classList.contains("hidden")) return;
+      positionRecentMenu();
+    });
+
+    elements.recentMenu.addEventListener("click", (event) => {
+      const item = event.target.closest(".recent-item");
+      if (!item) return;
+      const entry = {
+        url: item.dataset.url,
+        name: item.dataset.name,
+        createdAt: item.dataset.createdAt ? Number(item.dataset.createdAt) : null,
+        sizeBytes: item.dataset.sizeBytes ? Number(item.dataset.sizeBytes) : null,
+        status: item.dataset.status || "",
+        manifestUrl: item.dataset.manifestUrl || "",
+        logUrl: item.dataset.logUrl || ""
+      };
+      openExportModal(entry);
+      elements.recentMenu.classList.add("hidden");
+    });
+  }
+
+  if (elements.exportModalClose) {
+    elements.exportModalClose.addEventListener("click", closeExportModal);
+  }
+
+  if (elements.exportModal) {
+    elements.exportModal.addEventListener("click", (event) => {
+      if (event.target === elements.exportModal) {
+        closeExportModal();
+      }
+    });
+  }
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && elements.exportModal && !elements.exportModal.classList.contains("hidden")) {
+      closeExportModal();
+    }
+  });
+
+  if (elements.togglePreview) {
+    elements.togglePreview.addEventListener("click", () => {
+      const isCollapsed = document.body.classList.contains("preview-collapsed");
+      setPreviewCollapsed(!isCollapsed);
+    });
+  }
+
+  if (elements.obsToggle) {
+    elements.obsToggle.addEventListener("click", () => {
+      const isCollapsed = elements.obsPanelBody
+        ? elements.obsPanelBody.getAttribute("aria-hidden") !== "false"
+        : true;
+      setObsPanelCollapsed(!isCollapsed);
+    });
+  }
+
+  if (elements.nodeList) {
+    const nodesPanel = elements.nodeList.closest(".nodes") || elements.nodeList;
+    nodesPanel.addEventListener("click", (event) => {
+      if (state.playing) {
+        return;
+      }
+      if (event.target.closest(".nodeCard")) {
+        return;
+      }
+      clearSelection();
+    });
+  }
+
+  elements.fileImport.addEventListener("change", async () => {
+    const file = elements.fileImport.files?.[0];
+    if (!file) {
+      return;
+    }
+    try {
+      await importJSONFile(file);
+    } catch (error) {
+      setMessage(`Import failed: ${error.message || error}`);
+    } finally {
+      elements.fileImport.value = "";
+    }
+  });
+
+  if (elements.obsSendTimeline) {
+    elements.obsSendTimeline.addEventListener("click", () => {
+      sendTimelineToObs().catch((error) => {
+        console.error(error);
+      });
+    });
+  }
 }
 
 const obsSettingsInputs = [
@@ -2321,9 +2917,30 @@ obsSettingsInputs.forEach((input) => {
 });
 
 try {
+  bindUIOnce();
   const obsSettings = loadObsSettings();
   applyObsSettingsToInputs(obsSettings);
-  loadLocal();
+  if (isFileProtocol) {
+    loadLocal();
+  } else {
+    const storedProjectId = getStoredProjectId();
+    const fallbackProjectId = storedProjectId || "default";
+    setCurrentProjectId(fallbackProjectId);
+    loadProjectTimeline(currentProjectId)
+      .then((timeline) => {
+        if (timeline && Array.isArray(timeline.nodes) && timeline.nodes.length) {
+          state.nodes = timeline.nodes;
+          state.activeIndex = Number.isFinite(timeline.activeIndex) ? timeline.activeIndex : 0;
+        }
+      })
+      .catch((error) => {
+        console.warn("Failed to load project draft", error);
+      })
+      .finally(() => {
+        renderNodes();
+        primeNode(state.activeIndex).catch(() => {});
+      });
+  }
   try {
     const stored = localStorage.getItem(PREVIEW_COLLAPSE_KEY);
     if (stored !== null) {
@@ -2346,11 +2963,16 @@ try {
     console.warn("Failed to load OBS panel state", error);
     setObsPanelCollapsed(true);
   }
-  renderNodes();
-  primeNode(state.activeIndex).catch(() => {});
+  if (isFileProtocol) {
+    renderNodes();
+    primeNode(state.activeIndex).catch(() => {});
+  }
   setExportStatus("Idle");
   setProjectToolbarOpen(false);
   renderProjects();
+  if (elements.recentMenu) {
+    fetchRecentExports().then(renderExportHistory);
+  }
 } catch (error) {
   console.error(error);
   setMessage(`Startup error: ${error?.message || error}`);

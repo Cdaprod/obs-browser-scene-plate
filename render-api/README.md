@@ -36,6 +36,43 @@ curl -X POST http://localhost:8791/api/program-monitor/export-timeline \
   -d '{"timeline":{"version":1,"nodes":[{"text":"http://nginx/plate-default.html"}]}}'
 ```
 
+Program Monitor stage cache (short URLs for stage + timeline player):
+
+```shell
+curl -X POST http://localhost:8791/api/program-monitor/stage \
+  -H "Content-Type: application/json" \
+  -d '{"timeline":{"version":1,"nodes":[{"text":"http://nginx/plate-default.html"}]},"name":"Show Open"}'
+
+curl http://localhost:8791/api/program-monitor/stage/<stage_id>
+```
+
+Project draft timelines (disk-backed):
+
+```shell
+curl http://localhost:8791/api/projects/demo/timeline
+
+curl -X PUT http://localhost:8791/api/projects/demo/timeline \
+  -H "Content-Type: application/json" \
+  -d '{"version":1,"nodes":[{"text":"http://nginx/plate-default.html"}],"activeIndex":0}'
+```
+
+Project exports:
+
+```shell
+curl -X POST http://localhost:8791/api/exports \
+  -H "Content-Type: application/json" \
+  -d '{"project_id":"demo","stage_id":"<stage_id>","format":"mov"}'
+
+curl http://localhost:8791/api/exports/<job_id>
+
+curl http://localhost:8791/api/projects/demo/exports
+
+# Download artifacts
+curl http://localhost:8791/exports/demo/<job_id>/render.mov
+curl http://localhost:8791/exports/demo/<job_id>/manifest.json
+curl http://localhost:8791/exports/demo/<job_id>/render.log
+```
+
 If you send a `localhost` URL (or a relative path like `/overlays/...`), the API rewrites
 it to the render origin so the container can resolve it. Configure the origin via
 `RENDER_ORIGIN` (defaults to `http://obs_plate`):
@@ -57,6 +94,11 @@ curl http://localhost:8791/api/render/<job_id>
 ```
 
 When ready, the response includes a `/renders/<file>.mov` path that Nginx can serve for download.
+
+Project drafts and exports are stored under the workspace directory (defaults to `/renders/workspace`).
+Override with `WORKSPACE_DIR` if you need a different location.
+
+Stage cache entries are stored under `${WORKSPACE_DIR}/stage` and survive restarts until TTL cleanup.
 
 ## Tests
 
