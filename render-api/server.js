@@ -29,6 +29,10 @@ const PROGRAM_MONITOR_DIR = path.join(RENDERS_DIR, 'program-monitor');
 const PROGRAM_MONITOR_TMP_DIR = path.join(PROGRAM_MONITOR_DIR, 'tmp');
 const PROGRAM_MONITOR_NODE_DIR = path.join(PROGRAM_MONITOR_DIR, 'nodes');
 const PROGRAM_MONITOR_TIMELINE_DIR = path.join(PROGRAM_MONITOR_DIR, 'timelines');
+const STAGE_TTL_SECONDS = Number(process.env.STAGE_TTL_SECONDS || 60 * 60 * 6);
+const WORKSPACE_DIR = process.env.WORKSPACE_DIR || path.join(RENDERS_DIR, 'workspace');
+const PROJECTS_DIR = path.join(WORKSPACE_DIR, 'projects');
+const STAGE_DIR = path.join(WORKSPACE_DIR, 'stage');
 
 const PROGRAM_MONITOR_AUDIO_EXTENSIONS = ['.mp3', '.wav', '.m4a', '.aac', '.ogg'];
 const PROGRAM_MONITOR_IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp', '.gif'];
@@ -120,6 +124,214 @@ function buildProgramMonitorTimelineHash(timeline, { fps, width, height }) {
     fps,
     width,
     height
+  });
+}
+
+function ensureStageDir(dir = STAGE_DIR) {
+  fs.mkdirSync(dir, { recursive: true });
+}
+
+function createStageId() {
+  if (crypto.randomUUID) {
+    return crypto.randomUUID().slice(0, 12);
+  }
+  return crypto.randomBytes(8).toString('hex');
+}
+
+function stagePath(stageId, dir = STAGE_DIR) {
+  const safeId = String(stageId || '').replace(/[^a-zA-Z0-9_-]+/g, '');
+  return path.join(dir, `stage-${safeId}.json`);
+}
+
+function writeStage({ stageId, payload, expiresAt, dir = STAGE_DIR } = {}) {
+  ensureStageDir(dir);
+  const entry = {
+    id: stageId,
+    createdAt: new Date().toISOString(),
+    expiresAt,
+    payload
+  };
+  atomicWriteJson(stagePath(stageId, dir), entry);
+  return entry;
+}
+
+function readStage({ stageId, dir = STAGE_DIR } = {}) {
+  if (!stageId) {
+    return null;
+  }
+  ensureStageDir(dir);
+  const filePath = stagePath(stageId, dir);
+  if (!fs.existsSync(filePath)) {
+    return null;
+  }
+  try {
+    const raw = fs.readFileSync(filePath, 'utf8');
+    const parsed = JSON.parse(raw);
+    const expiresAt = parsed && parsed.expiresAt ? Date.parse(parsed.expiresAt) : null;
+    if (Number.isFinite(expiresAt) && expiresAt <= Date.now()) {
+      fs.unlinkSync(filePath);
+      return null;
+    }
+    return parsed;
+  } catch (error) {
+    console.warn('stage cache read failed', error);
+    return null;
+  }
+}
+
+function deleteStage({ stageId, dir = STAGE_DIR } = {}) {
+  const filePath = stagePath(stageId, dir);
+  if (fs.existsSync(filePath)) {
+    fs.unlinkSync(filePath);
+  }
+}
+
+function gcStages({ dir = STAGE_DIR, now = Date.now() } = {}) {
+  try {
+    if (!fs.existsSync(dir)) {
+      return;
+    }
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    entries.forEach((entry) => {
+      if (!entry.isFile() || !entry.name.endsWith('.json')) {
+        return;
+      }
+      const filePath = path.join(dir, entry.name);
+      try {
+        const raw = fs.readFileSync(filePath, 'utf8');
+        const parsed = JSON.parse(raw);
+        const expiresAt = parsed && parsed.expiresAt ? Date.parse(parsed.expiresAt) : null;
+        if (Number.isFinite(expiresAt) && expiresAt <= now) {
+          fs.unlinkSync(filePath);
+        }
+      } catch (error) {
+        console.warn('stage cache cleanup failed', error);
+      }
+    });
+  } catch (error) {
+    console.warn('stage cache cleanup failed', error);
+  }
+}
+
+function createStageEntry({ payload, dir = STAGE_DIR, ttlSeconds = STAGE_TTL_SECONDS } = {}) {
+  if (!payload || !payload.timeline || !Array.isArray(payload.timeline.nodes)) {
+    throw new Error('invalid_stage_payload');
+  }
+  gcStages({ dir });
+  const stageId = createStageId();
+  const ttl = Number.isFinite(ttlSeconds) ? ttlSeconds : STAGE_TTL_SECONDS;
+  const expiresAt = new Date(Date.now() + Math.max(ttl, 1) * 1000).toISOString();
+  return writeStage({ stageId, payload, expiresAt, dir });
+}
+
+function readStageEntry({ stageId, dir = STAGE_DIR } = {}) {
+  gcStages({ dir });
+  return readStage({ stageId, dir });
+}
+
+function ensureProjectDir(projectId, { baseDir = PROJECTS_DIR } = {}) {
+  const safeId = safeName(projectId || '');
+  const dir = path.join(baseDir, safeId);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function readJsonSafe(filePath, fallback) {
+  try {
+    if (!fs.existsSync(filePath)) {
+      return fallback;
+    }
+    const raw = fs.readFileSync(filePath, 'utf8');
+    return JSON.parse(raw);
+  } catch (error) {
+    console.warn('readJsonSafe failed', error);
+    return fallback;
+  }
+}
+
+function atomicWriteJson(filePath, data) {
+  const dir = path.dirname(filePath);
+  fs.mkdirSync(dir, { recursive: true });
+  const tempPath = `${filePath}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(data, null, 2));
+  fs.renameSync(tempPath, filePath);
+}
+
+function projectTimelinePath(projectId, { baseDir = PROJECTS_DIR } = {}) {
+  const dir = ensureProjectDir(projectId, { baseDir });
+  return path.join(dir, 'timeline_draft.json');
+}
+
+function projectExportsDir(projectId, { baseDir = PROJECTS_DIR } = {}) {
+  const dir = ensureProjectDir(projectId, { baseDir });
+  return path.join(dir, 'exports');
+}
+
+function projectExportJobDir(projectId, jobId, { baseDir = PROJECTS_DIR } = {}) {
+  const dir = projectExportsDir(projectId, { baseDir });
+  const safeJobId = safeName(jobId || '');
+  const jobDir = path.join(dir, safeJobId);
+  fs.mkdirSync(jobDir, { recursive: true });
+  return jobDir;
+}
+
+function exportManifestPath(jobDir) {
+  return path.join(jobDir, 'manifest.json');
+}
+
+function exportLogPath(jobDir) {
+  return path.join(jobDir, 'render.log');
+}
+
+function appendExportLog(jobDir, message) {
+  try {
+    fs.appendFileSync(exportLogPath(jobDir), `${new Date().toISOString()} ${message}\n`);
+  } catch (error) {
+    console.warn('export log write failed', error);
+  }
+}
+
+function listProjectExports(projectId, { baseDir = PROJECTS_DIR } = {}) {
+  const dir = projectExportsDir(projectId, { baseDir });
+  if (!fs.existsSync(dir)) {
+    return [];
+  }
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  return entries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => {
+      const jobDir = path.join(dir, entry.name);
+      const manifest = readJsonSafe(exportManifestPath(jobDir), null);
+      const baseUrl = `/exports/${encodeURIComponent(safeName(projectId || ''))}/${encodeURIComponent(entry.name)}`;
+      const manifestUrl = `${baseUrl}/manifest.json`;
+      const logUrl = `${baseUrl}/render.log`;
+      if (manifest && manifest.download_url) {
+        return manifest;
+      }
+      const renderPath = path.join(jobDir, 'render.mov');
+      if (!fs.existsSync(renderPath)) {
+        return null;
+      }
+      const stats = fs.statSync(renderPath);
+      return {
+        job_id: entry.name,
+        filename: 'render.mov',
+        created_at: stats.mtime.toISOString(),
+        size_bytes: stats.size,
+        download_url: `${baseUrl}/render.mov`,
+        manifest_url: manifestUrl,
+        log_url: logUrl
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => Date.parse(b.created_at || 0) - Date.parse(a.created_at || 0));
+}
+
+function getProjectTimeline(projectId) {
+  return readJsonSafe(projectTimelinePath(projectId), {
+    version: 1,
+    nodes: [],
+    activeIndex: 0
   });
 }
 
@@ -408,7 +620,18 @@ function spawnRenderJob({ jobId, url: targetUrl, outPath, fps, width, height, se
   });
 }
 
-async function runTimelineJob({ jobId, timeline, options, timelineHash }) {
+async function runTimelineJob({
+  jobId,
+  timeline,
+  options,
+  timelineHash,
+  outputDir = PROGRAM_MONITOR_TIMELINE_DIR,
+  filenamePrefix = 'program-monitor-timeline',
+  downloadBase = '/renders/program-monitor/timelines',
+  outputFilename = null,
+  onReady,
+  onError
+}) {
   try {
     const fps = options.fps;
     const width = options.width;
@@ -496,7 +719,7 @@ async function runTimelineJob({ jobId, timeline, options, timelineHash }) {
 
     updateJob(jobId, { state: 'encoding', progress: 95 });
 
-    ensureDir(PROGRAM_MONITOR_TIMELINE_DIR);
+    ensureDir(outputDir);
     const listFile = path.join(PROGRAM_MONITOR_TMP_DIR, `timeline-${jobId}.txt`);
     fs.writeFileSync(
       listFile,
@@ -508,15 +731,15 @@ async function runTimelineJob({ jobId, timeline, options, timelineHash }) {
       width,
       height
     });
-    const timelineFilename = buildProgramMonitorFilename({
-      prefix: 'program-monitor-timeline',
+    const timelineFilename = outputFilename || buildProgramMonitorFilename({
+      prefix: filenamePrefix,
       hash: resolvedTimelineHash,
       width,
       height,
       fps,
       seconds: null
     });
-    const timelineOutPath = path.join(PROGRAM_MONITOR_TIMELINE_DIR, timelineFilename);
+    const timelineOutPath = path.join(outputDir, timelineFilename);
 
     if (!fs.existsSync(timelineOutPath)) {
       await new Promise((resolve, reject) => {
@@ -547,15 +770,22 @@ async function runTimelineJob({ jobId, timeline, options, timelineHash }) {
     updateJob(jobId, {
       state: 'ready',
       progress: 100,
-      downloadUrl: `/renders/program-monitor/timelines/${timelineFilename}`
+      downloadUrl: `${downloadBase}/${timelineFilename}`
     });
+    if (typeof onReady === 'function') {
+      onReady({ timelineFilename, timelineOutPath });
+    }
   } catch (error) {
     console.error(error);
     updateJob(jobId, { state: 'error', error: error.message || 'timeline_failed' });
+    if (typeof onError === 'function') {
+      onError(error);
+    }
   }
 }
 
 function startServer() {
+  gcStages();
   const server = http.createServer(async (req, res) => {
     if (req.method === 'OPTIONS') {
       return json(res, 200, { ok: true });
@@ -576,6 +806,312 @@ function startServer() {
         console.error(err);
         return json(res, 500, { ok: false, error: 'render_list_failed' });
       }
+    }
+
+    if (req.method === 'GET' && parsed.pathname.startsWith('/exports/')) {
+      /**
+       * Serve project export artifacts.
+       *
+       * Example:
+       *   curl http://localhost:8791/exports/demo/job-123/render.mov
+       */
+      const parts = parsed.pathname.split('/').filter(Boolean);
+      const projectId = parts[1];
+      const jobId = parts[2];
+      const filename = parts.slice(3).join('/');
+      if (!projectId || !jobId || !filename) {
+        return json(res, 404, { ok: false, error: 'export_not_found' });
+      }
+      const safeProject = safeName(projectId);
+      const safeJob = safeName(jobId);
+      const filePath = path.join(PROJECTS_DIR, safeProject, 'exports', safeJob, filename);
+      if (!fs.existsSync(filePath)) {
+        return json(res, 404, { ok: false, error: 'export_not_found' });
+      }
+      const ext = path.extname(filePath).toLowerCase();
+      const contentType = ext === '.json'
+        ? 'application/json'
+        : ext === '.log'
+          ? 'text/plain'
+          : 'video/quicktime';
+      res.writeHead(200, {
+        'Content-Type': contentType,
+        'Content-Length': fs.statSync(filePath).size,
+        'Access-Control-Allow-Origin': '*'
+      });
+      fs.createReadStream(filePath).pipe(res);
+      return;
+    }
+
+    const projectTimelineMatch = parsed.pathname.match(/^\/api\/projects\/([^/]+)\/timeline$/);
+    if (projectTimelineMatch) {
+      const projectId = decodeURIComponent(projectTimelineMatch[1] || '');
+      if (req.method === 'GET') {
+        /**
+         * Fetch the draft timeline for a project.
+         *
+         * Example:
+         *   curl http://localhost:8791/api/projects/demo/timeline
+         */
+        const timeline = getProjectTimeline(projectId);
+        return json(res, 200, { ok: true, project_id: projectId, timeline });
+      }
+      if (req.method === 'PUT') {
+        /**
+         * Persist the draft timeline for a project.
+         *
+         * Example:
+         *   curl -X PUT http://localhost:8791/api/projects/demo/timeline \
+         *     -H "Content-Type: application/json" \
+         *     -d '{"version":1,"nodes":[{"text":"http://nginx/plate-default.html"}],"activeIndex":0}'
+         */
+        let body;
+        try {
+          body = await parseBody(req);
+        } catch (err) {
+          const status = err.message === 'payload_too_large' ? 413 : 400;
+          return json(res, status, { ok: false, error: 'bad_json' });
+        }
+        if (!body || !Array.isArray(body.nodes)) {
+          return json(res, 400, { ok: false, error: 'missing_timeline_nodes' });
+        }
+        const timeline = {
+          version: Number.isFinite(body.version) ? body.version : 1,
+          nodes: body.nodes,
+          activeIndex: Number.isFinite(body.activeIndex) ? body.activeIndex : 0
+        };
+        try {
+          atomicWriteJson(projectTimelinePath(projectId), timeline);
+        } catch (error) {
+          console.error(error);
+          return json(res, 500, { ok: false, error: 'timeline_write_failed' });
+        }
+        return json(res, 200, { ok: true, project_id: projectId });
+      }
+      return json(res, 405, { ok: false, error: 'method_not_allowed' });
+    }
+
+    const projectExportsMatch = parsed.pathname.match(/^\/api\/projects\/([^/]+)\/exports$/);
+    if (projectExportsMatch && req.method === 'GET') {
+      /**
+       * List export artifacts for a project.
+       *
+       * Example:
+       *   curl http://localhost:8791/api/projects/demo/exports
+       */
+      const projectId = decodeURIComponent(projectExportsMatch[1] || '');
+      try {
+        const exportsList = listProjectExports(projectId).map((entry) => {
+          const job = jobs.get(entry.job_id);
+          const status = entry.error ? 'error' : (job ? job.state : 'ready');
+          return {
+            ...entry,
+            status,
+            manifest_url: entry.manifest_url
+              || `/exports/${encodeURIComponent(safeName(projectId))}/${encodeURIComponent(entry.job_id)}/manifest.json`,
+            log_url: entry.log_url
+              || `/exports/${encodeURIComponent(safeName(projectId))}/${encodeURIComponent(entry.job_id)}/render.log`
+          };
+        });
+        return json(res, 200, { ok: true, project_id: projectId, exports: exportsList });
+      } catch (error) {
+        console.error(error);
+        return json(res, 500, { ok: false, error: 'exports_list_failed' });
+      }
+    }
+
+    if (req.method === 'POST' && parsed.pathname === '/api/program-monitor/stage') {
+      /**
+       * Create a Program Monitor stage cache entry.
+       *
+       * Example:
+       *   curl -X POST http://localhost:8791/api/program-monitor/stage \
+       *     -H "Content-Type: application/json" \
+       *     -d '{"timeline":{"version":1,"nodes":[{"text":"http://nginx/plate-default.html"}]},"name":"Show Open"}'
+       */
+      let body;
+      try {
+        body = await parseBody(req);
+      } catch (err) {
+        const status = err.message === 'payload_too_large' ? 413 : 400;
+        return json(res, status, { ok: false, error: 'bad_json' });
+      }
+
+      try {
+        const entry = createStageEntry({
+          payload: {
+            timeline: body.timeline,
+            name: body.name || '',
+            createdBy: body.createdBy || 'program-monitor'
+          }
+        });
+        return json(res, 200, { ok: true, stage_id: entry.id, expires_at: entry.expiresAt });
+      } catch (error) {
+        console.error(error);
+        return json(res, 400, { ok: false, error: error.message || 'stage_create_failed' });
+      }
+    }
+
+    if (req.method === 'GET' && parsed.pathname.startsWith('/api/program-monitor/stage/')) {
+      /**
+       * Fetch a Program Monitor stage cache entry.
+       *
+       * Example:
+       *   curl http://localhost:8791/api/program-monitor/stage/<stage_id>
+       */
+      const stageId = parsed.pathname.split('/').pop();
+      const entry = readStageEntry({ stageId });
+      if (!entry) {
+        return json(res, 404, { ok: false, error: 'stage_not_found' });
+      }
+      return json(res, 200, {
+        ok: true,
+        stage: {
+          timeline: entry.payload?.timeline || null,
+          name: entry.payload?.name || '',
+          created_by: entry.payload?.createdBy || '',
+          created_at: entry.createdAt,
+          expires_at: entry.expiresAt
+        }
+      });
+    }
+
+    if (req.method === 'POST' && parsed.pathname === '/api/exports') {
+      /**
+       * Create a project export job (timeline MOV).
+       *
+       * Example:
+       *   curl -X POST http://localhost:8791/api/exports \
+       *     -H "Content-Type: application/json" \
+       *     -d '{"project_id":"demo","stage_id":"abc123","format":"mov"}'
+       */
+      let body;
+      try {
+        body = await parseBody(req);
+      } catch (err) {
+        const status = err.message === 'payload_too_large' ? 413 : 400;
+        return json(res, status, { ok: false, error: 'bad_json' });
+      }
+      const projectId = body?.project_id;
+      if (!projectId) {
+        return json(res, 400, { ok: false, error: 'missing_project_id' });
+      }
+      let timeline = body.timeline || null;
+      if (!timeline && body.stage_id) {
+        const stageEntry = readStageEntry({ stageId: body.stage_id });
+        timeline = stageEntry?.payload?.timeline || null;
+      }
+      if (!timeline && body.project_id) {
+        timeline = getProjectTimeline(projectId);
+      }
+      if (!timeline || !Array.isArray(timeline.nodes) || !timeline.nodes.length) {
+        return json(res, 400, { ok: false, error: 'missing_timeline_nodes' });
+      }
+
+      const options = body.options || {};
+      const fps = parseOptionalNumber(options.fps) ?? 60;
+      const width = parseOptionalNumber(options.width) ?? 1080;
+      const height = parseOptionalNumber(options.height) ?? 1920;
+      const warmupMs = parseOptionalNumber(options.warmupMs);
+      const padSeconds = parseOptionalNumber(options.padSeconds);
+
+      const jobId = createJobId();
+      const jobDir = projectExportJobDir(projectId, jobId);
+      const downloadBase = `/exports/${encodeURIComponent(safeName(projectId))}/${encodeURIComponent(jobId)}`;
+      appendExportLog(jobDir, 'export_queued');
+
+      const job = {
+        id: jobId,
+        state: 'queued',
+        progress: 0,
+        filename: 'render.mov',
+        downloadUrl: null,
+        error: null,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        projectId
+      };
+
+      jobs.set(jobId, job);
+      writeJobFile(job);
+
+      runTimelineJob({
+        jobId,
+        timeline,
+        options: { fps, width, height, warmupMs, padSeconds },
+        outputDir: jobDir,
+        filenamePrefix: 'render',
+        outputFilename: 'render.mov',
+        downloadBase,
+        onReady: ({ timelineFilename, timelineOutPath }) => {
+          try {
+            const stats = fs.statSync(timelineOutPath);
+            const manifest = {
+              job_id: jobId,
+              project_id: projectId,
+              filename: timelineFilename,
+              created_at: job.createdAt,
+              finished_at: new Date().toISOString(),
+              size_bytes: stats.size,
+              download_url: `${downloadBase}/${timelineFilename}`,
+              status: 'ready',
+              manifest_url: `${downloadBase}/manifest.json`,
+              log_url: `${downloadBase}/render.log`
+            };
+            atomicWriteJson(exportManifestPath(jobDir), manifest);
+            appendExportLog(jobDir, 'export_ready');
+          } catch (error) {
+            console.error(error);
+          }
+        },
+        onError: (error) => {
+          const manifest = {
+            job_id: jobId,
+            project_id: projectId,
+            filename: 'render.mov',
+            created_at: job.createdAt,
+            finished_at: new Date().toISOString(),
+            error: error?.message || 'export_failed',
+            status: 'error',
+            manifest_url: `${downloadBase}/manifest.json`,
+            log_url: `${downloadBase}/render.log`
+          };
+          atomicWriteJson(exportManifestPath(jobDir), manifest);
+          appendExportLog(jobDir, `export_error ${manifest.error}`);
+        }
+      });
+
+      return json(res, 202, { ok: true, job_id: jobId, status_url: `/api/exports/${jobId}` });
+    }
+
+    if (req.method === 'GET' && parsed.pathname.startsWith('/api/exports/')) {
+      /**
+       * Fetch export job status.
+       *
+       * Example:
+       *   curl http://localhost:8791/api/exports/<job_id>
+       */
+      const jobId = parsed.pathname.split('/').pop();
+      const job = jobs.get(jobId);
+      if (!job) {
+        return json(res, 404, { ok: false, error: 'export_not_found' });
+      }
+      return json(res, 200, {
+        ok: true,
+        job_id: job.id,
+        state: job.state,
+        progress: job.progress,
+        filename: job.filename,
+        download_url: job.downloadUrl || null,
+        error: job.error || null,
+        project_id: job.projectId || null,
+        manifest_url: job.projectId
+          ? `/exports/${encodeURIComponent(safeName(job.projectId))}/${encodeURIComponent(job.id)}/manifest.json`
+          : null,
+        log_url: job.projectId
+          ? `/exports/${encodeURIComponent(safeName(job.projectId))}/${encodeURIComponent(job.id)}/render.log`
+          : null
+      });
     }
 
     if (req.method === 'GET' && parsed.pathname.startsWith('/api/render/')) {
@@ -851,6 +1387,13 @@ function startServer() {
     socket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
   });
 
+  const gcInterval = setInterval(() => {
+    gcStages();
+  }, 5 * 60 * 1000);
+  server.on('close', () => {
+    clearInterval(gcInterval);
+  });
+
   server.listen(PORT, () => {
     console.log(`render-api listening on :${PORT}`);
   });
@@ -880,5 +1423,17 @@ module.exports = {
   parseProgramMonitorText,
   classifyProgramMonitorUrl,
   buildProgramMonitorFilename,
+  createStageEntry,
+  readStageEntry,
+  writeStage,
+  readStage,
+  deleteStage,
+  gcStages,
+  ensureProjectDir,
+  readJsonSafe,
+  atomicWriteJson,
+  projectTimelinePath,
+  listProjectExports,
+  getProjectTimeline,
   startServer
 };

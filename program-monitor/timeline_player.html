@@ -1,7 +1,8 @@
 <!doctype html>
 <!--
-  Usage: /program-monitor/timeline_player.html?data=<BASE64>&autoplay=1&hud=0
-  Example: /program-monitor/timeline_player.html?data=eyJ2ZXJzaW9uIjoxfQ==&autoplay=1&hud=0
+  Usage: /program-monitor/timeline_player.html?id=<STAGE_ID>&autoplay=1&hud=0
+  Legacy (explicit import): /program-monitor/timeline_player.html?data=<BASE64>&autoplay=1&hud=0&import=1&debug=1
+  Example: /program-monitor/timeline_player.html?data=eyJ2ZXJzaW9uIjoxfQ==&autoplay=1&hud=0&import=1&debug=1
 -->
 <html lang="en">
 <head>
@@ -111,6 +112,9 @@
     } = window.ProgramMonitorUtils || {};
 
     const DEFAULT_IMAGE_DURATION_SECONDS = 5;
+    const host = window.location.hostname || "localhost";
+    const renderApiPort = 8793;
+    const renderApiBase = `http://${host}:${renderApiPort}`;
 
     const elements = {
       baseVideo: document.getElementById("baseVideo"),
@@ -472,9 +476,10 @@
       rafId = requestAnimationFrame(tick);
     }
 
-    function loadTimeline() {
+    async function loadTimeline() {
       const params = new URLSearchParams(window.location.search);
       const data = params.get("data");
+      const stageId = params.get("id");
       const name = params.get("name");
       const autoplay = params.get("autoplay") !== "0";
       const hudEnabled = params.get("hud") === "1" || params.get("hud") === "true";
@@ -484,18 +489,37 @@
         elements.hudTitle.textContent = name;
       }
 
-      const payload = decodeTimelinePayload ? decodeTimelinePayload(data) : null;
-      let fallback = null;
-      try {
-        const stored = window.localStorage.getItem("program-monitor.timeline.v1");
-        fallback = stored ? JSON.parse(stored) : null;
-      } catch (error) {
-        fallback = null;
+      const allowLegacy = params.get("import") === "1" && params.get("debug") === "1";
+      let payload = null;
+      if (stageId) {
+        try {
+          const res = await fetch(
+            `${renderApiBase}/api/program-monitor/stage/${encodeURIComponent(stageId)}`,
+            { cache: "no-store" }
+          );
+          const data = await res.json();
+          if (res.ok && data.ok) {
+            payload = data.stage?.timeline || null;
+            if (data.stage?.name && !name) {
+              elements.hudTitle.textContent = data.stage.name;
+            }
+          } else {
+            console.warn(data.error || "Stage not found.");
+          }
+        } catch (error) {
+          console.warn("Failed to load stage payload", error);
+        }
+      } else if (allowLegacy && decodeTimelinePayload) {
+        payload = decodeTimelinePayload(data);
+      } else {
+        console.warn("Missing stage id.");
+        return { autoplay: false };
       }
-      const timeline = payload && Array.isArray(payload.nodes) ? payload : fallback;
+
+      const timeline = payload && Array.isArray(payload.nodes) ? payload : null;
 
       if (!timeline || !Array.isArray(timeline.nodes) || !timeline.nodes.length) {
-        console.warn("Missing timeline payload. Provide ?data= in the URL.");
+        console.warn("Missing timeline payload.");
         return { autoplay: false };
       }
 
@@ -504,11 +528,12 @@
       return { autoplay };
     }
 
-    const { autoplay } = loadTimeline();
-    if (state.nodes.length && autoplay) {
-      primeNode(state.activeIndex).catch(() => {});
-      playActive().catch(() => {});
-    }
+    loadTimeline().then(({ autoplay } = {}) => {
+      if (state.nodes.length && autoplay) {
+        primeNode(state.activeIndex).catch(() => {});
+        playActive().catch(() => {});
+      }
+    });
   </script>
 </body>
 </html>

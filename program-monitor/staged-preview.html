@@ -373,6 +373,9 @@
     } = window.ProgramMonitorUtils || {};
 
     const DEFAULT_NODE_DURATION = 4;
+    const host = window.location.hostname || "localhost";
+    const renderApiPort = 8793;
+    const renderApiBase = `http://${host}:${renderApiPort}`;
 
     const elements = {
       baseVideo: document.getElementById("baseVideo"),
@@ -952,29 +955,44 @@
       }
     }
 
-    function loadTimeline() {
+    async function loadTimeline() {
       const params = new URLSearchParams(window.location.search);
       const data = params.get("data");
+      const stageId = params.get("id");
       const name = params.get("name");
-      const payload = decodeTimelinePayload ? decodeTimelinePayload(data) : null;
-      let fallback = null;
-      try {
-        const stored = window.localStorage.getItem("program-monitor.timeline.v1");
-        fallback = stored ? JSON.parse(stored) : null;
-      } catch (error) {
-        fallback = null;
+      const allowLegacy = params.get("import") === "1" && params.get("debug") === "1";
+      let payload = null;
+
+      if (stageId) {
+        try {
+          const res = await fetch(
+            `${renderApiBase}/api/program-monitor/stage/${encodeURIComponent(stageId)}`,
+            { cache: "no-store" }
+          );
+          const data = await res.json();
+          if (res.ok && data.ok) {
+            payload = data.stage?.timeline || null;
+            if (data.stage?.name) {
+              elements.stageMeta.textContent = `Project: ${data.stage.name}`;
+            }
+          } else {
+            setStatus(data.error || "Stage not found.");
+          }
+        } catch (error) {
+          console.warn("Failed to load stage payload", error);
+          setStatus("Stage load failed.");
+        }
+      } else if (allowLegacy && decodeTimelinePayload) {
+        payload = decodeTimelinePayload(data);
+      } else {
+        setStatus("Missing stage id.");
       }
-      let timeline = payload && Array.isArray(payload.nodes) ? payload : fallback;
+
+      const timeline = payload && Array.isArray(payload.nodes) ? payload : null;
 
       if (!timeline || !Array.isArray(timeline.nodes) || !timeline.nodes.length) {
-        timeline = {
-          nodes: [
-            { text: "about:blank", durationOverride: "4" },
-            { text: "about:blank", durationOverride: "4" },
-            { text: "about:blank", durationOverride: "4" }
-          ]
-        };
-        setStatus("Using fallback nodes.");
+        setStatus("No timeline data available.");
+        return;
       }
 
       state.nodes = timeline.nodes;
@@ -983,9 +1001,11 @@
       updateTimelineDuration();
       renderScrubberSegments();
       elements.statTotal.textContent = String(state.nodes.length);
-      elements.stageMeta.textContent = name
-        ? `Project: ${name}`
-        : `${state.nodes.length} nodes • ${formatTime(state.timelineDuration)}`;
+      if (name) {
+        elements.stageMeta.textContent = `Project: ${name}`;
+      } else if (!elements.stageMeta.textContent || elements.stageMeta.textContent === "Loading timeline…") {
+        elements.stageMeta.textContent = `${state.nodes.length} nodes • ${formatTime(state.timelineDuration)}`;
+      }
     }
 
     function getTimeFromClientX(clientX) {

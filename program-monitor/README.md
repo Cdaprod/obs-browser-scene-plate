@@ -20,10 +20,10 @@ A browser-only **Program + Monitor** UI for stacking URL-based media nodes into 
 
 - **Add Node / Delete Node**: manage the timeline (single-node delete clears the node; long-press delete clears all).
 - **Transport**: preview the timeline in sequence.
-- **Save**: persist to localStorage.
-- **Projects**: save/load named timelines (stored in localStorage) with structured base/overlay/ambient metadata for reuse without the UI.
-- **Open Stage**: open a standalone timeline preview tab from the current nodes.
-- **Timeline Player**: `/program-monitor/timeline_player.html?data=...` plays the full timeline headlessly (for OBS browser sources).
+- **Save**: persists the active project draft to the render-api workspace.
+- **Projects**: save/load named timelines (project drafts live in the render-api workspace; the list of projects stays in localStorage).
+- **Open Stage**: open a standalone timeline preview tab from the current nodes (uses the render-api stage cache to avoid oversized URLs).
+- **Timeline Player**: `/program-monitor/timeline_player.html?id=...` plays the full timeline headlessly (for OBS browser sources). Legacy payloads only load via explicit `?import=1&debug=1`.
 - **Export / Import JSON**: move timelines between machines.
 - **Validate**: basic checks for missing base URLs and non-http(s) entries.
 - **Open Base**: open the active node base URL in a new tab.

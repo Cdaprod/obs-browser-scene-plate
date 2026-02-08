@@ -21,3 +21,15 @@ test("preview includes scrubber markup", () => {
   assert.ok(html.includes("previewScrubber"));
   assert.ok(html.includes("previewScrubberSegments"));
 });
+
+test("exports include recent exports menu and modal markup", () => {
+  assert.ok(html.includes("recentMenu"));
+  assert.ok(html.includes("exportModal"));
+  assert.ok(!html.includes("btnExportTimelineStage"));
+});
+
+test("exports buttons are single-source-of-truth", () => {
+  assert.equal((html.match(/btnExportTimeline/g) || []).length, 1);
+  assert.equal((html.match(/btnExportNode/g) || []).length, 1);
+  assert.ok(source.includes("bindUIOnce"));
+});
