@@ -131,6 +131,24 @@ function buildRangeResponse({ rangeHeader, size, contentType }) {
   };
 }
 
+function resolveExportFilePath({ projectId, jobId, filename, baseDir = PROJECTS_DIR } = {}) {
+  if (!projectId || !jobId || !filename) {
+    return null;
+  }
+  const safeProject = safeName(projectId);
+  const safeJob = safeName(jobId);
+  const exportRoot = path.join(baseDir, safeProject, 'exports', safeJob);
+  const normalized = path.normalize(filename);
+  if (normalized.split(path.sep).includes('..')) {
+    return null;
+  }
+  const resolved = path.resolve(exportRoot, normalized);
+  if (resolved !== exportRoot && !resolved.startsWith(`${exportRoot}${path.sep}`)) {
+    return null;
+  }
+  return resolved;
+}
+
 function json(res, code, obj) {
   const body = JSON.stringify(obj);
   res.writeHead(code, {
@@ -964,9 +982,10 @@ function startServer() {
       if (!projectId || !jobId || !filename) {
         return json(res, 404, { ok: false, error: 'export_not_found' });
       }
-      const safeProject = safeName(projectId);
-      const safeJob = safeName(jobId);
-      const filePath = path.join(PROJECTS_DIR, safeProject, 'exports', safeJob, filename);
+      const filePath = resolveExportFilePath({ projectId, jobId, filename });
+      if (!filePath) {
+        return json(res, 404, { ok: false, error: 'export_not_found' });
+      }
       if (!fs.existsSync(filePath)) {
         return json(res, 404, { ok: false, error: 'export_not_found' });
       }
@@ -1625,5 +1644,6 @@ module.exports = {
   listProjectExports,
   getProjectTimeline,
   buildRangeResponse,
+  resolveExportFilePath,
   startServer
 };
