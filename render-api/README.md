@@ -82,6 +82,13 @@ it to the render origin so the container can resolve it. Configure the origin vi
 RENDER_ORIGIN=http://obs_plate docker compose up -d --build render_api
 ```
 
+If Program Monitor generates URLs using a LAN origin, you can set `PUBLIC_ORIGIN` to
+rewrite those links for headless rendering:
+
+```shell
+PUBLIC_ORIGIN=http://192.168.0.25:8789
+```
+
 The response includes a job ID and status URL:
 
 ```json
