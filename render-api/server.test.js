@@ -10,9 +10,11 @@ const {
   buildFilename,
   listRenderFiles,
   normalizeRenderUrl,
+  assertRenderOriginSafe,
   parseProgramMonitorText,
   classifyProgramMonitorUrl,
   buildProgramMonitorFilename,
+  assertHtmlDurationSeconds,
   createStageEntry,
   readStageEntry,
   writeStage,
@@ -27,6 +29,7 @@ const {
   resolveExportFilePath,
   deliverExportArtifacts,
   resolveDeliveryDir,
+  buildDebugFramePath,
   buildProgramMonitorHtml
 } = require('./server');
 
@@ -97,23 +100,45 @@ test('listRenderFiles returns renders sorted by newest first', () => {
 
 test('normalizeRenderUrl rewrites localhost to the render origin', () => {
   const url = 'http://localhost:8789/overlays/title.html?mode=burst#hash';
-  const result = normalizeRenderUrl(url, { renderOrigin: 'http://obs_plate' });
-  assert.equal(result, 'http://obs_plate/overlays/title.html?mode=burst#hash');
+  const result = normalizeRenderUrl(url, { renderOrigin: 'http://obs-plate' });
+  assert.equal(result, 'http://obs-plate/overlays/title.html?mode=burst#hash');
 });
 
 test('normalizeRenderUrl accepts relative paths', () => {
   const result = normalizeRenderUrl('/overlays/title.html?mode=burst', {
-    renderOrigin: 'http://obs_plate'
+    renderOrigin: 'http://obs-plate'
   });
-  assert.equal(result, 'http://obs_plate/overlays/title.html?mode=burst');
+  assert.equal(result, 'http://obs-plate/overlays/title.html?mode=burst');
 });
 
 test('normalizeRenderUrl rewrites public origin to render origin', () => {
   const result = normalizeRenderUrl('http://192.168.0.25:8789/overlays/demo.html', {
-    renderOrigin: 'http://obs_plate',
+    renderOrigin: 'http://obs-plate',
     publicOrigin: 'http://192.168.0.25:8789'
   });
-  assert.equal(result, 'http://obs_plate/overlays/demo.html');
+  assert.equal(result, 'http://obs-plate/overlays/demo.html');
+});
+
+test('normalizeRenderUrl rewrites 192.168.0.25:8789 even without public origin', () => {
+  const result = normalizeRenderUrl('http://192.168.0.25:8789/overlays/demo.html', {
+    renderOrigin: 'http://obs-plate'
+  });
+  assert.equal(result, 'http://obs-plate/overlays/demo.html');
+});
+
+test('assertRenderOriginSafe throws when rewrite leaves unsafe origins', () => {
+  assert.throws(() => {
+    assertRenderOriginSafe({
+      urls: ['http://192.168.0.25:8789/overlays/demo.html'],
+      context: 'test'
+    });
+  });
+  assert.throws(() => {
+    assertRenderOriginSafe({
+      urls: ['http://obs-plate:8789/overlays/demo.html'],
+      context: 'test'
+    });
+  });
 });
 
 test('parseProgramMonitorText splits base and layers', () => {
@@ -153,6 +178,25 @@ test('buildProgramMonitorHtml uses iframe for HTML overlays', () => {
   });
   assert.ok(html.includes('<iframe id="base"'));
   assert.ok(html.includes('window.__RENDER_READY'));
+});
+
+test('assertHtmlDurationSeconds rejects missing HTML durations', () => {
+  assert.throws(() => {
+    assertHtmlDurationSeconds({ url: 'http://obs-plate/overlays/demo.html', durationSeconds: null });
+  });
+  assert.doesNotThrow(() => {
+    assertHtmlDurationSeconds({ url: 'http://obs-plate/overlays/demo.html', durationSeconds: 4.25 });
+  });
+});
+
+test('buildDebugFramePath targets the delivery directory', () => {
+  const debugPath = buildDebugFramePath({
+    projectId: 'demo',
+    jobId: 'job-123',
+    rendersDir: '/renders',
+    subdir: '_exports'
+  });
+  assert.equal(debugPath, path.join('/renders', '_exports', 'demo', 'exports', 'job-123', 'debug_first_frame.png'));
 });
 
 test('stage cache stores and reads entries on disk', () => {
