@@ -403,8 +403,8 @@ function parseProgramMonitorText(text) {
 }
 
 function classifyProgramMonitorUrl(url) {
-  const lower = String(url || '').toLowerCase();
-  const pathname = extractPathname(lower);
+    const lower = String(url || '').toLowerCase();
+    const pathname = extractPathname(lower);
 
   if (PROGRAM_MONITOR_AUDIO_EXTENSIONS.some((ext) => pathname.endsWith(ext))) {
     return 'audio';
@@ -420,6 +420,31 @@ function classifyProgramMonitorUrl(url) {
 
 function normalizeProgramMonitorUrl(value) {
   return normalizeRenderUrl(value, { renderOrigin: DEFAULT_RENDER_ORIGIN, publicOrigin: PUBLIC_ORIGIN });
+}
+
+function containsPublicOrigin(urlValue, publicOrigin = PUBLIC_ORIGIN) {
+  if (!urlValue || !publicOrigin) {
+    return false;
+  }
+  try {
+    const publicUrl = new URL(publicOrigin);
+    const parsed = new URL(urlValue);
+    return parsed.origin === publicUrl.origin;
+  } catch (error) {
+    return false;
+  }
+}
+
+function assertRenderOriginSafe({ urls = [], context = '' } = {}) {
+  if (!PUBLIC_ORIGIN) {
+    return;
+  }
+  const unsafe = urls.filter((value) => containsPublicOrigin(value));
+  if (!unsafe.length) {
+    return;
+  }
+  const message = `render origin rewrite failed for ${context || 'program-monitor'}: ${unsafe.join(', ')}`;
+  throw new Error(message);
 }
 
 function extractPathname(value) {
@@ -1012,6 +1037,10 @@ async function runTimelineJob({
       if (!normalizedBase) {
         throw new Error(`invalid_base_url_${index}`);
       }
+      assertRenderOriginSafe({
+        urls: [normalizedBase, ...normalizedLayers],
+        context: `timeline_node_${index}`
+      });
 
       const nodeHash = buildProgramMonitorHash({
         baseUrl: normalizedBase,
@@ -1393,6 +1422,7 @@ function startServer() {
           return {
             ...entry,
             status,
+            progress: job ? job.progress : null,
             manifest_url: entry.manifest_url
               || `/exports/${encodeURIComponent(safeName(projectId))}/${encodeURIComponent(entry.job_id)}/manifest.json`,
             log_url: entry.log_url
@@ -1781,6 +1811,15 @@ function startServer() {
       const normalizedLayers = parsedNode.layers
         .map((line) => normalizeProgramMonitorUrl(line))
         .filter(Boolean);
+      try {
+        assertRenderOriginSafe({
+          urls: [normalizedBase, ...normalizedLayers],
+          context: 'export_node'
+        });
+      } catch (error) {
+        console.error(error);
+        return json(res, 400, { ok: false, error: 'render_origin_invalid' });
+      }
 
       const options = body.options || {};
       const fps = parseOptionalNumber(options.fps) ?? 60;
@@ -1788,6 +1827,8 @@ function startServer() {
       const height = parseOptionalNumber(options.height) ?? 1920;
       const warmupMs = parseOptionalNumber(options.warmupMs);
       const padSeconds = parseOptionalNumber(options.padSeconds);
+      const durationSeconds = parseOptionalNumber(options.duration_seconds)
+        ?? parseOptionalNumber(body?.node?.duration_seconds);
 
       ensureDir(PROGRAM_MONITOR_TMP_DIR);
       ensureDir(PROGRAM_MONITOR_NODE_DIR);

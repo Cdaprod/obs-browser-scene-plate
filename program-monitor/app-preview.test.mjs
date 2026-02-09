@@ -28,6 +28,7 @@ test("exports include recent exports menu and modal markup", () => {
   assert.ok(html.includes("exportModalDelivered"));
   assert.ok(html.includes("exportModalDeliver"));
   assert.ok(!html.includes("btnExportTimelineStage"));
+  assert.ok(source.includes("setRecentMenuPolling"));
 });
 
 test("exports buttons are single-source-of-truth", () => {
