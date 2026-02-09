@@ -24,7 +24,9 @@ const {
   readJsonSafe,
   listProjectExports,
   buildRangeResponse,
-  resolveExportFilePath
+  resolveExportFilePath,
+  deliverExportArtifacts,
+  resolveDeliveryDir
 } = require('./server');
 
 test('safeName sanitizes unsafe characters and trims length', () => {
@@ -267,4 +269,35 @@ test('resolveExportFilePath blocks traversal and allows valid paths', () => {
     baseDir
   });
   assert.equal(traversal, null);
+});
+
+test('deliverExportArtifacts copies artifacts into renders directory', async () => {
+  const tempWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), 'workspace-'));
+  const tempRenders = fs.mkdtempSync(path.join(os.tmpdir(), 'renders-'));
+  try {
+    const projectId = 'demo';
+    const jobId = 'job-1';
+    const jobDir = path.join(tempWorkspace, 'projects', projectId, 'exports', jobId);
+    fs.mkdirSync(jobDir, { recursive: true });
+    fs.writeFileSync(path.join(jobDir, 'render.mov'), 'mov');
+    fs.writeFileSync(path.join(jobDir, 'render.log'), 'log');
+    fs.writeFileSync(path.join(jobDir, 'manifest.json'), JSON.stringify({ job_id: jobId }));
+
+    const result = await deliverExportArtifacts({
+      projectId,
+      jobId,
+      jobDir,
+      filename: 'render.mov',
+      rendersDir: tempRenders,
+      subdir: '_exports'
+    });
+    assert.equal(result.delivered, true);
+    const deliveryDir = resolveDeliveryDir({ projectId, jobId, rendersDir: tempRenders, subdir: '_exports' });
+    assert.ok(fs.existsSync(path.join(deliveryDir, 'render.mov')));
+    assert.ok(fs.existsSync(path.join(deliveryDir, 'render.log')));
+    assert.ok(fs.existsSync(path.join(deliveryDir, 'manifest.json')));
+  } finally {
+    fs.rmSync(tempWorkspace, { recursive: true, force: true });
+    fs.rmSync(tempRenders, { recursive: true, force: true });
+  }
 });

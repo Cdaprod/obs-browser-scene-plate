@@ -448,6 +448,10 @@ const elements = {
   exportModalTitle: $("#exportModalTitle"),
   exportModalMeta: $("#exportModalMeta"),
   exportModalVideo: $("#exportModalVideo"),
+  exportModalServed: $("#exportModalServed"),
+  exportModalDelivered: $("#exportModalDelivered"),
+  exportModalDeliveryStatus: $("#exportModalDeliveryStatus"),
+  exportModalDeliver: $("#exportModalDeliver"),
   exportModalDownload: $("#exportModalDownload"),
   exportModalManifest: $("#exportModalManifest"),
   exportModalLog: $("#exportModalLog"),
@@ -481,6 +485,7 @@ let activeBaseKind = "video";
 let baseStartTime = 0;
 let projectSaveTimer = null;
 let currentProjectId = "";
+let currentExportEntry = null;
 let uiBound = false;
 const PREVIEW_COLLAPSE_KEY = "program-monitor.preview-collapsed";
 const OBS_PANEL_COLLAPSE_KEY = "program-monitor.obs-collapsed";
@@ -614,6 +619,9 @@ function renderExportHistory(entries) {
     link.dataset.previewUrl = entry.previewUrl || "";
     link.dataset.projectId = entry.projectId || "";
     link.dataset.jobId = entry.jobId || "";
+    link.dataset.delivered = entry.delivered ? "true" : "";
+    link.dataset.deliveredDir = entry.deliveredDir || "";
+    link.dataset.deliveredHostHint = entry.deliveredHostHint || "";
     link.dataset.createdAt = entry.createdAt ? String(entry.createdAt) : "";
     link.dataset.sizeBytes = Number.isFinite(entry.sizeBytes) ? String(entry.sizeBytes) : "";
     link.dataset.manifestUrl = entry.manifestUrl || "";
@@ -714,6 +722,9 @@ async function fetchRecentExports() {
         previewUrl,
         projectId: item.project_id || projectId,
         jobId: item.job_id || "",
+        delivered: Boolean(item.delivered),
+        deliveredDir: item.delivered_dir || "",
+        deliveredHostHint: item.delivered_host_hint || "",
         createdAt: item.created_at ? Date.parse(item.created_at) : Date.now(),
         sizeBytes: item.size_bytes ?? null,
         status: item.status || "",
@@ -742,8 +753,59 @@ async function fetchRecentExports() {
   }
 }
 
+function setDeliveryUI({ statusText, deliveredDir, hostHint }) {
+  if (elements.exportModalDeliveryStatus) {
+    elements.exportModalDeliveryStatus.textContent = statusText || "Delivery: —";
+  }
+  if (elements.exportModalDelivered) {
+    const hint = hostHint ? `\n${hostHint}` : "";
+    elements.exportModalDelivered.textContent = deliveredDir ? `${deliveredDir}${hint}` : "—";
+  }
+}
+
+async function fetchDeliveryStatus(entry) {
+  if (!entry?.projectId || !entry?.jobId) {
+    setDeliveryUI({ statusText: "Delivery: —", deliveredDir: "", hostHint: "" });
+    return null;
+  }
+  const url = `${renderApiBase}/api/projects/${encodeURIComponent(entry.projectId)}/exports/${encodeURIComponent(entry.jobId)}/delivery`;
+  try {
+    const res = await fetch(url, { cache: "no-store" });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || "delivery_failed");
+    }
+    const statusText = data.delivered ? "Delivery: ✅" : "Delivery: ❌";
+    setDeliveryUI({
+      statusText,
+      deliveredDir: data.delivered_dir || "",
+      hostHint: data.host_hint || ""
+    });
+    return data;
+  } catch (error) {
+    console.error(error);
+    setDeliveryUI({ statusText: "Delivery: ❌", deliveredDir: entry.deliveredDir || "", hostHint: entry.deliveredHostHint || "" });
+    return null;
+  }
+}
+
+async function requestDelivery(entry) {
+  if (!entry?.projectId || !entry?.jobId) {
+    setMessage("Missing project or job id for delivery.");
+    return;
+  }
+  const url = `${renderApiBase}/api/projects/${encodeURIComponent(entry.projectId)}/exports/${encodeURIComponent(entry.jobId)}/deliver`;
+  const res = await fetch(url, { method: "POST" });
+  const data = await res.json();
+  if (!res.ok || !data.ok) {
+    throw new Error(data.error || "deliver_failed");
+  }
+  return data;
+}
+
 function openExportModal(entry) {
   if (!entry || !entry.url || !elements.exportModal) return;
+  currentExportEntry = entry;
   elements.exportModalTitle.textContent = entry.outputName || entry.name || "Export Preview";
   const timeLabel = formatExportTime(entry.createdAt);
   const sizeLabel = formatBytes(entry.sizeBytes);
@@ -756,6 +818,18 @@ function openExportModal(entry) {
   elements.exportModalVideo.src = entry.previewUrl || entry.url;
   elements.exportModalDownload.href = entry.url;
   elements.exportModalDownload.download = entry.outputName || entry.name || "";
+  if (elements.exportModalServed) {
+    elements.exportModalServed.textContent = entry.url;
+    elements.exportModalServed.href = entry.url;
+  }
+  if (elements.exportModalDeliver) {
+    elements.exportModalDeliver.disabled = !(entry.projectId && entry.jobId);
+  }
+  setDeliveryUI({
+    statusText: entry.delivered ? "Delivery: ✅" : "Delivery: —",
+    deliveredDir: entry.deliveredDir || "",
+    hostHint: entry.deliveredHostHint || ""
+  });
   if (elements.exportModalManifest) {
     if (entry.manifestUrl) {
       elements.exportModalManifest.href = entry.manifestUrl;
@@ -777,6 +851,7 @@ function openExportModal(entry) {
   elements.exportModalOpen.onclick = () => window.open(entry.url, "_blank");
   elements.exportModal.classList.remove("hidden");
   elements.exportModal.setAttribute("aria-hidden", "false");
+  fetchDeliveryStatus(entry).catch(() => {});
 }
 
 function closeExportModal() {
@@ -786,6 +861,7 @@ function closeExportModal() {
   elements.exportModalVideo.pause();
   elements.exportModalVideo.removeAttribute("src");
   elements.exportModalVideo.load();
+  currentExportEntry = null;
 }
 
 function handleExportReady({
@@ -798,7 +874,10 @@ function handleExportReady({
   previewUrl,
   outputName,
   projectId,
-  jobId
+  jobId,
+  delivered,
+  deliveredDir,
+  deliveredHostHint
 }) {
   const downloadUrl = buildRenderDownloadUrl({
     downloadBase,
@@ -816,6 +895,9 @@ function handleExportReady({
     previewUrl: previewDownloadUrl,
     projectId: projectId || currentProjectId || "",
     jobId: jobId || "",
+    delivered: Boolean(delivered),
+    deliveredDir: deliveredDir || "",
+    deliveredHostHint: deliveredHostHint || "",
     createdAt: createdAt || Date.now(),
     sizeBytes: sizeBytes ?? null,
     status: "ready",
@@ -2502,7 +2584,10 @@ async function pollExportStatus(statusUrl) {
       previewUrl: data.preview_url || "",
       outputName: data.output_name || "",
       projectId: data.project_id || "",
-      jobId: data.job_id || ""
+      jobId: data.job_id || "",
+      delivered: data.delivered,
+      deliveredDir: data.delivered_dir || "",
+      deliveredHostHint: data.delivered_host_hint || ""
     });
     clearExportPoll();
   } else if (data.state === "error") {
@@ -2870,6 +2955,9 @@ function bindUIOnce() {
         previewUrl: item.dataset.previewUrl || "",
         projectId: item.dataset.projectId || "",
         jobId: item.dataset.jobId || "",
+        delivered: item.dataset.delivered === "true",
+        deliveredDir: item.dataset.deliveredDir || "",
+        deliveredHostHint: item.dataset.deliveredHostHint || "",
         createdAt: item.dataset.createdAt ? Number(item.dataset.createdAt) : null,
         sizeBytes: item.dataset.sizeBytes ? Number(item.dataset.sizeBytes) : null,
         status: item.dataset.status || "",
@@ -2883,6 +2971,22 @@ function bindUIOnce() {
 
   if (elements.exportModalClose) {
     elements.exportModalClose.addEventListener("click", closeExportModal);
+  }
+
+  if (elements.exportModalDeliver) {
+    elements.exportModalDeliver.addEventListener("click", () => {
+      if (!currentExportEntry) {
+        return;
+      }
+      setMessage("Re-delivering export...");
+      requestDelivery(currentExportEntry)
+        .then(() => fetchDeliveryStatus(currentExportEntry))
+        .then(() => setMessage("Delivery updated."))
+        .catch((error) => {
+          console.error(error);
+          setMessage("Delivery failed. Check render-api logs.");
+        });
+    });
   }
 
   if (elements.exportModal) {

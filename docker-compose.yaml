@@ -11,7 +11,9 @@ services:
       - ./site:/usr/share/nginx/html:rw
       - ./program-monitor:/usr/share/nginx/html/program-monitor:ro
       - ./lan-dashboard:/usr/share/nginx/html/lan-dashboard:ro
-      - ${RENDERS_HOST_PATH:-renders_data}:/renders
+      - type: bind
+        source: "${RENDERS_HOST_PATH:?RENDERS_HOST_PATH is required}"
+        target: /renders
 
   renderer:
     build:
@@ -21,7 +23,9 @@ services:
     depends_on:
       - obs_plate
     volumes:
-      - ${RENDERS_HOST_PATH:-renders_data}:/renders
+      - type: bind
+        source: "${RENDERS_HOST_PATH:?RENDERS_HOST_PATH is required}"
+        target: /renders
     restart: "no"
 
   render_api:
@@ -31,8 +35,12 @@ services:
     container_name: overlay-render-api
     ports:
       - "8793:8791"
+    environment:
+      - RENDERS_DIR=/renders
     volumes:
-      - ${RENDERS_HOST_PATH:-renders_data}:/renders
+      - type: bind
+        source: "${RENDERS_HOST_PATH:?RENDERS_HOST_PATH is required}"
+        target: /renders
     restart: unless-stopped
 
   wall_api:
@@ -45,6 +53,3 @@ services:
     env_file:
       - ./wall-api/.env
     restart: unless-stopped
-
-volumes:
-  renders_data:

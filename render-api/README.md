@@ -103,6 +103,31 @@ Override with `WORKSPACE_DIR` if you need a different location.
 
 Stage cache entries are stored under `${WORKSPACE_DIR}/stage` and survive restarts until TTL cleanup.
 
+## Delivery to /renders
+
+Exports are written to the workspace and (by default) delivered into the renders mount at:
+`/renders/${DELIVERY_SUBDIR}/<project>/exports/<job>/...`.
+
+Configure delivery behavior:
+
+```shell
+# Disable delivery
+DELIVER_EXPORTS=0
+
+# Override delivery subdir (defaults to _exports)
+DELIVERY_SUBDIR=_exports
+```
+
+Debug the /renders mount:
+
+```shell
+curl http://localhost:8791/api/debug/renders
+
+curl -X POST http://localhost:8791/api/debug/renders/touch \
+  -H "Content-Type: application/json" \
+  -d '{"relpath":"probe.txt","content":"hello"}'
+```
+
 ## Tests
 
 ```shell

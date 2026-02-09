@@ -546,6 +546,40 @@ body.preview-collapsed .previewPanel {
   display: none;
 }
 
+.modal-delivery {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.modal-label {
+  font-size: 11px;
+  color: rgba(150, 190, 220, 0.9);
+  margin-bottom: 4px;
+}
+
+#exportModalServed {
+  color: var(--accent);
+  word-break: break-all;
+}
+
+.modal-delivered {
+  word-break: break-all;
+  color: var(--text);
+}
+
+.modal-delivery-status {
+  font-weight: 600;
+  color: var(--text);
+}
+
+#exportModalDeliver {
+  align-self: flex-start;
+}
+
 .modal-card {
   width: min(720px, 92vw);
   background: #0c151f;

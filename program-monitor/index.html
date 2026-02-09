@@ -144,6 +144,18 @@
         <button id="exportModalClose" type="button">Close</button>
       </div>
       <video class="modal-video" id="exportModalVideo" controls playsinline></video>
+      <div class="modal-delivery">
+        <div>
+          <div class="modal-label">Served URL</div>
+          <a id="exportModalServed" target="_blank" rel="noopener"></a>
+        </div>
+        <div>
+          <div class="modal-label">Delivered Path</div>
+          <div class="modal-delivered" id="exportModalDelivered">—</div>
+        </div>
+        <div class="modal-delivery-status" id="exportModalDeliveryStatus">Delivery: —</div>
+        <button id="exportModalDeliver" type="button">Re-deliver</button>
+      </div>
       <div class="modal-actions">
         <a id="exportModalDownload" download>Download MOV</a>
         <a id="exportModalManifest" target="_blank" rel="noopener">Open Manifest</a>

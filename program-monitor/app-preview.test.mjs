@@ -25,6 +25,8 @@ test("preview includes scrubber markup", () => {
 test("exports include recent exports menu and modal markup", () => {
   assert.ok(html.includes("recentMenu"));
   assert.ok(html.includes("exportModal"));
+  assert.ok(html.includes("exportModalDelivered"));
+  assert.ok(html.includes("exportModalDeliver"));
   assert.ok(!html.includes("btnExportTimelineStage"));
 });
 
