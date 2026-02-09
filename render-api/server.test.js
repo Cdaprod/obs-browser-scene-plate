@@ -26,7 +26,8 @@ const {
   buildRangeResponse,
   resolveExportFilePath,
   deliverExportArtifacts,
-  resolveDeliveryDir
+  resolveDeliveryDir,
+  buildProgramMonitorHtml
 } = require('./server');
 
 test('safeName sanitizes unsafe characters and trims length', () => {
@@ -143,6 +144,15 @@ test('buildProgramMonitorFilename is deterministic', () => {
     seconds: null
   });
   assert.equal(filename, 'program-monitor-node_1080x1920_60fps_auto_abc123.mov');
+});
+
+test('buildProgramMonitorHtml uses iframe for HTML overlays', () => {
+  const html = buildProgramMonitorHtml({
+    baseUrl: 'http://obs-plate/overlays/demo.html',
+    layers: []
+  });
+  assert.ok(html.includes('<iframe id="base"'));
+  assert.ok(html.includes('window.__RENDER_READY'));
 });
 
 test('stage cache stores and reads entries on disk', () => {
