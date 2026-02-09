@@ -219,13 +219,17 @@ test('listProjectExports returns manifests in newest order', () => {
       filename: 'render.mov',
       created_at: new Date('2024-02-01T00:00:00Z').toISOString(),
       size_bytes: 10,
-      download_url: '/exports/demo-project/job-1/render.mov'
+      download_url: '/exports/demo-project/job-1/render.mov',
+      manifest_url: '/exports/demo-project/job-1/manifest.json',
+      log_url: '/exports/demo-project/job-1/render.log'
     };
     fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
 
     const exportsList = listProjectExports(projectId, { baseDir: tempDir });
     assert.equal(exportsList.length, 1);
     assert.equal(exportsList[0].job_id, 'job-1');
+    assert.equal(exportsList[0].manifest_url, '/exports/demo-project/job-1/manifest.json');
+    assert.equal(exportsList[0].log_url, '/exports/demo-project/job-1/render.log');
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
