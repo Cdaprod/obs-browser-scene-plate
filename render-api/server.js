@@ -37,6 +37,99 @@ const STAGE_DIR = path.join(WORKSPACE_DIR, 'stage');
 const PROGRAM_MONITOR_AUDIO_EXTENSIONS = ['.mp3', '.wav', '.m4a', '.aac', '.ogg'];
 const PROGRAM_MONITOR_IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp', '.gif'];
 const PROGRAM_MONITOR_VIDEO_EXTENSIONS = ['.mp4', '.mov', '.webm', '.mkv'];
+const EXPORT_RANGE_EXTENSIONS = new Set(['.mov', '.mp4', '.m4v']);
+
+function getExportContentType(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  if (ext === '.json') {
+    return 'application/json';
+  }
+  if (ext === '.log') {
+    return 'text/plain';
+  }
+  if (ext === '.mp4' || ext === '.m4v') {
+    return 'video/mp4';
+  }
+  if (ext === '.webm') {
+    return 'video/webm';
+  }
+  if (ext === '.mov') {
+    return 'video/quicktime';
+  }
+  return 'application/octet-stream';
+}
+
+function parseRangeHeader(rangeHeader, size) {
+  if (!rangeHeader) {
+    return null;
+  }
+  const match = String(rangeHeader).match(/bytes=(\d*)-(\d*)/);
+  if (!match) {
+    return null;
+  }
+  let start = match[1] ? Number.parseInt(match[1], 10) : null;
+  let end = match[2] ? Number.parseInt(match[2], 10) : null;
+  if (start === null && end === null) {
+    return null;
+  }
+  if (start === null && end !== null) {
+    start = Math.max(size - end, 0);
+    end = size - 1;
+  } else {
+    if (end === null || end >= size) {
+      end = size - 1;
+    }
+  }
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start >= size) {
+    return { invalid: true };
+  }
+  return { start, end };
+}
+
+function buildRangeResponse({ rangeHeader, size, contentType }) {
+  if (!rangeHeader) {
+    return {
+      statusCode: 200,
+      headers: {
+        'Content-Type': contentType,
+        'Content-Length': size,
+        'Accept-Ranges': 'bytes'
+      }
+    };
+  }
+  const parsed = parseRangeHeader(rangeHeader, size);
+  if (!parsed) {
+    return {
+      statusCode: 200,
+      headers: {
+        'Content-Type': contentType,
+        'Content-Length': size,
+        'Accept-Ranges': 'bytes'
+      }
+    };
+  }
+  if (parsed.invalid) {
+    return {
+      statusCode: 416,
+      headers: {
+        'Content-Range': `bytes */${size}`,
+        'Accept-Ranges': 'bytes'
+      }
+    };
+  }
+  const chunkSize = parsed.end - parsed.start + 1;
+  return {
+    statusCode: 206,
+    headers: {
+      'Content-Type': contentType,
+      'Content-Length': chunkSize,
+      'Content-Range': `bytes ${parsed.start}-${parsed.end}/${size}`,
+      'Accept-Ranges': 'bytes'
+    },
+    start: parsed.start,
+    end: parsed.end
+  };
+}
 
 function json(res, code, obj) {
   const body = JSON.stringify(obj);
@@ -315,7 +408,10 @@ function listProjectExports(projectId, { baseDir = PROJECTS_DIR } = {}) {
       const stats = fs.statSync(renderPath);
       return {
         job_id: entry.name,
+        project_id: projectId,
         filename: 'render.mov',
+        output_relpath: buildProjectExportRelpath(projectId, entry.name, 'render.mov'),
+        output_name: `${safeName(projectId)}_${safeName(entry.name)}.mov`,
         created_at: stats.mtime.toISOString(),
         size_bytes: stats.size,
         download_url: `${baseUrl}/render.mov`,
@@ -753,6 +849,8 @@ async function runTimelineJob({
           listFile,
           '-c',
           'copy',
+          '-movflags',
+          '+faststart',
           timelineOutPath
         ], { stdio: ['ignore', 'inherit', 'inherit'] });
 
@@ -773,7 +871,7 @@ async function runTimelineJob({
       downloadUrl: `${downloadBase}/${timelineFilename}`
     });
     if (typeof onReady === 'function') {
-      onReady({ timelineFilename, timelineOutPath });
+      await Promise.resolve(onReady({ timelineFilename, timelineOutPath }));
     }
   } catch (error) {
     console.error(error);
@@ -782,6 +880,50 @@ async function runTimelineJob({
       onError(error);
     }
   }
+}
+
+function buildProjectExportRelpath(projectId, jobId, filename) {
+  return path.posix.join(
+    'projects',
+    safeName(projectId || ''),
+    'exports',
+    safeName(jobId || ''),
+    filename
+  );
+}
+
+function generatePreviewMp4({ inputPath, outputPath }) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('ffmpeg', [
+      '-y',
+      '-i',
+      inputPath,
+      '-map',
+      '0:v:0',
+      '-map',
+      '0:a?',
+      '-c:v',
+      'libx264',
+      '-pix_fmt',
+      'yuv420p',
+      '-movflags',
+      '+faststart',
+      '-c:a',
+      'aac',
+      '-b:a',
+      '160k',
+      outputPath
+    ], { stdio: ['ignore', 'inherit', 'inherit'] });
+
+    child.once('error', reject);
+    child.once('exit', (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(`preview_encode_failed_${code}`));
+    });
+  });
 }
 
 function startServer() {
@@ -828,15 +970,33 @@ function startServer() {
       if (!fs.existsSync(filePath)) {
         return json(res, 404, { ok: false, error: 'export_not_found' });
       }
+      const stats = fs.statSync(filePath);
       const ext = path.extname(filePath).toLowerCase();
-      const contentType = ext === '.json'
-        ? 'application/json'
-        : ext === '.log'
-          ? 'text/plain'
-          : 'video/quicktime';
+      const contentType = getExportContentType(filePath);
+      const supportsRange = EXPORT_RANGE_EXTENSIONS.has(ext);
+      if (supportsRange) {
+        const rangeResponse = buildRangeResponse({
+          rangeHeader: req.headers.range,
+          size: stats.size,
+          contentType
+        });
+        res.writeHead(rangeResponse.statusCode, {
+          ...rangeResponse.headers,
+          'Access-Control-Allow-Origin': '*'
+        });
+        if (rangeResponse.statusCode === 416) {
+          res.end();
+          return;
+        }
+        fs.createReadStream(filePath, {
+          start: rangeResponse.start,
+          end: rangeResponse.end
+        }).pipe(res);
+        return;
+      }
       res.writeHead(200, {
         'Content-Type': contentType,
-        'Content-Length': fs.statSync(filePath).size,
+        'Content-Length': stats.size,
         'Access-Control-Allow-Origin': '*'
       });
       fs.createReadStream(filePath).pipe(res);
@@ -1043,17 +1203,35 @@ function startServer() {
         filenamePrefix: 'render',
         outputFilename: 'render.mov',
         downloadBase,
-        onReady: ({ timelineFilename, timelineOutPath }) => {
+        onReady: async ({ timelineFilename, timelineOutPath }) => {
           try {
             const stats = fs.statSync(timelineOutPath);
+            const previewFilename = 'render_preview.mp4';
+            const previewPath = path.join(jobDir, previewFilename);
+            let previewUrl = '';
+            if (!fs.existsSync(previewPath)) {
+              try {
+                await generatePreviewMp4({ inputPath: timelineOutPath, outputPath: previewPath });
+              } catch (error) {
+                console.warn('preview encode failed', error);
+              }
+            }
+            if (fs.existsSync(previewPath)) {
+              previewUrl = `${downloadBase}/${previewFilename}`;
+            }
+            const outputRelpath = buildProjectExportRelpath(projectId, jobId, timelineFilename);
+            const outputName = `${safeName(projectId)}_${safeName(jobId)}.mov`;
             const manifest = {
               job_id: jobId,
               project_id: projectId,
               filename: timelineFilename,
+              output_relpath: outputRelpath,
+              output_name: outputName,
               created_at: job.createdAt,
               finished_at: new Date().toISOString(),
               size_bytes: stats.size,
               download_url: `${downloadBase}/${timelineFilename}`,
+              preview_url: previewUrl || null,
               status: 'ready',
               manifest_url: `${downloadBase}/manifest.json`,
               log_url: `${downloadBase}/render.log`
@@ -1065,10 +1243,14 @@ function startServer() {
           }
         },
         onError: (error) => {
+          const outputRelpath = buildProjectExportRelpath(projectId, jobId, 'render.mov');
+          const outputName = `${safeName(projectId)}_${safeName(jobId)}.mov`;
           const manifest = {
             job_id: jobId,
             project_id: projectId,
             filename: 'render.mov',
+            output_relpath: outputRelpath,
+            output_name: outputName,
             created_at: job.createdAt,
             finished_at: new Date().toISOString(),
             error: error?.message || 'export_failed',
@@ -1096,6 +1278,11 @@ function startServer() {
       if (!job) {
         return json(res, 404, { ok: false, error: 'export_not_found' });
       }
+      let manifest = null;
+      if (job.projectId) {
+        const jobDir = projectExportJobDir(job.projectId, job.id);
+        manifest = readJsonSafe(exportManifestPath(jobDir), null);
+      }
       return json(res, 200, {
         ok: true,
         job_id: job.id,
@@ -1103,6 +1290,8 @@ function startServer() {
         progress: job.progress,
         filename: job.filename,
         download_url: job.downloadUrl || null,
+        preview_url: manifest?.preview_url || null,
+        output_name: manifest?.output_name || null,
         error: job.error || null,
         project_id: job.projectId || null,
         manifest_url: job.projectId
@@ -1435,5 +1624,6 @@ module.exports = {
   projectTimelinePath,
   listProjectExports,
   getProjectTimeline,
+  buildRangeResponse,
   startServer
 };

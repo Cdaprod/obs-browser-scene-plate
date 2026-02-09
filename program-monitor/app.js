@@ -518,19 +518,19 @@ function setDownloadLink(url) {
   elements.downloadLink.classList.remove("hidden");
 }
 
-function buildRenderDownloadUrl({ downloadBase: base, downloadPath, filename }) {
+function buildRenderDownloadUrl({ downloadBase: base, downloadPath }) {
+  if (!downloadPath) {
+    return "";
+  }
+  if (/^https?:\/\//i.test(downloadPath)) {
+    return downloadPath;
+  }
   if (!base) {
-    return downloadPath || "";
+    return downloadPath;
   }
   const normalizedBase = base.replace(/\/+$/, "");
-  if (filename) {
-    return `${normalizedBase}/renders/${encodeURIComponent(filename)}`;
-  }
-  if (downloadPath) {
-    const normalizedPath = downloadPath.startsWith("/") ? downloadPath : `/${downloadPath}`;
-    return `${normalizedBase}${normalizedPath}`;
-  }
-  return normalizedBase;
+  const normalizedPath = downloadPath.startsWith("/") ? downloadPath : `/${downloadPath}`;
+  return `${normalizedBase}${normalizedPath}`;
 }
 
 function extractFilenameFromPath(path) {
@@ -610,6 +610,10 @@ function renderExportHistory(entries) {
     link.className = "recent-item";
     link.dataset.url = entry.url;
     link.dataset.name = entry.name || "export";
+    link.dataset.outputName = entry.outputName || "";
+    link.dataset.previewUrl = entry.previewUrl || "";
+    link.dataset.projectId = entry.projectId || "";
+    link.dataset.jobId = entry.jobId || "";
     link.dataset.createdAt = entry.createdAt ? String(entry.createdAt) : "";
     link.dataset.sizeBytes = Number.isFinite(entry.sizeBytes) ? String(entry.sizeBytes) : "";
     link.dataset.manifestUrl = entry.manifestUrl || "";
@@ -618,7 +622,18 @@ function renderExportHistory(entries) {
 
     const name = document.createElement("div");
     name.className = "recent-name";
-    name.textContent = entry.name || "export";
+    name.textContent = entry.outputName || entry.name || "export";
+
+    link.appendChild(name);
+
+    if (entry.projectId || entry.jobId) {
+      const ids = document.createElement("div");
+      ids.className = "recent-id";
+      const projectLabel = entry.projectId ? `Project: ${entry.projectId}` : "Project: —";
+      const jobLabel = entry.jobId ? `Job: ${entry.jobId}` : "Job: —";
+      ids.textContent = `${projectLabel} • ${jobLabel}`;
+      link.appendChild(ids);
+    }
 
     const meta = document.createElement("div");
     meta.className = "recent-meta";
@@ -641,7 +656,6 @@ function renderExportHistory(entries) {
     urlText.className = "recent-url";
     urlText.textContent = entry.url;
 
-    link.appendChild(name);
     link.appendChild(meta);
     link.appendChild(urlText);
     elements.recentMenu.appendChild(link);
@@ -687,12 +701,19 @@ async function fetchRecentExports() {
     const entries = (data.exports || []).map((item) => {
       const downloadUrl = buildRenderDownloadUrl({
         downloadBase,
-        downloadPath: item.download_url,
-        filename: item.filename
+        downloadPath: item.download_url
+      });
+      const previewUrl = buildRenderDownloadUrl({
+        downloadBase,
+        downloadPath: item.preview_url
       });
       return {
         url: downloadUrl,
         name: item.filename || "export",
+        outputName: item.output_name || "",
+        previewUrl,
+        projectId: item.project_id || projectId,
+        jobId: item.job_id || "",
         createdAt: item.created_at ? Date.parse(item.created_at) : Date.now(),
         sizeBytes: item.size_bytes ?? null,
         status: item.status || "",
@@ -723,13 +744,18 @@ async function fetchRecentExports() {
 
 function openExportModal(entry) {
   if (!entry || !entry.url || !elements.exportModal) return;
-  elements.exportModalTitle.textContent = entry.name || "Export Preview";
+  elements.exportModalTitle.textContent = entry.outputName || entry.name || "Export Preview";
   const timeLabel = formatExportTime(entry.createdAt);
   const sizeLabel = formatBytes(entry.sizeBytes);
-  elements.exportModalMeta.textContent = [timeLabel, sizeLabel].filter(Boolean).join(" • ");
-  elements.exportModalVideo.src = entry.url;
+  const idLabel = entry.projectId || entry.jobId
+    ? [entry.projectId ? `Project ${entry.projectId}` : null, entry.jobId ? `Job ${entry.jobId}` : null]
+      .filter(Boolean)
+      .join(" • ")
+    : "";
+  elements.exportModalMeta.textContent = [timeLabel, sizeLabel, idLabel].filter(Boolean).join(" • ");
+  elements.exportModalVideo.src = entry.previewUrl || entry.url;
   elements.exportModalDownload.href = entry.url;
-  elements.exportModalDownload.download = entry.name || "";
+  elements.exportModalDownload.download = entry.outputName || entry.name || "";
   if (elements.exportModalManifest) {
     if (entry.manifestUrl) {
       elements.exportModalManifest.href = entry.manifestUrl;
@@ -762,17 +788,34 @@ function closeExportModal() {
   elements.exportModalVideo.load();
 }
 
-function handleExportReady({ downloadPath, filename, sizeBytes, createdAt, manifestUrl, logUrl }) {
+function handleExportReady({
+  downloadPath,
+  filename,
+  sizeBytes,
+  createdAt,
+  manifestUrl,
+  logUrl,
+  previewUrl,
+  outputName,
+  projectId,
+  jobId
+}) {
   const downloadUrl = buildRenderDownloadUrl({
     downloadBase,
-    downloadPath,
-    filename
+    downloadPath
   });
+  const previewDownloadUrl = previewUrl
+    ? buildRenderDownloadUrl({ downloadBase, downloadPath: previewUrl })
+    : "";
   setExportStatus("Ready");
   setDownloadLink(downloadUrl);
   updateExportHistory({
     url: downloadUrl,
     name: filename || "export",
+    outputName: outputName || "",
+    previewUrl: previewDownloadUrl,
+    projectId: projectId || currentProjectId || "",
+    jobId: jobId || "",
     createdAt: createdAt || Date.now(),
     sizeBytes: sizeBytes ?? null,
     status: "ready",
@@ -2453,7 +2496,14 @@ async function pollExportStatus(statusUrl) {
 
   if (data.state === "ready") {
     const filename = data.filename || extractFilenameFromPath(data.download_url);
-    handleExportReady({ downloadPath: data.download_url, filename });
+    handleExportReady({
+      downloadPath: data.download_url,
+      filename,
+      previewUrl: data.preview_url || "",
+      outputName: data.output_name || "",
+      projectId: data.project_id || "",
+      jobId: data.job_id || ""
+    });
     clearExportPoll();
   } else if (data.state === "error") {
     setExportStatus("Error");
@@ -2816,6 +2866,10 @@ function bindUIOnce() {
       const entry = {
         url: item.dataset.url,
         name: item.dataset.name,
+        outputName: item.dataset.outputName || "",
+        previewUrl: item.dataset.previewUrl || "",
+        projectId: item.dataset.projectId || "",
+        jobId: item.dataset.jobId || "",
         createdAt: item.dataset.createdAt ? Number(item.dataset.createdAt) : null,
         sizeBytes: item.dataset.sizeBytes ? Number(item.dataset.sizeBytes) : null,
         status: item.dataset.status || "",

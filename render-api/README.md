@@ -1,6 +1,7 @@
 # Render API Service
 
-Small HTTP service that runs `render.js` to produce downloadable `.mov` files in `/renders`.
+Small HTTP service that runs `render.js` to produce downloadable `.mov` files in `/renders`
+and project exports under `/exports/<project>/<job>/...`.
 
 ## Usage
 
@@ -94,6 +95,8 @@ curl http://localhost:8791/api/render/<job_id>
 ```
 
 When ready, the response includes a `/renders/<file>.mov` path that Nginx can serve for download.
+Project exports include job-scoped paths like `/exports/<project>/<job>/render.mov` plus a
+`render_preview.mp4` for web playback.
 
 Project drafts and exports are stored under the workspace directory (defaults to `/renders/workspace`).
 Override with `WORKSPACE_DIR` if you need a different location.

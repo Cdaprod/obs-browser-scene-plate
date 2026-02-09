@@ -22,7 +22,8 @@ const {
   atomicWriteJson,
   projectTimelinePath,
   readJsonSafe,
-  listProjectExports
+  listProjectExports,
+  buildRangeResponse
 } = require('./server');
 
 test('safeName sanitizes unsafe characters and trims length', () => {
@@ -233,4 +234,16 @@ test('listProjectExports returns manifests in newest order', () => {
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
+});
+
+test('buildRangeResponse returns 206 with correct headers', () => {
+  const response = buildRangeResponse({
+    rangeHeader: 'bytes=0-1023',
+    size: 2048,
+    contentType: 'video/quicktime'
+  });
+  assert.equal(response.statusCode, 206);
+  assert.equal(response.headers['Content-Range'], 'bytes 0-1023/2048');
+  assert.equal(response.headers['Accept-Ranges'], 'bytes');
+  assert.equal(response.headers['Content-Length'], 1024);
 });
