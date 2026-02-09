@@ -112,7 +112,8 @@ async function render() {
       defaultSeconds: DEFAULT_SECONDS
     });
 
-    const FRAMES = Math.max(1, Math.round(FPS * SECONDS));
+    const FRAMES = Math.max(1, Math.ceil(FPS * SECONDS));
+    console.log(`RENDER_STATE:frames fps=${FPS} seconds=${SECONDS} frames=${FRAMES}`);
 
     console.log('RENDER_STATE:rendering');
     const frameIntervalMs = 1000 / FPS;

@@ -486,6 +486,7 @@ let baseStartTime = 0;
 let projectSaveTimer = null;
 let currentProjectId = "";
 let currentExportEntry = null;
+let recentMenuTimer = null;
 let uiBound = false;
 const PREVIEW_COLLAPSE_KEY = "program-monitor.preview-collapsed";
 const OBS_PANEL_COLLAPSE_KEY = "program-monitor.obs-collapsed";
@@ -622,6 +623,7 @@ function renderExportHistory(entries) {
     link.dataset.delivered = entry.delivered ? "true" : "";
     link.dataset.deliveredDir = entry.deliveredDir || "";
     link.dataset.deliveredHostHint = entry.deliveredHostHint || "";
+    link.dataset.progress = Number.isFinite(entry.progress) ? String(entry.progress) : "";
     link.dataset.createdAt = entry.createdAt ? String(entry.createdAt) : "";
     link.dataset.sizeBytes = Number.isFinite(entry.sizeBytes) ? String(entry.sizeBytes) : "";
     link.dataset.manifestUrl = entry.manifestUrl || "";
@@ -657,7 +659,11 @@ function renderExportHistory(entries) {
     }
 
     const size = document.createElement("span");
-    size.textContent = formatBytes(entry.sizeBytes) || "Download MOV";
+    if (Number.isFinite(entry.progress) && entry.progress >= 0 && entry.progress < 100 && entry.status !== "ready") {
+      size.textContent = `${Math.round(entry.progress)}%`;
+    } else {
+      size.textContent = formatBytes(entry.sizeBytes) || "Download MOV";
+    }
     meta.appendChild(size);
 
     const urlText = document.createElement("div");
@@ -687,6 +693,19 @@ function positionRecentMenu() {
     shift += overflowLeft;
   }
   elements.recentMenu.style.transform = `translateX(${shift}px)`;
+}
+
+function setRecentMenuPolling(enabled) {
+  if (recentMenuTimer) {
+    clearInterval(recentMenuTimer);
+    recentMenuTimer = null;
+  }
+  if (!enabled) {
+    return;
+  }
+  recentMenuTimer = setInterval(() => {
+    fetchRecentExports().then(renderExportHistory).catch(() => {});
+  }, 2000);
 }
 
 function updateExportHistory(entry) {
@@ -725,6 +744,7 @@ async function fetchRecentExports() {
         delivered: Boolean(item.delivered),
         deliveredDir: item.delivered_dir || "",
         deliveredHostHint: item.delivered_host_hint || "",
+        progress: Number.isFinite(item.progress) ? Number(item.progress) : null,
         createdAt: item.created_at ? Date.parse(item.created_at) : Date.now(),
         sizeBytes: item.size_bytes ?? null,
         status: item.status || "",
@@ -2933,6 +2953,9 @@ function bindUIOnce() {
         elements.recentMenu.classList.toggle("hidden");
         if (!elements.recentMenu.classList.contains("hidden")) {
           requestAnimationFrame(positionRecentMenu);
+          setRecentMenuPolling(true);
+        } else {
+          setRecentMenuPolling(false);
         }
       });
     });
@@ -2941,6 +2964,7 @@ function bindUIOnce() {
       if (elements.recentMenu.classList.contains("hidden")) return;
       if (event.target.closest(".recent-wrap")) return;
       elements.recentMenu.classList.add("hidden");
+      setRecentMenuPolling(false);
     });
 
     window.addEventListener("resize", () => {
@@ -2964,11 +2988,13 @@ function bindUIOnce() {
         createdAt: item.dataset.createdAt ? Number(item.dataset.createdAt) : null,
         sizeBytes: item.dataset.sizeBytes ? Number(item.dataset.sizeBytes) : null,
         status: item.dataset.status || "",
+        progress: item.dataset.progress ? Number(item.dataset.progress) : null,
         manifestUrl: item.dataset.manifestUrl || "",
         logUrl: item.dataset.logUrl || ""
       };
       openExportModal(entry);
       elements.recentMenu.classList.add("hidden");
+      setRecentMenuPolling(false);
     });
   }
 
