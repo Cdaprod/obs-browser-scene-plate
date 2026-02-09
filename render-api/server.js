@@ -30,7 +30,7 @@ const RENDERS_HOST_PATH_HINT = process.env.RENDERS_HOST_PATH || '';
 const PUBLIC_ORIGIN = process.env.PUBLIC_ORIGIN || '';
 const JOBS_DIR = path.join(RENDERS_DIR, '.jobs');
 const MAX_BODY_BYTES = 1024 * 1024;
-const DEFAULT_RENDER_ORIGIN = process.env.RENDER_ORIGIN || 'http://obs_plate';
+const DEFAULT_RENDER_ORIGIN = process.env.RENDER_ORIGIN || 'http://obs-plate';
 const PROGRAM_MONITOR_DIR = path.join(RENDERS_DIR, 'program-monitor');
 const PROGRAM_MONITOR_TMP_DIR = path.join(PROGRAM_MONITOR_DIR, 'tmp');
 const PROGRAM_MONITOR_NODE_DIR = path.join(PROGRAM_MONITOR_DIR, 'nodes');
@@ -168,6 +168,14 @@ function resolveDeliveryDir({ projectId, jobId, rendersDir = RENDERS_DIR, subdir
   );
 }
 
+function buildDebugFramePath({ projectId, jobId, rendersDir = RENDERS_DIR, subdir = DELIVERY_SUBDIR } = {}) {
+  const deliveryDir = resolveDeliveryDir({ projectId, jobId, rendersDir, subdir });
+  if (!deliveryDir) {
+    return null;
+  }
+  return path.join(deliveryDir, 'debug_first_frame.png');
+}
+
 function writeFileAtomic(filePath, contents) {
   const dir = path.dirname(filePath);
   fs.mkdirSync(dir, { recursive: true });
@@ -237,7 +245,7 @@ function getRendersDirDiagnostics({ rendersDir = RENDERS_DIR } = {}) {
   };
 }
 
-function buildDeliveryFiles({ deliveryDir, filename, previewFilename }) {
+function buildDeliveryFiles({ deliveryDir, filename, previewFilename, debugFrameFilename }) {
   if (!deliveryDir) {
     return null;
   }
@@ -245,7 +253,8 @@ function buildDeliveryFiles({ deliveryDir, filename, previewFilename }) {
     mov: path.join(deliveryDir, filename),
     log: path.join(deliveryDir, 'render.log'),
     manifest: path.join(deliveryDir, 'manifest.json'),
-    preview: previewFilename ? path.join(deliveryDir, previewFilename) : null
+    preview: previewFilename ? path.join(deliveryDir, previewFilename) : null,
+    debug_frame: debugFrameFilename ? path.join(deliveryDir, debugFrameFilename) : null
   };
 }
 
@@ -255,13 +264,14 @@ async function deliverExportArtifacts({
   jobDir,
   filename = 'render.mov',
   previewFilename = null,
+  debugFrameFilename = null,
   deliverEnabled = DELIVER_EXPORTS,
   rendersDir = RENDERS_DIR,
   subdir = DELIVERY_SUBDIR,
   hostHint = RENDERS_HOST_PATH_HINT
 } = {}) {
   const deliveryDir = resolveDeliveryDir({ projectId, jobId, rendersDir, subdir });
-  const deliveryFiles = buildDeliveryFiles({ deliveryDir, filename, previewFilename });
+  const deliveryFiles = buildDeliveryFiles({ deliveryDir, filename, previewFilename, debugFrameFilename });
   if (!deliverEnabled) {
     return {
       delivered: false,
@@ -284,6 +294,7 @@ async function deliverExportArtifacts({
   const logPath = exportLogPath(jobDir);
   const manifestPath = exportManifestPath(jobDir);
   const previewPath = previewFilename ? path.join(jobDir, previewFilename) : null;
+  const debugFramePath = debugFrameFilename ? path.join(jobDir, debugFrameFilename) : null;
   try {
     ensureRendersDirState({ rendersDir });
     copyFileAtomic(renderPath, deliveryFiles.mov);
@@ -292,6 +303,11 @@ async function deliverExportArtifacts({
     }
     if (previewPath && deliveryFiles.preview && fs.existsSync(previewPath)) {
       copyFileAtomic(previewPath, deliveryFiles.preview);
+    }
+    if (deliveryFiles.debug_frame) {
+      if (debugFramePath && fs.existsSync(debugFramePath)) {
+        copyFileAtomic(debugFramePath, deliveryFiles.debug_frame);
+      }
     }
     if (fs.existsSync(manifestPath)) {
       copyFileAtomic(manifestPath, deliveryFiles.manifest);
@@ -345,7 +361,7 @@ function buildDeliveryStatus({ projectId, jobId, rendersDir = RENDERS_DIR, subdi
     };
   }
   const files = {};
-  const fileList = ['render.mov', 'render.log', 'manifest.json', 'render_preview.mp4'];
+  const fileList = ['render.mov', 'render.log', 'manifest.json', 'render_preview.mp4', 'debug_first_frame.png'];
   fileList.forEach((name) => {
     const filePath = path.join(deliveryDir, name);
     if (fs.existsSync(filePath)) {
@@ -438,11 +454,26 @@ function containsPublicOrigin(urlValue, publicOrigin = PUBLIC_ORIGIN) {
   }
 }
 
-function assertRenderOriginSafe({ urls = [], context = '' } = {}) {
-  if (!PUBLIC_ORIGIN) {
-    return;
+function isForbiddenRenderOrigin(urlValue) {
+  if (!urlValue) {
+    return false;
   }
-  const unsafe = urls.filter((value) => containsPublicOrigin(value));
+  try {
+    const parsed = new URL(urlValue);
+    if (parsed.hostname === '192.168.0.25' && parsed.port === '8789') {
+      return true;
+    }
+    if (parsed.hostname === 'obs-plate' && parsed.port === '8789') {
+      return true;
+    }
+    return false;
+  } catch (error) {
+    return false;
+  }
+}
+
+function assertRenderOriginSafe({ urls = [], context = '' } = {}) {
+  const unsafe = urls.filter((value) => containsPublicOrigin(value) || isForbiddenRenderOrigin(value));
   if (!unsafe.length) {
     return;
   }
@@ -471,6 +502,16 @@ function buildProgramMonitorHash(payload) {
 function buildProgramMonitorFilename({ prefix, hash, width, height, fps, seconds }) {
   const durationLabel = Number.isFinite(seconds) ? `${Math.round(seconds * 1000)}ms` : 'auto';
   return `${prefix}_${width}x${height}_${fps}fps_${durationLabel}_${hash}.mov`;
+}
+
+function assertHtmlDurationSeconds({ url, durationSeconds, context = '' } = {}) {
+  if (classifyProgramMonitorUrl(url) !== 'html') {
+    return;
+  }
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+    const suffix = context ? `_${context}` : '';
+    throw new Error(`missing_duration_seconds${suffix}`);
+  }
 }
 
 function buildProgramMonitorTimelineHash(timeline, { fps, width, height }) {
@@ -809,12 +850,25 @@ function isLocalhostHost(hostname) {
 
 function rewriteOrigin(urlValue, { publicOrigin = PUBLIC_ORIGIN, renderOrigin = DEFAULT_RENDER_ORIGIN } = {}) {
   if (!urlValue || !publicOrigin) {
+    try {
+      const parsed = new URL(urlValue);
+      if (parsed.hostname === '192.168.0.25' && parsed.port === '8789') {
+        const relative = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+        return new URL(relative, renderOrigin).toString();
+      }
+    } catch (error) {
+      return urlValue;
+    }
     return urlValue;
   }
   try {
     const publicUrl = new URL(publicOrigin);
     const parsed = new URL(urlValue);
     if (parsed.origin === publicUrl.origin) {
+      const relative = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+      return new URL(relative, renderOrigin).toString();
+    }
+    if (parsed.hostname === '192.168.0.25' && parsed.port === '8789') {
       const relative = `${parsed.pathname}${parsed.search}${parsed.hash}`;
       return new URL(relative, renderOrigin).toString();
     }
@@ -1024,9 +1078,13 @@ async function runTimelineJob({
   filenamePrefix = 'program-monitor-timeline',
   downloadBase = '/renders/program-monitor/timelines',
   outputFilename = null,
+  debugFramePath = null,
+  logPath = null,
   onReady,
   onError
 }) {
+  let logStream = null;
+  let writeLog = () => {};
   try {
     const fps = options.fps;
     const width = options.width;
@@ -1035,6 +1093,13 @@ async function runTimelineJob({
     const padSeconds = options.padSeconds ?? null;
     const defaultDurationSeconds = parseOptionalNumber(options.durationSeconds);
     const nodes = timeline.nodes || [];
+    logStream = logPath ? fs.createWriteStream(logPath, { flags: 'a' }) : null;
+    writeLog = (chunk) => {
+      if (logStream) {
+        logStream.write(chunk);
+      }
+    };
+    let debugFrameUsed = false;
 
     updateJob(jobId, { state: 'rendering', progress: 0 });
 
@@ -1091,11 +1156,19 @@ async function runTimelineJob({
       const nodeOutPath = path.join(PROGRAM_MONITOR_NODE_DIR, nodeFilename);
       const nodeDurationSeconds = parseOptionalNumber(node.durationSeconds)
         ?? defaultDurationSeconds;
-      if (classifyProgramMonitorUrl(normalizedBase) === 'html' && !nodeDurationSeconds) {
-        throw new Error(`missing_duration_seconds_${index}`);
-      }
+      assertHtmlDurationSeconds({
+        url: normalizedBase,
+        durationSeconds: nodeDurationSeconds,
+        context: String(index)
+      });
 
-      if (!fs.existsSync(nodeOutPath)) {
+      const shouldWriteDebugFrame = !debugFrameUsed
+        && debugFramePath
+        && classifyProgramMonitorUrl(normalizedBase) === 'html';
+      const debugFrameExists = shouldWriteDebugFrame && fs.existsSync(debugFramePath);
+      const shouldRenderNode = !fs.existsSync(nodeOutPath) || (shouldWriteDebugFrame && !debugFrameExists);
+
+      if (shouldRenderNode) {
         await new Promise((resolve, reject) => {
           const args = [
             '/app/render.js',
@@ -1108,17 +1181,39 @@ async function runTimelineJob({
           if (Number.isFinite(nodeDurationSeconds) && nodeDurationSeconds > 0) {
             args.push(`--seconds=${nodeDurationSeconds}`);
           }
-          const child = spawn('node', args, { stdio: ['ignore', 'inherit', 'inherit'] });
+          const env = { ...process.env };
+          if (shouldWriteDebugFrame) {
+            fs.mkdirSync(path.dirname(debugFramePath), { recursive: true });
+            env.DEBUG_FRAME_OUT = debugFramePath;
+          }
+          const child = spawn('node', args, { stdio: ['ignore', 'pipe', 'pipe'], env });
+
+          child.stdout.on('data', (chunk) => {
+            const text = chunk.toString('utf8');
+            process.stdout.write(text);
+            writeLog(text);
+          });
+
+          child.stderr.on('data', (chunk) => {
+            const text = chunk.toString('utf8');
+            process.stderr.write(text);
+            writeLog(text);
+          });
 
           child.once('error', reject);
           child.once('exit', (code) => {
             if (code === 0) {
+              if (shouldWriteDebugFrame) {
+                debugFrameUsed = true;
+              }
               resolve();
               return;
             }
             reject(new Error(`node_render_failed_${index}_${code}`));
           });
         });
+      } else if (debugFrameExists) {
+        debugFrameUsed = true;
       }
 
       nodeOutputs.push(nodeOutPath);
@@ -1191,6 +1286,10 @@ async function runTimelineJob({
     updateJob(jobId, { state: 'error', error: error.message || 'timeline_failed' });
     if (typeof onError === 'function') {
       onError(error);
+    }
+  } finally {
+    if (logStream) {
+      logStream.end();
     }
   }
 }
@@ -1625,6 +1724,8 @@ function startServer() {
       const jobId = createJobId();
       const jobDir = projectExportJobDir(projectId, jobId);
       const downloadBase = `/exports/${encodeURIComponent(safeName(projectId))}/${encodeURIComponent(jobId)}`;
+      const debugFramePath = buildDebugFramePath({ projectId, jobId });
+      const debugFrameFilename = debugFramePath ? path.basename(debugFramePath) : null;
       appendExportLog(jobDir, 'export_queued');
 
       const job = {
@@ -1650,6 +1751,8 @@ function startServer() {
         filenamePrefix: 'render',
         outputFilename: 'render.mov',
         downloadBase,
+        debugFramePath,
+        logPath: exportLogPath(jobDir),
         onReady: async ({ timelineFilename, timelineOutPath }) => {
           try {
             const stats = fs.statSync(timelineOutPath);
@@ -1674,6 +1777,8 @@ function startServer() {
               filename: timelineFilename,
               output_relpath: outputRelpath,
               output_name: outputName,
+              debug_frame_filename: debugFrameFilename,
+              debug_frame_path: debugFramePath,
               created_at: job.createdAt,
               finished_at: new Date().toISOString(),
               size_bytes: stats.size,
@@ -1689,7 +1794,8 @@ function startServer() {
               jobId,
               jobDir,
               filename: timelineFilename,
-              previewFilename: previewUrl ? 'render_preview.mp4' : null
+              previewFilename: previewUrl ? 'render_preview.mp4' : null,
+              debugFrameFilename
             });
             manifest.delivered = deliveryResult.delivered;
             manifest.delivered_error = deliveryResult.error || null;
@@ -1721,6 +1827,8 @@ function startServer() {
             filename: 'render.mov',
             output_relpath: outputRelpath,
             output_name: outputName,
+            debug_frame_filename: debugFrameFilename,
+            debug_frame_path: debugFramePath,
             created_at: job.createdAt,
             finished_at: new Date().toISOString(),
             error: error?.message || 'export_failed',
@@ -1849,7 +1957,9 @@ function startServer() {
       const padSeconds = parseOptionalNumber(options.padSeconds);
       const durationSeconds = parseOptionalNumber(options.duration_seconds)
         ?? parseOptionalNumber(body?.node?.duration_seconds);
-      if (classifyProgramMonitorUrl(normalizedBase) === 'html' && !durationSeconds) {
+      try {
+        assertHtmlDurationSeconds({ url: normalizedBase, durationSeconds });
+      } catch (error) {
         return json(res, 400, { ok: false, error: 'missing_duration_seconds' });
       }
 
@@ -2103,9 +2213,11 @@ module.exports = {
   buildFilename,
   listRenderFiles,
   normalizeRenderUrl,
+  assertRenderOriginSafe,
   parseProgramMonitorText,
   classifyProgramMonitorUrl,
   buildProgramMonitorFilename,
+  assertHtmlDurationSeconds,
   createStageEntry,
   readStageEntry,
   writeStage,
@@ -2122,6 +2234,7 @@ module.exports = {
   resolveExportFilePath,
   deliverExportArtifacts,
   resolveDeliveryDir,
+  buildDebugFramePath,
   buildProgramMonitorHtml,
   startServer
 };

@@ -66,6 +66,7 @@ async function render() {
   const explicitSeconds = parseOptionalNumber(args.seconds);
   const warmupMs = parseOptionalNumber(args.warmupMs) ?? DEFAULT_WARMUP_MS;
   const padSeconds = parseOptionalNumber(args.padSeconds) ?? DEFAULT_PAD_SECONDS;
+  const debugFrameOut = process.env.DEBUG_FRAME_OUT || null;
 
   if (!URL) {
     exitWithError('Missing required: --url=http://...', 2);
@@ -88,6 +89,14 @@ async function render() {
 
     page = await context.newPage();
 
+    page.on('console', (msg) => {
+      console.log(`BROWSER_CONSOLE:${msg.type()} ${msg.text()}`);
+    });
+
+    page.on('pageerror', (error) => {
+      console.error(`BROWSER_PAGEERROR:${error.message || error}`);
+    });
+
     await page.addInitScript(() => {
       window.__RENDER_SECONDS_EVENT = null;
       window.addEventListener('render:duration', (event) => {
@@ -98,7 +107,22 @@ async function render() {
       }, { once: true });
     });
 
-    await page.goto(URL, { waitUntil: 'load' });
+    await page.goto(URL, { waitUntil: 'networkidle' });
+    try {
+      await page.waitForFunction(() => window.__RENDER_READY === true, { timeout: 5000 });
+    } catch (error) {
+      console.error('RENDER_STATE:ready_timeout');
+      throw new Error('render_ready_timeout');
+    }
+    if (debugFrameOut) {
+      fs.mkdirSync(path.dirname(debugFrameOut), { recursive: true });
+      await page.screenshot({
+        path: debugFrameOut,
+        omitBackground: true,
+        fullPage: false
+      });
+      console.log(`RENDER_STATE:debug_frame path=${debugFrameOut}`);
+    }
     if (warmupMs > 0) {
       await page.waitForTimeout(warmupMs);
     }
@@ -114,6 +138,7 @@ async function render() {
 
     const FRAMES = Math.max(1, Math.ceil(FPS * SECONDS));
     console.log(`RENDER_STATE:frames fps=${FPS} seconds=${SECONDS} frames=${FRAMES}`);
+    console.log(`CAPTURE url=${URL} duration_sec=${SECONDS} fps=${FPS} frames_total=${FRAMES}`);
 
     console.log('RENDER_STATE:rendering');
     const frameIntervalMs = 1000 / FPS;
