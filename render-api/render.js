@@ -1,5 +1,5 @@
 /**
- * Render a URL to a ProRes MOV using Playwright screenshots + ffmpeg.
+ * Render a URL to an H.264 MOV using Playwright screenshots + ffmpeg.
  *
  * Usage:
  *   node /app/render.js --url=http://nginx/plate-default.html --out=/renders/output.mov \
@@ -136,7 +136,7 @@ async function render() {
     execSync(
       `ffmpeg -y -framerate ${FPS} ` +
       `-i ${FRAME_DIR}/frame_%05d.png ` +
-      `-c:v prores_ks -profile:v 4 -pix_fmt yuva444p10le ` +
+      `-c:v libx264 -pix_fmt yuv420p -profile:v high -level 4.1 ` +
       `-movflags +faststart ${OUT}`,
       { stdio: 'inherit' }
     );

@@ -510,6 +510,13 @@ body.preview-collapsed .previewPanel {
   gap: 10px;
 }
 
+.recent-id {
+  font-size: 10px;
+  color: rgba(185, 215, 235, 0.8);
+  display: flex;
+  gap: 8px;
+}
+
 .recent-url {
   font-size: 10px;
   color: rgba(150, 190, 220, 0.9);
