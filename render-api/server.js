@@ -403,14 +403,17 @@ function parseProgramMonitorText(text) {
 }
 
 function classifyProgramMonitorUrl(url) {
-    const lower = String(url || '').toLowerCase();
-    const pathname = extractPathname(lower);
+  const lower = String(url || '').toLowerCase();
+  const pathname = extractPathname(lower);
 
   if (PROGRAM_MONITOR_AUDIO_EXTENSIONS.some((ext) => pathname.endsWith(ext))) {
     return 'audio';
   }
   if (PROGRAM_MONITOR_IMAGE_EXTENSIONS.some((ext) => pathname.endsWith(ext))) {
     return 'image';
+  }
+  if (pathname.endsWith('.html') || pathname.endsWith('.htm') || pathname.includes('/overlays/')) {
+    return 'html';
   }
   if (PROGRAM_MONITOR_VIDEO_EXTENSIONS.some((ext) => pathname.endsWith(ext))) {
     return 'video';
@@ -691,6 +694,10 @@ function getProjectTimeline(projectId) {
 }
 
 function buildProgramMonitorHtml({ baseUrl, layers }) {
+  const baseKind = classifyProgramMonitorUrl(baseUrl);
+  const baseMarkup = baseKind === 'html'
+    ? `<iframe id="base" src="${baseUrl}" frameborder="0" allow="autoplay" scrolling="no"></iframe>`
+    : `<video id="base" src="${baseUrl}" playsinline muted></video>`;
   const overlayMarkup = layers
     .map((url, index) => {
       const kind = classifyProgramMonitorUrl(url);
@@ -699,6 +706,9 @@ function buildProgramMonitorHtml({ baseUrl, layers }) {
       }
       if (kind === 'image') {
         return `<img data-layer="image-${index}" src="${url}" alt="" />`;
+      }
+      if (kind === 'html') {
+        return `<iframe data-layer="html-${index}" src="${url}" frameborder="0" allow="autoplay" scrolling="no"></iframe>`;
       }
       return `<video data-layer="video-${index}" src="${url}" loop muted playsinline></video>`;
     })
@@ -725,41 +735,48 @@ function buildProgramMonitorHtml({ baseUrl, layers }) {
       height: 100%;
       background: transparent;
     }
-    video, img {
+    video, img, iframe {
       position: absolute;
       inset: 0;
       width: 100%;
       height: 100%;
       object-fit: contain;
+      border: 0;
     }
   </style>
 </head>
 <body>
   <div class="stage">
-    <video id="base" src="${baseUrl}" playsinline muted></video>
+    ${baseMarkup}
     ${overlayMarkup}
   </div>
   <script>
     const base = document.getElementById('base');
     const overlays = Array.from(document.querySelectorAll('video[data-layer]'));
+    const iframes = Array.from(document.querySelectorAll('iframe[data-layer]'));
     const audios = Array.from(document.querySelectorAll('audio[data-layer]'));
 
     function startPlayback() {
-      base.play().catch(() => {});
+      if (base && base.tagName === 'VIDEO') {
+        base.play().catch(() => {});
+      }
       overlays.forEach((video) => video.play().catch(() => {}));
       audios.forEach((audio) => audio.play().catch(() => {}));
     }
 
-    base.addEventListener('loadedmetadata', () => {
-      const duration = Number(base.duration);
-      if (Number.isFinite(duration) && duration > 0) {
-        window.__RENDER_SECONDS = duration;
-        window.dispatchEvent(new CustomEvent('render:duration', { detail: { seconds: duration } }));
-      }
-      startPlayback();
-    });
+    if (base && base.tagName === 'VIDEO') {
+      base.addEventListener('loadedmetadata', () => {
+        const duration = Number(base.duration);
+        if (Number.isFinite(duration) && duration > 0) {
+          window.__RENDER_SECONDS = duration;
+          window.dispatchEvent(new CustomEvent('render:duration', { detail: { seconds: duration } }));
+        }
+        startPlayback();
+      });
+    }
 
     window.addEventListener('load', () => {
+      window.__RENDER_READY = true;
       startPlayback();
     });
   </script>
@@ -1074,6 +1091,9 @@ async function runTimelineJob({
       const nodeOutPath = path.join(PROGRAM_MONITOR_NODE_DIR, nodeFilename);
       const nodeDurationSeconds = parseOptionalNumber(node.durationSeconds)
         ?? defaultDurationSeconds;
+      if (classifyProgramMonitorUrl(normalizedBase) === 'html' && !nodeDurationSeconds) {
+        throw new Error(`missing_duration_seconds_${index}`);
+      }
 
       if (!fs.existsSync(nodeOutPath)) {
         await new Promise((resolve, reject) => {
@@ -1829,6 +1849,9 @@ function startServer() {
       const padSeconds = parseOptionalNumber(options.padSeconds);
       const durationSeconds = parseOptionalNumber(options.duration_seconds)
         ?? parseOptionalNumber(body?.node?.duration_seconds);
+      if (classifyProgramMonitorUrl(normalizedBase) === 'html' && !durationSeconds) {
+        return json(res, 400, { ok: false, error: 'missing_duration_seconds' });
+      }
 
       ensureDir(PROGRAM_MONITOR_TMP_DIR);
       ensureDir(PROGRAM_MONITOR_NODE_DIR);
@@ -2099,5 +2122,6 @@ module.exports = {
   resolveExportFilePath,
   deliverExportArtifacts,
   resolveDeliveryDir,
+  buildProgramMonitorHtml,
   startServer
 };
