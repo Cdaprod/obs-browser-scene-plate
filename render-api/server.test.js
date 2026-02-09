@@ -107,6 +107,14 @@ test('normalizeRenderUrl accepts relative paths', () => {
   assert.equal(result, 'http://obs_plate/overlays/title.html?mode=burst');
 });
 
+test('normalizeRenderUrl rewrites public origin to render origin', () => {
+  const result = normalizeRenderUrl('http://192.168.0.25:8789/overlays/demo.html', {
+    renderOrigin: 'http://obs_plate',
+    publicOrigin: 'http://192.168.0.25:8789'
+  });
+  assert.equal(result, 'http://obs_plate/overlays/demo.html');
+});
+
 test('parseProgramMonitorText splits base and layers', () => {
   const text = [
     'http://example.com/base.mp4',

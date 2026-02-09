@@ -27,6 +27,7 @@ const DELIVER_EXPORTS = process.env.DELIVER_EXPORTS !== '0';
 const DELIVERY_SUBDIR = process.env.DELIVERY_SUBDIR || '_exports';
 const RENDERS_EXPECT_MARKER = process.env.RENDERS_EXPECT_MARKER || '.renders_mount_ok';
 const RENDERS_HOST_PATH_HINT = process.env.RENDERS_HOST_PATH || '';
+const PUBLIC_ORIGIN = process.env.PUBLIC_ORIGIN || '';
 const JOBS_DIR = path.join(RENDERS_DIR, '.jobs');
 const MAX_BODY_BYTES = 1024 * 1024;
 const DEFAULT_RENDER_ORIGIN = process.env.RENDER_ORIGIN || 'http://obs_plate';
@@ -418,7 +419,7 @@ function classifyProgramMonitorUrl(url) {
 }
 
 function normalizeProgramMonitorUrl(value) {
-  return normalizeRenderUrl(value);
+  return normalizeRenderUrl(value, { renderOrigin: DEFAULT_RENDER_ORIGIN, publicOrigin: PUBLIC_ORIGIN });
 }
 
 function extractPathname(value) {
@@ -764,7 +765,24 @@ function isLocalhostHost(hostname) {
   return ['localhost', '127.0.0.1', '0.0.0.0'].includes(hostname);
 }
 
-function normalizeRenderUrl(inputUrl, { renderOrigin = DEFAULT_RENDER_ORIGIN } = {}) {
+function rewriteOrigin(urlValue, { publicOrigin = PUBLIC_ORIGIN, renderOrigin = DEFAULT_RENDER_ORIGIN } = {}) {
+  if (!urlValue || !publicOrigin) {
+    return urlValue;
+  }
+  try {
+    const publicUrl = new URL(publicOrigin);
+    const parsed = new URL(urlValue);
+    if (parsed.origin === publicUrl.origin) {
+      const relative = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+      return new URL(relative, renderOrigin).toString();
+    }
+  } catch (error) {
+    return urlValue;
+  }
+  return urlValue;
+}
+
+function normalizeRenderUrl(inputUrl, { renderOrigin = DEFAULT_RENDER_ORIGIN, publicOrigin = PUBLIC_ORIGIN } = {}) {
   if (!inputUrl) {
     return null;
   }
@@ -782,6 +800,11 @@ function normalizeRenderUrl(inputUrl, { renderOrigin = DEFAULT_RENDER_ORIGIN } =
       return new URL(trimmed, renderOrigin).toString();
     }
     return null;
+  }
+
+  const rewritten = rewriteOrigin(parsed.toString(), { publicOrigin, renderOrigin });
+  if (rewritten && rewritten !== parsed.toString()) {
+    return rewritten;
   }
 
   if (isLocalhostHost(parsed.hostname)) {
@@ -881,6 +904,7 @@ function parseBody(req) {
 }
 
 function spawnRenderJob({ jobId, url: targetUrl, outPath, fps, width, height, seconds, warmupMs, padSeconds }) {
+  console.log(`render-api render_job=${jobId} url=${targetUrl} fps=${fps} duration=${seconds ?? 'auto'}`);
   const args = [
     '/app/render.js',
     `--url=${targetUrl}`,
@@ -967,6 +991,7 @@ async function runTimelineJob({
     const height = options.height;
     const warmupMs = options.warmupMs ?? null;
     const padSeconds = options.padSeconds ?? null;
+    const defaultDurationSeconds = parseOptionalNumber(options.durationSeconds);
     const nodes = timeline.nodes || [];
 
     updateJob(jobId, { state: 'rendering', progress: 0 });
@@ -1018,17 +1043,23 @@ async function runTimelineJob({
         seconds: null
       });
       const nodeOutPath = path.join(PROGRAM_MONITOR_NODE_DIR, nodeFilename);
+      const nodeDurationSeconds = parseOptionalNumber(node.durationSeconds)
+        ?? defaultDurationSeconds;
 
       if (!fs.existsSync(nodeOutPath)) {
         await new Promise((resolve, reject) => {
-          const child = spawn('node', [
+          const args = [
             '/app/render.js',
             `--url=${DEFAULT_RENDER_ORIGIN}/renders/program-monitor/tmp/${path.basename(htmlPath)}`,
             `--out=${nodeOutPath}`,
             `--fps=${fps}`,
             `--width=${width}`,
             `--height=${height}`
-          ], { stdio: ['ignore', 'inherit', 'inherit'] });
+          ];
+          if (Number.isFinite(nodeDurationSeconds) && nodeDurationSeconds > 0) {
+            args.push(`--seconds=${nodeDurationSeconds}`);
+          }
+          const child = spawn('node', args, { stdio: ['ignore', 'inherit', 'inherit'] });
 
           child.once('error', reject);
           child.once('exit', (code) => {
@@ -1165,6 +1196,10 @@ function startServer() {
   console.log(`render-api workspace_dir=${WORKSPACE_DIR}`);
   console.log(`render-api renders_dir=${RENDERS_DIR} delivery_subdir=${DELIVERY_SUBDIR}`);
   console.log(`render-api deliver_exports=${DELIVER_EXPORTS ? 'enabled' : 'disabled'}`);
+  if (PUBLIC_ORIGIN) {
+    console.log(`render-api public_origin=${PUBLIC_ORIGIN}`);
+  }
+  console.log(`render-api render_origin=${DEFAULT_RENDER_ORIGIN}`);
   if (!renderMountState.writable) {
     console.error(`render-api renders_dir not writable: ${renderMountState.error || 'unknown_error'}`);
   }
@@ -1535,6 +1570,7 @@ function startServer() {
       const height = parseOptionalNumber(options.height) ?? 1920;
       const warmupMs = parseOptionalNumber(options.warmupMs);
       const padSeconds = parseOptionalNumber(options.padSeconds);
+      const durationSeconds = parseOptionalNumber(options.duration_seconds);
 
       const jobId = createJobId();
       const jobDir = projectExportJobDir(projectId, jobId);
@@ -1559,7 +1595,7 @@ function startServer() {
       runTimelineJob({
         jobId,
         timeline,
-        options: { fps, width, height, warmupMs, padSeconds },
+        options: { fps, width, height, warmupMs, padSeconds, durationSeconds },
         outputDir: jobDir,
         filenamePrefix: 'render',
         outputFilename: 'render.mov',
@@ -1815,7 +1851,7 @@ function startServer() {
         fps,
         width,
         height,
-        seconds: null,
+        seconds: Number.isFinite(durationSeconds) ? durationSeconds : null,
         warmupMs,
         padSeconds
       });

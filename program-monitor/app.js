@@ -2622,7 +2622,7 @@ async function exportNode() {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      node: { text: node.text },
+      node: { text: node.text, duration_seconds: getNodeDuration(state.activeIndex) },
       options: { fps: 60, width: 1080, height: 1920 }
     })
   });
@@ -2671,7 +2671,10 @@ async function exportTimeline() {
 
   const timelinePayload = {
     version: 1,
-    nodes: state.nodes,
+    nodes: state.nodes.map((item, index) => ({
+      ...item,
+      durationSeconds: getNodeDuration(index)
+    })),
     activeIndex: state.activeIndex
   };
   let stageId = "";

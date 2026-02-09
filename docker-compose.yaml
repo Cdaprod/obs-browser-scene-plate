@@ -37,6 +37,8 @@ services:
       - "8793:8791"
     environment:
       - RENDERS_DIR=/renders
+      - PUBLIC_ORIGIN=${PUBLIC_ORIGIN}
+      - RENDER_ORIGIN=${RENDER_ORIGIN:-http://obs_plate}
     volumes:
       - type: bind
         source: "${RENDERS_HOST_PATH:?RENDERS_HOST_PATH is required}"
