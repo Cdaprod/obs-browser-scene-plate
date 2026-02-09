@@ -17,11 +17,16 @@ const http = require('http');
 const { spawn } = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const url = require('url');
 
 const PORT = Number(process.env.PORT || 8791);
 const RENDERS_DIR = process.env.RENDERS_DIR || '/renders';
+const DELIVER_EXPORTS = process.env.DELIVER_EXPORTS !== '0';
+const DELIVERY_SUBDIR = process.env.DELIVERY_SUBDIR || '_exports';
+const RENDERS_EXPECT_MARKER = process.env.RENDERS_EXPECT_MARKER || '.renders_mount_ok';
+const RENDERS_HOST_PATH_HINT = process.env.RENDERS_HOST_PATH || '';
 const JOBS_DIR = path.join(RENDERS_DIR, '.jobs');
 const MAX_BODY_BYTES = 1024 * 1024;
 const DEFAULT_RENDER_ORIGIN = process.env.RENDER_ORIGIN || 'http://obs_plate';
@@ -147,6 +152,216 @@ function resolveExportFilePath({ projectId, jobId, filename, baseDir = PROJECTS_
     return null;
   }
   return resolved;
+}
+
+function resolveDeliveryDir({ projectId, jobId, rendersDir = RENDERS_DIR, subdir = DELIVERY_SUBDIR } = {}) {
+  if (!projectId || !jobId) {
+    return null;
+  }
+  return path.join(
+    rendersDir,
+    subdir,
+    safeName(projectId),
+    'exports',
+    safeName(jobId)
+  );
+}
+
+function writeFileAtomic(filePath, contents) {
+  const dir = path.dirname(filePath);
+  fs.mkdirSync(dir, { recursive: true });
+  const tempPath = `${filePath}.tmp`;
+  fs.writeFileSync(tempPath, contents);
+  fs.renameSync(tempPath, filePath);
+}
+
+function copyFileAtomic(sourcePath, targetPath) {
+  const dir = path.dirname(targetPath);
+  fs.mkdirSync(dir, { recursive: true });
+  const tempPath = `${targetPath}.tmp`;
+  fs.copyFileSync(sourcePath, tempPath);
+  fs.renameSync(tempPath, targetPath);
+}
+
+function ensureRendersDirState({ rendersDir = RENDERS_DIR } = {}) {
+  const state = {
+    rendersDir,
+    exists: false,
+    writable: false,
+    markerPresent: false,
+    realpath: null,
+    error: null
+  };
+  try {
+    fs.mkdirSync(rendersDir, { recursive: true });
+    state.exists = true;
+    const markerPath = path.join(rendersDir, RENDERS_EXPECT_MARKER);
+    const markerPayload = `${new Date().toISOString()} ${os.hostname()}\n`;
+    writeFileAtomic(markerPath, markerPayload);
+    state.markerPresent = fs.existsSync(markerPath);
+    state.writable = true;
+    state.realpath = fs.realpathSync(rendersDir);
+  } catch (error) {
+    state.error = error.message || String(error);
+    state.writable = false;
+  }
+  return state;
+}
+
+function getRendersDirDiagnostics({ rendersDir = RENDERS_DIR } = {}) {
+  const diagnostics = ensureRendersDirState({ rendersDir });
+  let stat = null;
+  try {
+    stat = fs.statSync(rendersDir);
+  } catch (_) {
+    stat = null;
+  }
+  let listing = [];
+  try {
+    listing = fs.readdirSync(rendersDir).slice(0, 50);
+  } catch (_) {
+    listing = [];
+  }
+  return {
+    ...diagnostics,
+    stat: stat
+      ? {
+        isDirectory: stat.isDirectory(),
+        mode: stat.mode,
+        size: stat.size,
+        mtime: stat.mtime.toISOString()
+      }
+      : null,
+    sample_listing: listing
+  };
+}
+
+function buildDeliveryFiles({ deliveryDir, filename, previewFilename }) {
+  if (!deliveryDir) {
+    return null;
+  }
+  return {
+    mov: path.join(deliveryDir, filename),
+    log: path.join(deliveryDir, 'render.log'),
+    manifest: path.join(deliveryDir, 'manifest.json'),
+    preview: previewFilename ? path.join(deliveryDir, previewFilename) : null
+  };
+}
+
+async function deliverExportArtifacts({
+  projectId,
+  jobId,
+  jobDir,
+  filename = 'render.mov',
+  previewFilename = null,
+  deliverEnabled = DELIVER_EXPORTS,
+  rendersDir = RENDERS_DIR,
+  subdir = DELIVERY_SUBDIR,
+  hostHint = RENDERS_HOST_PATH_HINT
+} = {}) {
+  const deliveryDir = resolveDeliveryDir({ projectId, jobId, rendersDir, subdir });
+  const deliveryFiles = buildDeliveryFiles({ deliveryDir, filename, previewFilename });
+  if (!deliverEnabled) {
+    return {
+      delivered: false,
+      error: 'delivery_disabled',
+      deliveredDir: deliveryDir,
+      deliveredFiles: deliveryFiles,
+      hostHint
+    };
+  }
+  if (!jobDir || !deliveryDir || !deliveryFiles) {
+    return {
+      delivered: false,
+      error: 'delivery_missing_paths',
+      deliveredDir: deliveryDir,
+      deliveredFiles: deliveryFiles,
+      hostHint
+    };
+  }
+  const renderPath = path.join(jobDir, filename);
+  const logPath = exportLogPath(jobDir);
+  const manifestPath = exportManifestPath(jobDir);
+  const previewPath = previewFilename ? path.join(jobDir, previewFilename) : null;
+  try {
+    ensureRendersDirState({ rendersDir });
+    copyFileAtomic(renderPath, deliveryFiles.mov);
+    if (fs.existsSync(logPath)) {
+      copyFileAtomic(logPath, deliveryFiles.log);
+    }
+    if (previewPath && deliveryFiles.preview && fs.existsSync(previewPath)) {
+      copyFileAtomic(previewPath, deliveryFiles.preview);
+    }
+    if (fs.existsSync(manifestPath)) {
+      copyFileAtomic(manifestPath, deliveryFiles.manifest);
+    }
+    return {
+      delivered: true,
+      error: null,
+      deliveredDir: deliveryDir,
+      deliveredFiles: deliveryFiles,
+      hostHint
+    };
+  } catch (error) {
+    return {
+      delivered: false,
+      error: error.message || String(error),
+      deliveredDir: deliveryDir,
+      deliveredFiles: deliveryFiles,
+      hostHint
+    };
+  }
+}
+
+function listDeliveredExports(projectId, { rendersDir = RENDERS_DIR, subdir = DELIVERY_SUBDIR } = {}) {
+  const safeProject = safeName(projectId || '');
+  const rootDir = path.join(rendersDir, subdir, safeProject, 'exports');
+  if (!fs.existsSync(rootDir)) {
+    return [];
+  }
+  return fs.readdirSync(rootDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => {
+      const jobDir = path.join(rootDir, entry.name);
+      const manifestPath = path.join(jobDir, 'manifest.json');
+      const manifest = readJsonSafe(manifestPath, null);
+      return {
+        job_id: entry.name,
+        delivered_dir: jobDir,
+        manifest
+      };
+    });
+}
+
+function buildDeliveryStatus({ projectId, jobId, rendersDir = RENDERS_DIR, subdir = DELIVERY_SUBDIR } = {}) {
+  const deliveryDir = resolveDeliveryDir({ projectId, jobId, rendersDir, subdir });
+  if (!deliveryDir || !fs.existsSync(deliveryDir)) {
+    return {
+      delivered: false,
+      delivered_dir: deliveryDir,
+      files: {},
+      host_hint: RENDERS_HOST_PATH_HINT
+    };
+  }
+  const files = {};
+  const fileList = ['render.mov', 'render.log', 'manifest.json', 'render_preview.mp4'];
+  fileList.forEach((name) => {
+    const filePath = path.join(deliveryDir, name);
+    if (fs.existsSync(filePath)) {
+      const stats = fs.statSync(filePath);
+      files[name] = {
+        path: filePath,
+        size_bytes: stats.size,
+        mtime: stats.mtime.toISOString()
+      };
+    }
+  });
+  return {
+    delivered: Object.keys(files).length > 0,
+    delivered_dir: deliveryDir,
+    files,
+    host_hint: RENDERS_HOST_PATH_HINT
+  };
 }
 
 function json(res, code, obj) {
@@ -946,6 +1161,13 @@ function generatePreviewMp4({ inputPath, outputPath }) {
 
 function startServer() {
   gcStages();
+  const renderMountState = getRendersDirDiagnostics({ rendersDir: RENDERS_DIR });
+  console.log(`render-api workspace_dir=${WORKSPACE_DIR}`);
+  console.log(`render-api renders_dir=${RENDERS_DIR} delivery_subdir=${DELIVERY_SUBDIR}`);
+  console.log(`render-api deliver_exports=${DELIVER_EXPORTS ? 'enabled' : 'disabled'}`);
+  if (!renderMountState.writable) {
+    console.error(`render-api renders_dir not writable: ${renderMountState.error || 'unknown_error'}`);
+  }
   const server = http.createServer(async (req, res) => {
     if (req.method === 'OPTIONS') {
       return json(res, 200, { ok: true });
@@ -954,7 +1176,57 @@ function startServer() {
     const parsed = url.parse(req.url, true);
 
     if (req.method === 'GET' && parsed.pathname === '/api/health') {
-      return json(res, 200, { ok: true });
+      const diagnostics = getRendersDirDiagnostics({ rendersDir: RENDERS_DIR });
+      if (DELIVER_EXPORTS && !diagnostics.writable) {
+        return json(res, 500, { ok: false, renders: diagnostics });
+      }
+      return json(res, 200, { ok: true, renders: diagnostics });
+    }
+
+    if (req.method === 'GET' && parsed.pathname === '/api/debug/renders') {
+      /**
+       * Render mount diagnostics.
+       *
+       * Example:
+       *   curl http://localhost:8791/api/debug/renders
+       */
+      const diagnostics = getRendersDirDiagnostics({ rendersDir: RENDERS_DIR });
+      return json(res, 200, { ok: true, ...diagnostics });
+    }
+
+    if (req.method === 'POST' && parsed.pathname === '/api/debug/renders/touch') {
+      /**
+       * Write a file into /renders for mount validation.
+       *
+       * Example:
+       *   curl -X POST http://localhost:8791/api/debug/renders/touch \
+       *     -H "Content-Type: application/json" \
+       *     -d '{"relpath":"probe.txt","content":"hello"}'
+       */
+      let body;
+      try {
+        body = await parseBody(req);
+      } catch (err) {
+        const status = err.message === 'payload_too_large' ? 413 : 400;
+        return json(res, status, { ok: false, error: 'bad_json' });
+      }
+      const relpath = body?.relpath ? String(body.relpath) : '';
+      if (!relpath || relpath.includes('..')) {
+        return json(res, 400, { ok: false, error: 'invalid_relpath' });
+      }
+      const targetPath = path.join(RENDERS_DIR, relpath);
+      try {
+        writeFileAtomic(targetPath, body?.content ? String(body.content) : '');
+        const stats = fs.statSync(targetPath);
+        return json(res, 200, {
+          ok: true,
+          path: targetPath,
+          size_bytes: stats.size,
+          mtime: stats.mtime.toISOString()
+        });
+      } catch (error) {
+        return json(res, 500, { ok: false, error: error.message || 'touch_failed' });
+      }
     }
 
     if (req.method === 'GET' && parsed.pathname === '/api/renders') {
@@ -1097,6 +1369,76 @@ function startServer() {
         console.error(error);
         return json(res, 500, { ok: false, error: 'exports_list_failed' });
       }
+    }
+
+    const projectExportsDeliveredMatch = parsed.pathname.match(/^\/api\/projects\/([^/]+)\/exports\/delivered$/);
+    if (projectExportsDeliveredMatch && req.method === 'GET') {
+      /**
+       * List delivered export artifacts for a project (from /renders).
+       *
+       * Example:
+       *   curl http://localhost:8791/api/projects/demo/exports/delivered
+       */
+      const projectId = decodeURIComponent(projectExportsDeliveredMatch[1] || '');
+      try {
+        const exportsList = listDeliveredExports(projectId, {
+          rendersDir: RENDERS_DIR,
+          subdir: DELIVERY_SUBDIR
+        });
+        return json(res, 200, { ok: true, project_id: projectId, exports: exportsList });
+      } catch (error) {
+        console.error(error);
+        return json(res, 500, { ok: false, error: 'delivered_list_failed' });
+      }
+    }
+
+    const projectExportDeliveryMatch = parsed.pathname.match(/^\/api\/projects\/([^/]+)\/exports\/([^/]+)\/delivery$/);
+    if (projectExportDeliveryMatch && req.method === 'GET') {
+      /**
+       * Fetch delivery status for an export.
+       *
+       * Example:
+       *   curl http://localhost:8791/api/projects/demo/exports/job-123/delivery
+       */
+      const projectId = decodeURIComponent(projectExportDeliveryMatch[1] || '');
+      const jobId = decodeURIComponent(projectExportDeliveryMatch[2] || '');
+      const status = buildDeliveryStatus({ projectId, jobId, rendersDir: RENDERS_DIR, subdir: DELIVERY_SUBDIR });
+      return json(res, 200, { ok: true, ...status });
+    }
+
+    const projectExportDeliverMatch = parsed.pathname.match(/^\/api\/projects\/([^/]+)\/exports\/([^/]+)\/deliver$/);
+    if (projectExportDeliverMatch && req.method === 'POST') {
+      /**
+       * Force delivery of export artifacts to /renders.
+       *
+       * Example:
+       *   curl -X POST http://localhost:8791/api/projects/demo/exports/job-123/deliver
+       */
+      const projectId = decodeURIComponent(projectExportDeliverMatch[1] || '');
+      const jobId = decodeURIComponent(projectExportDeliverMatch[2] || '');
+      const jobDir = projectExportJobDir(projectId, jobId);
+      const manifest = readJsonSafe(exportManifestPath(jobDir), null);
+      if (!manifest) {
+        return json(res, 404, { ok: false, error: 'export_not_found' });
+      }
+      const previewFilename = manifest.preview_url ? 'render_preview.mp4' : null;
+      const deliveryResult = await deliverExportArtifacts({
+        projectId,
+        jobId,
+        jobDir,
+        filename: manifest.filename || 'render.mov',
+        previewFilename
+      });
+      manifest.delivered = deliveryResult.delivered;
+      manifest.delivered_error = deliveryResult.error || null;
+      manifest.delivered_dir = deliveryResult.deliveredDir || null;
+      manifest.delivered_files = deliveryResult.deliveredFiles || null;
+      manifest.delivered_host_hint = deliveryResult.hostHint || null;
+      atomicWriteJson(exportManifestPath(jobDir), manifest);
+      if (deliveryResult.delivered && deliveryResult.deliveredFiles?.manifest) {
+        writeFileAtomic(deliveryResult.deliveredFiles.manifest, JSON.stringify(manifest, null, 2));
+      }
+      return json(res, 200, { ok: true, ...deliveryResult });
     }
 
     if (req.method === 'POST' && parsed.pathname === '/api/program-monitor/stage') {
@@ -1256,6 +1598,29 @@ function startServer() {
               log_url: `${downloadBase}/render.log`
             };
             atomicWriteJson(exportManifestPath(jobDir), manifest);
+            const deliveryResult = await deliverExportArtifacts({
+              projectId,
+              jobId,
+              jobDir,
+              filename: timelineFilename,
+              previewFilename: previewUrl ? 'render_preview.mp4' : null
+            });
+            manifest.delivered = deliveryResult.delivered;
+            manifest.delivered_error = deliveryResult.error || null;
+            manifest.delivered_dir = deliveryResult.deliveredDir || null;
+            manifest.delivered_files = deliveryResult.deliveredFiles || null;
+            manifest.delivered_host_hint = deliveryResult.hostHint || null;
+            atomicWriteJson(exportManifestPath(jobDir), manifest);
+            if (deliveryResult.delivered && deliveryResult.deliveredFiles?.manifest) {
+              writeFileAtomic(deliveryResult.deliveredFiles.manifest, JSON.stringify(manifest, null, 2));
+              const latestMarker = path.join(path.dirname(deliveryResult.deliveredFiles.manifest), '..', 'latest.json');
+              writeFileAtomic(latestMarker, JSON.stringify({
+                job_id: jobId,
+                delivered_dir: deliveryResult.deliveredDir,
+                manifest_path: deliveryResult.deliveredFiles.manifest,
+                updated_at: new Date().toISOString()
+              }, null, 2));
+            }
             appendExportLog(jobDir, 'export_ready');
           } catch (error) {
             console.error(error);
@@ -1274,6 +1639,11 @@ function startServer() {
             finished_at: new Date().toISOString(),
             error: error?.message || 'export_failed',
             status: 'error',
+            delivered: false,
+            delivered_error: null,
+            delivered_dir: resolveDeliveryDir({ projectId, jobId }) || null,
+            delivered_files: null,
+            delivered_host_hint: RENDERS_HOST_PATH_HINT || null,
             manifest_url: `${downloadBase}/manifest.json`,
             log_url: `${downloadBase}/render.log`
           };
@@ -1311,6 +1681,11 @@ function startServer() {
         download_url: job.downloadUrl || null,
         preview_url: manifest?.preview_url || null,
         output_name: manifest?.output_name || null,
+        delivered: manifest?.delivered ?? null,
+        delivered_error: manifest?.delivered_error || null,
+        delivered_dir: manifest?.delivered_dir || null,
+        delivered_files: manifest?.delivered_files || null,
+        delivered_host_hint: manifest?.delivered_host_hint || null,
         error: job.error || null,
         project_id: job.projectId || null,
         manifest_url: job.projectId
@@ -1645,5 +2020,7 @@ module.exports = {
   getProjectTimeline,
   buildRangeResponse,
   resolveExportFilePath,
+  deliverExportArtifacts,
+  resolveDeliveryDir,
   startServer
 };
