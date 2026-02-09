@@ -23,7 +23,8 @@ const {
   projectTimelinePath,
   readJsonSafe,
   listProjectExports,
-  buildRangeResponse
+  buildRangeResponse,
+  resolveExportFilePath
 } = require('./server');
 
 test('safeName sanitizes unsafe characters and trims length', () => {
@@ -246,4 +247,24 @@ test('buildRangeResponse returns 206 with correct headers', () => {
   assert.equal(response.headers['Content-Range'], 'bytes 0-1023/2048');
   assert.equal(response.headers['Accept-Ranges'], 'bytes');
   assert.equal(response.headers['Content-Length'], 1024);
+});
+
+test('resolveExportFilePath blocks traversal and allows valid paths', () => {
+  const baseDir = path.join(os.tmpdir(), 'exports-safe');
+  const safePath = resolveExportFilePath({
+    projectId: 'demo',
+    jobId: 'job-1',
+    filename: 'render.mov',
+    baseDir
+  });
+  assert.ok(safePath);
+  assert.ok(safePath.includes(path.join('demo', 'exports', 'job-1', 'render.mov')));
+
+  const traversal = resolveExportFilePath({
+    projectId: 'demo',
+    jobId: 'job-1',
+    filename: '../secrets.txt',
+    baseDir
+  });
+  assert.equal(traversal, null);
 });
