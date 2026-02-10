@@ -1516,8 +1516,10 @@ function startServer() {
         };
         try {
           atomicWriteJson(projectTimelinePath(projectId), timeline);
+          const bytes = Buffer.byteLength(JSON.stringify(timeline));
+          console.log(`DRAFT_SAVE project=${projectId} path=${projectTimelinePath(projectId)} bytes=${bytes}`);
         } catch (error) {
-          console.error(error);
+          console.error(`DRAFT_SAVE_FAILED project=${projectId}`, error);
           return json(res, 500, { ok: false, error: 'timeline_write_failed' });
         }
         return json(res, 200, { ok: true, project_id: projectId });

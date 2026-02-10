@@ -42,7 +42,9 @@ const fallbackUtils = (() => {
     return {
       baseUrl,
       layers,
-      lines
+      lines,
+      baseIndex,
+      explicitBase: explicitBaseIndex >= 0
     };
   };
 
@@ -510,6 +512,18 @@ function setMessage(text) {
   elements.message.textContent = text || "";
 }
 
+async function readJsonResponse(res) {
+  const text = await res.text();
+  if (!text) {
+    return { data: null, text: "" };
+  }
+  try {
+    return { data: JSON.parse(text), text };
+  } catch (error) {
+    return { data: null, text };
+  }
+}
+
 function setExportStatus(text) {
   elements.exportStatus.textContent = text || "";
 }
@@ -950,6 +964,49 @@ function getDurationSourceLabel(source) {
   }
 }
 
+function hasExplicitDurationParam(url) {
+  if (!url) {
+    return false;
+  }
+  try {
+    const parsed = url.includes("://") ? new URL(url) : new URL(url, "http://localhost");
+    return parsed.searchParams.has("dur") || parsed.searchParams.has("dur_ms");
+  } catch (error) {
+    return false;
+  }
+}
+
+function ensureDurationParam(url, seconds) {
+  if (!url || !Number.isFinite(seconds) || seconds <= 0 || hasExplicitDurationParam(url)) {
+    return url;
+  }
+  try {
+    const parsed = url.includes("://") ? new URL(url) : new URL(url, "http://localhost");
+    parsed.searchParams.set("dur", seconds.toFixed(2));
+    return parsed.toString();
+  } catch (error) {
+    return url;
+  }
+}
+
+function applyDurationParamToNodeText(nodeText, durationSeconds) {
+  const parsed = parseNodeText(nodeText);
+  if (!parsed.baseUrl) {
+    return nodeText;
+  }
+  if (classifyUrl(parsed.baseUrl) !== "page") {
+    return nodeText;
+  }
+  const updatedBaseUrl = ensureDurationParam(parsed.baseUrl, durationSeconds);
+  if (updatedBaseUrl === parsed.baseUrl) {
+    return nodeText;
+  }
+  const nextLines = [...parsed.lines];
+  const baseIndex = Number.isFinite(parsed.baseIndex) ? parsed.baseIndex : 0;
+  nextLines[baseIndex] = parsed.explicitBase ? `base:${updatedBaseUrl}` : updatedBaseUrl;
+  return nextLines.join("\n");
+}
+
 function updateStatusDisplay() {
   const selectedIndex = getSelectedIndex();
   const modeLabel = getPlaybackModeLabel();
@@ -973,6 +1030,10 @@ function getNodeDurationEstimate(node) {
     return overrideSeconds;
   }
   const parsed = parseNodeText(node.text);
+  if (classifyUrl(parsed.baseUrl) === "page") {
+    const hint = getDurationHintSeconds(parsed.baseUrl);
+    return Number.isFinite(hint) && hint > 0 ? hint : 0;
+  }
   const hint = getDurationHintSeconds(parsed.baseUrl);
   if (Number.isFinite(hint) && hint > 0) {
     return hint;
@@ -1165,12 +1226,15 @@ async function loadProjectTimeline(projectId) {
   if (!projectId) {
     return null;
   }
-  const res = await fetch(`${renderApiBase}/api/projects/${encodeURIComponent(projectId)}/timeline`, {
+  const url = `${renderApiBase}/api/projects/${encodeURIComponent(projectId)}/timeline`;
+  const res = await fetch(url, {
     cache: "no-store"
   });
-  const data = await res.json();
-  if (!res.ok || !data.ok) {
-    throw new Error(data.error || "project_load_failed");
+  const { data, text } = await readJsonResponse(res);
+  if (!res.ok || !data?.ok) {
+    console.info("LOAD_DRAFT:status", res.status);
+    console.info("LOAD_DRAFT:body", text);
+    throw new Error(data?.error || text || "project_load_failed");
   }
   return data.timeline || null;
 }
@@ -1187,14 +1251,18 @@ async function saveProjectTimeline(projectId) {
     nodes: state.nodes,
     activeIndex: state.activeIndex
   };
-  const res = await fetch(`${renderApiBase}/api/projects/${encodeURIComponent(projectId)}/timeline`, {
+  const url = `${renderApiBase}/api/projects/${encodeURIComponent(projectId)}/timeline`;
+  console.info("SAVE_DRAFT:request", url, payload);
+  const res = await fetch(url, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
-  const data = await res.json();
-  if (!res.ok || !data.ok) {
-    throw new Error(data.error || "project_save_failed");
+  console.info("SAVE_DRAFT:status", res.status);
+  const { data, text } = await readJsonResponse(res);
+  if (!res.ok || !data?.ok) {
+    console.info("SAVE_DRAFT:body", text);
+    throw new Error(data?.error || text || "project_save_failed");
   }
 }
 
@@ -1558,6 +1626,32 @@ function renderProjects() {
 
     elements.projectList.appendChild(item);
   });
+}
+
+function validateExportDurations({ nodeIndex = null } = {}) {
+  const indices = Number.isFinite(nodeIndex)
+    ? [nodeIndex]
+    : state.nodes.map((_, idx) => idx);
+
+  for (const index of indices) {
+    const node = state.nodes[index];
+    if (!node) {
+      continue;
+    }
+    const parsed = parseNodeText(node.text);
+    const baseKind = classifyUrl(parsed.baseUrl);
+    if (baseKind === "page") {
+      const durationSeconds = getNodeDuration(index);
+      if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+        return {
+          ok: false,
+          message: `HTML nodes require a duration override or dur= URL hint (node ${index + 1}).`
+        };
+      }
+    }
+  }
+
+  return { ok: true, message: "" };
 }
 
 function assertExportReady() {
@@ -2303,7 +2397,7 @@ function saveProject() {
   setCurrentProjectId(projectId);
   saveProjectTimeline(projectId).catch((error) => {
     console.error(error);
-    setMessage("Failed to save project draft.");
+    setMessage(`Failed to save project draft. ${error?.message || ""}`.trim());
   });
   setMessage(`Saved project: ${name}`);
 }
@@ -2631,6 +2725,13 @@ async function exportNode() {
     return;
   }
 
+  const durationCheck = validateExportDurations({ nodeIndex: state.activeIndex });
+  if (!durationCheck.ok) {
+    setMessage(durationCheck.message);
+    setExportStatus("Idle");
+    return;
+  }
+
   const node = state.nodes[state.activeIndex];
   if (!node || !node.text.trim()) {
     setMessage("Add at least one URL line before exporting.");
@@ -2638,11 +2739,13 @@ async function exportNode() {
     return;
   }
 
+  const durationSeconds = getNodeDuration(state.activeIndex);
+  const nodeText = applyDurationParamToNodeText(node.text, durationSeconds);
   const res = await fetch(`${renderApiBase}/api/program-monitor/export-node`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      node: { text: node.text, duration_seconds: getNodeDuration(state.activeIndex) },
+      node: { text: nodeText, duration_seconds: durationSeconds },
       options: { fps: 60, width: 1080, height: 1920 }
     })
   });
@@ -2683,6 +2786,13 @@ async function exportTimeline() {
     return;
   }
 
+  const durationCheck = validateExportDurations();
+  if (!durationCheck.ok) {
+    setMessage(durationCheck.message);
+    setExportStatus("Idle");
+    return;
+  }
+
   if (!state.nodes.length) {
     setMessage("Add at least one node before exporting.");
     setExportStatus("Idle");
@@ -2693,6 +2803,7 @@ async function exportTimeline() {
     version: 1,
     nodes: state.nodes.map((item, index) => ({
       ...item,
+      text: applyDurationParamToNodeText(item.text, getNodeDuration(index)),
       durationSeconds: getNodeDuration(index)
     })),
     activeIndex: state.activeIndex
