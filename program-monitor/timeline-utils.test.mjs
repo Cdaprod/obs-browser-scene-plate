@@ -106,6 +106,12 @@ test("getDurationHintSeconds supports numbered params", () => {
   assert.equal(getDurationHintSeconds(url), 1);
 });
 
+
+
+test("getDurationHintSeconds includes intro/spin component hints", () => {
+  const url = "http://host/base.html?intro=3100&spin=13500";
+  assert.equal(getDurationHintSeconds(url), 16.6);
+});
 test("getDurationHintSeconds estimates typewriter timing", () => {
   const url = "http://host/base.html?s1=Hello&s2=World&cps=10";
   const estimate = getDurationHintSeconds(url);

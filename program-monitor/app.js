@@ -67,7 +67,7 @@ const fallbackUtils = (() => {
 
     const secondsKeys = new Set(["duration", "dur", "length", "len", "time", "t", "seconds", "sec", "s"]);
     const msKeys = new Set(["ms", "msec", "millis", "milliseconds"]);
-    const componentMsKeys = new Set(["in", "out", "hold", "gap", "pause", "delay", "start", "intro", "outro"]);
+    const componentMsKeys = new Set(["in", "out", "hold", "gap", "pause", "delay", "start", "intro", "outro", "spin", "loop", "dwell"]);
 
     for (const key of secondsKeys) {
       const value = params.get(key);
@@ -528,6 +528,16 @@ async function readJsonResponse(res) {
   } catch (error) {
     return { data: null, text };
   }
+}
+
+async function fetchApiJson(path, options = {}, context = "request") {
+  const res = await fetch(apiUrl(path), options);
+  const { data, text } = await readJsonResponse(res);
+  if (!res.ok || !data?.ok) {
+    const detail = data?.error || text || "unknown_error";
+    throw new Error(`${context} (${res.status}): ${detail}`);
+  }
+  return data;
 }
 
 function setExportStatus(text) {
@@ -1008,49 +1018,6 @@ function getDurationSourceLabel(source) {
   }
 }
 
-function hasExplicitDurationParam(url) {
-  if (!url) {
-    return false;
-  }
-  try {
-    const parsed = url.includes("://") ? new URL(url) : new URL(url, "http://localhost");
-    return parsed.searchParams.has("dur") || parsed.searchParams.has("dur_ms");
-  } catch (error) {
-    return false;
-  }
-}
-
-function ensureDurationParam(url, seconds) {
-  if (!url || !Number.isFinite(seconds) || seconds <= 0 || hasExplicitDurationParam(url)) {
-    return url;
-  }
-  try {
-    const parsed = url.includes("://") ? new URL(url) : new URL(url, "http://localhost");
-    parsed.searchParams.set("dur", seconds.toFixed(2));
-    return parsed.toString();
-  } catch (error) {
-    return url;
-  }
-}
-
-function applyDurationParamToNodeText(nodeText, durationSeconds) {
-  const parsed = parseNodeText(nodeText);
-  if (!parsed.baseUrl) {
-    return nodeText;
-  }
-  if (classifyUrl(parsed.baseUrl) !== "page") {
-    return nodeText;
-  }
-  const updatedBaseUrl = ensureDurationParam(parsed.baseUrl, durationSeconds);
-  if (updatedBaseUrl === parsed.baseUrl) {
-    return nodeText;
-  }
-  const nextLines = [...parsed.lines];
-  const baseIndex = Number.isFinite(parsed.baseIndex) ? parsed.baseIndex : 0;
-  nextLines[baseIndex] = parsed.explicitBase ? `base:${updatedBaseUrl}` : updatedBaseUrl;
-  return nextLines.join("\n");
-}
-
 function updateStatusDisplay() {
   const selectedIndex = getSelectedIndex();
   const modeLabel = getPlaybackModeLabel();
@@ -1368,11 +1335,7 @@ async function fetchProjectIndex() {
   if (isFileProtocol) {
     return loadProjects();
   }
-  const res = await fetch(apiUrl('/api/projects'), { cache: "no-store" });
-  const { data, text } = await readJsonResponse(res);
-  if (!res.ok || !data?.ok) {
-    throw new Error(data?.error || text || "project_index_failed");
-  }
+  const data = await fetchApiJson('/api/projects', { cache: "no-store" }, "Project list failed");
   return Array.isArray(data.projects) ? data.projects : [];
 }
 
@@ -1380,26 +1343,20 @@ async function fetchProjectState(projectId) {
   if (!projectId) {
     return null;
   }
-  const res = await fetch(apiUrl(`/api/projects/${encodeURIComponent(projectId)}`), {
-    cache: "no-store"
-  });
-  const { data, text } = await readJsonResponse(res);
-  if (!res.ok || !data?.ok) {
-    throw new Error(data?.error || text || "project_load_failed");
-  }
+  const data = await fetchApiJson(
+    `/api/projects/${encodeURIComponent(projectId)}`,
+    { cache: "no-store" },
+    "Project load failed"
+  );
   return data.project || null;
 }
 
 async function resolveProjectIdByName(name) {
-  const res = await fetch(apiUrl('/api/projects:resolve'), {
+  const data = await fetchApiJson('/api/projects:resolve', {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name })
-  });
-  const { data, text } = await readJsonResponse(res);
-  if (!res.ok || !data?.ok) {
-    throw new Error(data?.error || text || "project_resolve_failed");
-  }
+  }, "Project resolve failed");
   const projectId = data.project_id || data.project?.project_id || data.project?.id;
   if (!projectId) {
     throw new Error("project_resolve_missing_id");
@@ -1424,18 +1381,14 @@ async function saveProjectState(projectId, { name = "" } = {}) {
   }
   const payload = buildProjectPayloadFromState();
   const projectName = String(name || (elements.projectName ? elements.projectName.value : "") || projectId).trim();
-  const res = await fetch(apiUrl(`/api/projects/${encodeURIComponent(projectId)}`), {
+  const data = await fetchApiJson(`/api/projects/${encodeURIComponent(projectId)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       name: projectName,
       payload
     })
-  });
-  const { data, text } = await readJsonResponse(res);
-  if (!res.ok || !data?.ok) {
-    throw new Error(data?.error || text || "project_save_failed");
-  }
+  }, "Project save failed");
   clearProjectDraft(projectId);
   return data.project || null;
 }
@@ -1689,13 +1642,9 @@ function renderProjects() {
         return;
       }
       try {
-        const res = await fetch(apiUrl(`/api/projects/${encodeURIComponent(projectId)}`), {
+        await fetchApiJson(`/api/projects/${encodeURIComponent(projectId)}`, {
           method: "DELETE"
-        });
-        const { data, text } = await readJsonResponse(res);
-        if (!res.ok || !data?.ok) {
-          throw new Error(data?.error || text || "project_delete_failed");
-        }
+        }, "Project delete failed");
         if (currentProjectId === projectId) {
           setCurrentProjectId("");
         }
@@ -2853,7 +2802,7 @@ async function exportNode() {
   }
 
   const durationSeconds = getNodeDuration(state.activeIndex);
-  const nodeText = applyDurationParamToNodeText(node.text, durationSeconds);
+  const nodeText = node.text;
   const res = await fetch(apiUrl('/api/program-monitor/export-node'), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -2916,7 +2865,7 @@ async function exportTimeline() {
     version: 1,
     nodes: state.nodes.map((item, index) => ({
       ...item,
-      text: applyDurationParamToNodeText(item.text, getNodeDuration(index)),
+      text: item.text,
       durationSeconds: getNodeDuration(index)
     })),
     activeIndex: state.activeIndex

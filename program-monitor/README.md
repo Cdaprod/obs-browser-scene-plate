@@ -22,6 +22,7 @@ A browser-only **Program + Monitor** UI for stacking URL-based media nodes into 
 - **Transport**: preview the timeline in sequence.
 - **Save**: persists the active project timeline to render-api via same-origin `/api/projects*` routes.
 - **Projects**: save/load named timelines from canonical `project.json` state in render-api workspace storage; loading hydrates both the project name input and node timeline.
+- **Duration hints**: inferred durations are stored in node metadata for exports and do not rewrite the original node URL text.
 - **Open Stage**: open a standalone timeline preview tab from the current nodes (uses the render-api stage cache to avoid oversized URLs).
 - **Timeline Player**: `/program-monitor/timeline_player.html?id=...` plays the full timeline headlessly (for OBS browser sources). Legacy payloads only load via explicit `?import=1&debug=1`.
 - **Export / Import JSON**: move timelines between machines.
