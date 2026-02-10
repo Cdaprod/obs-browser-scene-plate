@@ -163,6 +163,15 @@ body.off #spot{
   transition: opacity calc(var(--out-ms)*1ms) ease;
 }
 
+body.deterministic #wrap,
+body.deterministic #spot{
+  transition: none !important;
+}
+
+body.deterministic #caret{
+  animation: none !important;
+}
+
 /* Tiny “analog” micro jitter on the text while typing (optional) */
 body.micro #text{
   animation: micro 120ms steps(2,end) infinite;
@@ -207,6 +216,8 @@ body.micro #text{
  *   hold=2600     extra hold AFTER typing completes (ms)
  *   gap=320       gap between sentences (ms)
  *   start=0       delay before first sentence (ms)
+ *   dur=18.35     optional loop duration seconds (deterministic render clock)
+ *   dur_ms=18350  optional loop duration ms (deterministic render clock)
  *
  * Typewriter:
  *   cps=22        characters-per-second (global)
@@ -234,6 +245,10 @@ body.micro #text{
  *
  * Mode:
  *   mode=once|loop
+ *
+ * Render clock:
+ *   window.__SET_RENDER_TIME(ms) -> renders exact state at time t
+ *   window.__RENDER_READY = true when ready
  */
 
 const qs = new URLSearchParams(location.search);
@@ -250,6 +265,9 @@ const MODE  = (qs.get("mode") || "once").toLowerCase();
 const CPS   = clampFloat(parseFloat(qs.get("cps") || "22"), 1, 120);
 const PAUSE = clampInt(parseInt(qs.get("pause") || "650", 10), 0, 60000);
 const CHUNK = clampInt(parseInt(qs.get("chunk") || "0", 10), 0, 12); // 0 => auto
+
+const DUR_MS = clampInt(parseInt(qs.get("dur_ms") || "0", 10), 0, 3600000)
+  || clampInt(Math.round(parseFloat(qs.get("dur") || "0") * 1000), 0, 3600000);
 
 /* Audio tuning (procedural) */
 const AUDIO_ON = (qs.get("audio") || "0") === "1";
@@ -273,6 +291,8 @@ document.documentElement.style.setProperty("--out-ms", String(OUT));
 
 const textEl  = document.getElementById("text");
 const wrapEl  = document.getElementById("wrap");
+const spotEl  = document.getElementById("spot");
+const RISE_PX = 6;
 
 /* WebAudio state */
 let audioCtx = null;
@@ -305,6 +325,7 @@ const pauseOverrides = collectNumbered(qs, "pause").map(v => clampInt(parseInt(v
 
 let idx = 0;
 let activeTimer = null;
+let deterministicMode = false;
 
 /* Basic fade helpers */
 function show(){
@@ -320,6 +341,13 @@ function hide(){
 function clearTimer(){
   if (activeTimer) clearTimeout(activeTimer);
   activeTimer = null;
+}
+
+function setDeterministicMode(){
+  if (deterministicMode) return;
+  deterministicMode = true;
+  clearTimer();
+  document.body.classList.add("deterministic");
 }
 
 function audioInit(){
@@ -487,8 +515,138 @@ function sentencePause(i){
   return (typeof v === "number" && isFinite(v)) ? v : PAUSE;
 }
 
+function setOpacity(progress){
+  const clamped = clampFloat(progress, 0, 1);
+  const rise = (1 - clamped) * RISE_PX;
+  wrapEl.style.opacity = clamped.toFixed(3);
+  wrapEl.style.transform = `translate3d(0, ${rise.toFixed(2)}px, 0)`;
+  spotEl.style.opacity = clamped.toFixed(3);
+}
+
+function setTypingState({ text, typing, opacity }){
+  textEl.textContent = text;
+  if (typing) {
+    document.body.classList.add("typing");
+  } else {
+    document.body.classList.remove("typing");
+  }
+  if (opacity > 0.001) {
+    document.body.classList.add("on");
+    document.body.classList.remove("off");
+  } else {
+    document.body.classList.remove("on");
+    document.body.classList.add("off");
+  }
+  setOpacity(opacity);
+}
+
+function buildTimeline(){
+  let cursor = 0;
+  const items = segments.map((segment, index) => {
+    const cps = sentenceCps(index);
+    const pauseMs = sentencePause(index);
+    const holdMs = sentenceHold(index);
+    const typeDuration = Math.ceil((segment.length / cps) * 1000);
+    const start = cursor;
+    const typingEnd = start + typeDuration;
+    const pauseEnd = typingEnd + pauseMs;
+    const holdEnd = pauseEnd + holdMs;
+    const fadeEnd = holdEnd + OUT;
+    const end = fadeEnd + GAP;
+    cursor = end;
+    return {
+      text: segment,
+      start,
+      typingEnd,
+      pauseEnd,
+      holdEnd,
+      fadeEnd,
+      end,
+      typeDuration
+    };
+  });
+  return {
+    items,
+    durationMs: cursor
+  };
+}
+
+const timeline = buildTimeline();
+
+function renderAt(ms){
+  setDeterministicMode();
+  if (!timeline.items.length) {
+    setTypingState({ text: "", typing: false, opacity: 0 });
+    return;
+  }
+
+  const loopDuration = MODE === "loop"
+    ? (DUR_MS > 0 ? DUR_MS : (timeline.durationMs + START))
+    : 0;
+  let t = ms;
+  if (loopDuration > 0) {
+    t = ((t % loopDuration) + loopDuration) % loopDuration;
+  }
+
+  if (t < START) {
+    setTypingState({ text: "", typing: false, opacity: 0 });
+    return;
+  }
+
+  t -= START;
+  const segment = timeline.items.find((entry) => t < entry.end);
+  if (!segment) {
+    setTypingState({ text: "", typing: false, opacity: 0 });
+    return;
+  }
+
+  if (t < segment.start) {
+    setTypingState({ text: "", typing: false, opacity: 0 });
+    return;
+  }
+
+  let opacity = 1;
+  if (IN > 0 && t < segment.start + IN) {
+    opacity = (t - segment.start) / IN;
+  } else if (OUT > 0 && t >= segment.holdEnd && t < segment.fadeEnd) {
+    opacity = 1 - ((t - segment.holdEnd) / OUT);
+  } else if (t >= segment.fadeEnd) {
+    opacity = 0;
+  }
+
+  if (t >= segment.fadeEnd) {
+    setTypingState({ text: "", typing: false, opacity: 0 });
+    return;
+  }
+
+  if (t < segment.typingEnd) {
+    const progress = segment.typeDuration > 0
+      ? clampFloat((t - segment.start) / segment.typeDuration, 0, 1)
+      : 1;
+    const count = Math.floor(segment.text.length * progress);
+    setTypingState({
+      text: segment.text.slice(0, count),
+      typing: true,
+      opacity
+    });
+    return;
+  }
+
+  if (t < segment.holdEnd) {
+    setTypingState({
+      text: segment.text,
+      typing: false,
+      opacity
+    });
+    return;
+  }
+
+  setTypingState({ text: "", typing: false, opacity });
+}
+
 /* Main playback */
 function play(){
+  if (deterministicMode) return;
   clearTimer();
 
   if (idx >= segments.length){
@@ -523,6 +681,7 @@ function play(){
 }
 
 function start(){
+  if (deterministicMode) return;
   idx = 0;
   hide();
   clearTimer();
@@ -568,6 +727,9 @@ function mulberry32(a){
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
+
+window.__SET_RENDER_TIME = renderAt;
+window.__RENDER_READY = true;
 
 start();
 addEventListener("pointerdown", async () => {

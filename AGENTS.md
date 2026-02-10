@@ -17,6 +17,7 @@
 - Preserve query parameters and hash fragments when generating or sharing URLs.
 - Avoid dropping existing parameters when composing preview or copy URLs.
 - Overlay source files must include a single-line `Default URL (full params):` entry that matches the file name so the UI can preload query params.
+- Procedural overlays that need deterministic renders should implement the render clock contract (`window.__SET_RENDER_TIME(ms)` and `window.__RENDER_READY`) so render-api can drive frame-locked capture.
 
 ## UI/UX Expectations
 - Ensure the UI is responsive on mobile and desktop, with no overflow in header, actions, or preview areas.
