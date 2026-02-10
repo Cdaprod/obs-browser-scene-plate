@@ -2225,7 +2225,10 @@ function resetAllNodes() {
 
 function getBaseElapsed() {
   if (activeBaseKind === "page" || activeBaseKind === "image") {
-    return state.basePausedAt || (performance.now() - baseStartTime) / 1000;
+    if (state.playing) {
+      return (performance.now() - baseStartTime) / 1000;
+    }
+    return state.basePausedAt || 0;
   }
   return elements.baseVideo.currentTime || 0;
 }
@@ -2365,6 +2368,7 @@ async function playActive({ resume = false, startOffsetSeconds = 0 } = {}) {
   activeBaseKind = baseKind;
   const safeOffset = Math.max(0, startOffsetSeconds);
   baseStartTime = performance.now() - safeOffset * 1000;
+  state.basePausedAt = 0;
 
   syncOverlayPlayback(safeOffset, true);
 

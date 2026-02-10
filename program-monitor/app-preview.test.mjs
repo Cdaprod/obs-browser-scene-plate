@@ -67,3 +67,9 @@ test("stop and scrub preserve frame position", () => {
   assert.ok(source.includes("elements.baseVideo.currentTime = baseElapsed;"));
   assert.ok(source.includes("syncOverlayPlayback(baseElapsed, false);"));
 });
+
+test("html/image elapsed time uses live clock while playing", () => {
+  assert.ok(source.includes("if (state.playing)"));
+  assert.ok(source.includes("return (performance.now() - baseStartTime) / 1000;"));
+  assert.ok(source.includes("state.basePausedAt = 0;"));
+});
