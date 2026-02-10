@@ -41,3 +41,10 @@ test("exports validate durations for HTML nodes", () => {
   assert.ok(source.includes("validateExportDurations"));
   assert.ok(source.includes("applyDurationParamToNodeText"));
 });
+
+test("render clock helper is available", () => {
+  const clockPath = path.resolve("site", "js", "render_clock_v1.js");
+  const clockSource = fs.readFileSync(clockPath, "utf8");
+  assert.ok(clockSource.includes("RenderClock"));
+  assert.ok(clockSource.includes("__SET_RENDER_TIME"));
+});
