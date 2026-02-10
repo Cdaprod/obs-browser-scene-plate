@@ -54,13 +54,17 @@ Project state APIs (canonical editor persistence):
 curl http://localhost:8791/api/projects
 
 # resolve a project id from a human name (creates if missing)
-curl -X POST http://localhost:8791/api/projects:resolve   -H "Content-Type: application/json"   -d '{"name":"Typewriter-1"}'
+curl -X POST http://localhost:8791/api/projects:resolve \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Typewriter-1"}'
 
 # fetch canonical project state
 curl http://localhost:8791/api/projects/typewriter-1
 
 # upsert canonical project state (timeline + nodesStructured)
-curl -X PUT http://localhost:8791/api/projects/typewriter-1   -H "Content-Type: application/json"   -d '{"name":"Typewriter-1","payload":{"timeline":{"version":1,"activeIndex":0,"nodes":[{"text":"http://nginx/plate-default.html"}],"nodesStructured":[]}}}'
+curl -X PUT http://localhost:8791/api/projects/typewriter-1 \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Typewriter-1","payload":{"timeline":{"version":1,"activeIndex":0,"nodes":[{"text":"http://nginx/plate-default.html"}],"nodesStructured":[]}}}'
 ```
 
 Legacy draft timeline endpoint (still supported for compatibility):
@@ -68,7 +72,9 @@ Legacy draft timeline endpoint (still supported for compatibility):
 ```shell
 curl http://localhost:8791/api/projects/demo/timeline
 
-curl -X PUT http://localhost:8791/api/projects/demo/timeline   -H "Content-Type: application/json"   -d '{"version":1,"nodes":[{"text":"http://nginx/plate-default.html"}],"activeIndex":0}'
+curl -X PUT http://localhost:8791/api/projects/demo/timeline \
+  -H "Content-Type: application/json" \
+  -d '{"version":1,"nodes":[{"text":"http://nginx/plate-default.html"}],"activeIndex":0}'
 ```
 
 Project exports:
