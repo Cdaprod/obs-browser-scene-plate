@@ -498,10 +498,14 @@ const OBS_PANEL_COLLAPSE_KEY = "program-monitor.obs-collapsed";
 const isFileProtocol = window.location.protocol === "file:";
 const host = window.location.hostname || "localhost";
 const renderApiPort = 8793;
-const webPort = window.location.port || 8789;
-const renderApiBase = `http://${host}:${renderApiPort}`;
-const downloadBase = `http://${host}:${webPort}`;
+const renderApiBase = isFileProtocol ? `http://${host}:${renderApiPort}` : "";
+const downloadBase = isFileProtocol ? `http://${host}:8789` : window.location.origin;
 const DEFAULT_IMAGE_DURATION_SECONDS = 5;
+
+function apiUrl(path) {
+  const normalized = path.startsWith("/") ? path : `/${path}`;
+  return `${renderApiBase}${normalized}`;
+}
 const DEFAULT_NODE_DURATION_SECONDS = 4;
 const DELETE_LONG_PRESS_MS = 3500;
 
@@ -732,54 +736,92 @@ function updateExportHistory(entry) {
   renderExportHistory(next);
 }
 
+function mapProjectExportEntry(item, projectId) {
+  const downloadUrl = buildRenderDownloadUrl({
+    downloadBase,
+    downloadPath: item.download_url
+  });
+  const previewUrl = buildRenderDownloadUrl({
+    downloadBase,
+    downloadPath: item.preview_url
+  });
+  return {
+    url: downloadUrl,
+    name: item.filename || "export",
+    outputName: item.output_name || "",
+    previewUrl,
+    projectId: item.project_id || projectId,
+    jobId: item.job_id || "",
+    delivered: Boolean(item.delivered),
+    deliveredDir: item.delivered_dir || "",
+    deliveredHostHint: item.delivered_host_hint || "",
+    progress: Number.isFinite(item.progress) ? Number(item.progress) : null,
+    createdAt: item.created_at ? Date.parse(item.created_at) : Date.now(),
+    sizeBytes: item.size_bytes ?? null,
+    status: item.status || "",
+    manifestUrl: item.manifest_url
+      ? buildRenderDownloadUrl({
+        downloadBase,
+        downloadPath: item.manifest_url,
+        filename: null
+      })
+      : "",
+    logUrl: item.log_url
+      ? buildRenderDownloadUrl({
+        downloadBase,
+        downloadPath: item.log_url,
+        filename: null
+      })
+      : ""
+  };
+}
+
+function mapRenderEntry(item) {
+  const downloadUrl = buildRenderDownloadUrl({
+    downloadBase,
+    downloadPath: item.download_url
+  });
+  return {
+    url: downloadUrl,
+    name: item.filename || "render.mov",
+    outputName: item.filename || "",
+    previewUrl: "",
+    projectId: "",
+    jobId: "",
+    delivered: false,
+    deliveredDir: "",
+    deliveredHostHint: "",
+    progress: null,
+    createdAt: item.updated_at ? Date.parse(item.updated_at) : Date.now(),
+    sizeBytes: item.size_bytes ?? null,
+    status: "ready",
+    manifestUrl: "",
+    logUrl: ""
+  };
+}
+
 async function fetchRecentExports() {
-  const projectId = currentProjectId || "default";
-  const url = `${renderApiBase}/api/projects/${encodeURIComponent(projectId)}/exports`;
+  const projectId = currentProjectId || "";
   try {
-    const res = await fetch(url, { cache: "no-store" });
-    const data = await res.json();
-    if (!res.ok || !data.ok) {
-      throw new Error(data.error || "recent_failed");
+    let entries = [];
+    if (projectId) {
+      const projectUrl = apiUrl(`/api/projects/${encodeURIComponent(projectId)}/exports`);
+      const projectRes = await fetch(projectUrl, { cache: "no-store" });
+      const projectData = await projectRes.json();
+      if (!projectRes.ok || !projectData.ok) {
+        throw new Error(projectData.error || "recent_failed");
+      }
+      entries = (projectData.exports || []).map((item) => mapProjectExportEntry(item, projectId));
     }
-    const entries = (data.exports || []).map((item) => {
-      const downloadUrl = buildRenderDownloadUrl({
-        downloadBase,
-        downloadPath: item.download_url
-      });
-      const previewUrl = buildRenderDownloadUrl({
-        downloadBase,
-        downloadPath: item.preview_url
-      });
-      return {
-        url: downloadUrl,
-        name: item.filename || "export",
-        outputName: item.output_name || "",
-        previewUrl,
-        projectId: item.project_id || projectId,
-        jobId: item.job_id || "",
-        delivered: Boolean(item.delivered),
-        deliveredDir: item.delivered_dir || "",
-        deliveredHostHint: item.delivered_host_hint || "",
-        progress: Number.isFinite(item.progress) ? Number(item.progress) : null,
-        createdAt: item.created_at ? Date.parse(item.created_at) : Date.now(),
-        sizeBytes: item.size_bytes ?? null,
-        status: item.status || "",
-        manifestUrl: item.manifest_url
-          ? buildRenderDownloadUrl({
-            downloadBase,
-            downloadPath: item.manifest_url,
-            filename: null
-          })
-          : "",
-        logUrl: item.log_url
-          ? buildRenderDownloadUrl({
-            downloadBase,
-            downloadPath: item.log_url,
-            filename: null
-          })
-          : ""
-      };
-    });
+
+    if (!entries.length) {
+      const rendersRes = await fetch(apiUrl('/api/renders?limit=8'), { cache: "no-store" });
+      const rendersData = await rendersRes.json();
+      if (rendersRes.ok && rendersData.ok) {
+        entries = (rendersData.renders || []).map((item) => mapRenderEntry(item));
+      }
+    }
+
     const sorted = entries.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
     saveExportHistory(sorted);
     return sorted;
@@ -804,7 +846,7 @@ async function fetchDeliveryStatus(entry) {
     setDeliveryUI({ statusText: "Delivery: —", deliveredDir: "", hostHint: "" });
     return null;
   }
-  const url = `${renderApiBase}/api/projects/${encodeURIComponent(entry.projectId)}/exports/${encodeURIComponent(entry.jobId)}/delivery`;
+  const url = apiUrl(`/api/projects/${encodeURIComponent(entry.projectId)}/exports/${encodeURIComponent(entry.jobId)}/delivery`);
   try {
     const res = await fetch(url, { cache: "no-store" });
     const data = await res.json();
@@ -830,7 +872,7 @@ async function requestDelivery(entry) {
     setMessage("Missing project or job id for delivery.");
     return;
   }
-  const url = `${renderApiBase}/api/projects/${encodeURIComponent(entry.projectId)}/exports/${encodeURIComponent(entry.jobId)}/deliver`;
+  const url = apiUrl(`/api/projects/${encodeURIComponent(entry.projectId)}/exports/${encodeURIComponent(entry.jobId)}/deliver`);
   const res = await fetch(url, { method: "POST" });
   const data = await res.json();
   if (!res.ok || !data.ok) {
@@ -1132,7 +1174,7 @@ async function createStageSession({ timeline, name } = {}) {
       activeIndex: state.activeIndex
     }
   );
-  const res = await fetch(`${renderApiBase}/api/program-monitor/stage`, {
+  const res = await fetch(apiUrl('/api/program-monitor/stage'), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -1326,7 +1368,7 @@ async function fetchProjectIndex() {
   if (isFileProtocol) {
     return loadProjects();
   }
-  const res = await fetch(`${renderApiBase}/api/projects`, { cache: "no-store" });
+  const res = await fetch(apiUrl('/api/projects'), { cache: "no-store" });
   const { data, text } = await readJsonResponse(res);
   if (!res.ok || !data?.ok) {
     throw new Error(data?.error || text || "project_index_failed");
@@ -1338,7 +1380,7 @@ async function fetchProjectState(projectId) {
   if (!projectId) {
     return null;
   }
-  const res = await fetch(`${renderApiBase}/api/projects/${encodeURIComponent(projectId)}`, {
+  const res = await fetch(apiUrl(`/api/projects/${encodeURIComponent(projectId)}`), {
     cache: "no-store"
   });
   const { data, text } = await readJsonResponse(res);
@@ -1349,7 +1391,7 @@ async function fetchProjectState(projectId) {
 }
 
 async function resolveProjectIdByName(name) {
-  const res = await fetch(`${renderApiBase}/api/projects:resolve`, {
+  const res = await fetch(apiUrl('/api/projects:resolve'), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name })
@@ -1382,7 +1424,7 @@ async function saveProjectState(projectId, { name = "" } = {}) {
   }
   const payload = buildProjectPayloadFromState();
   const projectName = String(name || (elements.projectName ? elements.projectName.value : "") || projectId).trim();
-  const res = await fetch(`${renderApiBase}/api/projects/${encodeURIComponent(projectId)}`, {
+  const res = await fetch(apiUrl(`/api/projects/${encodeURIComponent(projectId)}`), {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -1520,6 +1562,11 @@ async function refreshProjects() {
 
   try {
     projectEntriesCache = await fetchProjectIndex();
+    const hasCurrent = projectEntriesCache.some((entry) => (entry.project_id || entry.id) === currentProjectId);
+    if (!hasCurrent) {
+      const firstProjectId = projectEntriesCache[0]?.project_id || projectEntriesCache[0]?.id || "";
+      setCurrentProjectId(firstProjectId);
+    }
   } catch (error) {
     console.warn("Failed to fetch project index", error);
     setMessage("Failed to refresh projects list.");
@@ -1642,7 +1689,7 @@ function renderProjects() {
         return;
       }
       try {
-        const res = await fetch(`${renderApiBase}/api/projects/${encodeURIComponent(projectId)}`, {
+        const res = await fetch(apiUrl(`/api/projects/${encodeURIComponent(projectId)}`), {
           method: "DELETE"
         });
         const { data, text } = await readJsonResponse(res);
@@ -2807,7 +2854,7 @@ async function exportNode() {
 
   const durationSeconds = getNodeDuration(state.activeIndex);
   const nodeText = applyDurationParamToNodeText(node.text, durationSeconds);
-  const res = await fetch(`${renderApiBase}/api/program-monitor/export-node`, {
+  const res = await fetch(apiUrl('/api/program-monitor/export-node'), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -2833,7 +2880,7 @@ async function exportNode() {
     throw new Error("missing_status_url");
   }
 
-  const statusUrl = `${renderApiBase}${data.status_url}`;
+  const statusUrl = apiUrl(data.status_url || '');
   exportPollTimer = setInterval(() => {
     pollJobStatus(statusUrl).catch((error) => {
       console.error(error);
@@ -2887,7 +2934,7 @@ async function exportTimeline() {
   }
 
   const projectId = currentProjectId || "default";
-  const res = await fetch(`${renderApiBase}/api/exports`, {
+  const res = await fetch(apiUrl('/api/exports'), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -2908,7 +2955,7 @@ async function exportTimeline() {
     throw new Error("missing_status_url");
   }
 
-  const statusUrl = `${renderApiBase}${data.status_url}`;
+  const statusUrl = apiUrl(data.status_url || '');
   exportPollTimer = setInterval(() => {
     pollExportStatus(statusUrl).catch((error) => {
       console.error(error);
