@@ -67,6 +67,7 @@ async function render() {
   const warmupMs = parseOptionalNumber(args.warmupMs) ?? DEFAULT_WARMUP_MS;
   const padSeconds = parseOptionalNumber(args.padSeconds) ?? DEFAULT_PAD_SECONDS;
   const debugFrameOut = process.env.DEBUG_FRAME_OUT || null;
+  const debugFramesEnabled = process.env.DEBUG_FRAMES === '1';
 
   if (!URL) {
     exitWithError('Missing required: --url=http://...', 2);
@@ -142,26 +143,46 @@ async function render() {
 
     console.log('RENDER_STATE:rendering');
     const frameIntervalMs = 1000 / FPS;
-    const captureStart = Date.now();
+    const debugFramesDir = debugFramesEnabled ? path.join(path.dirname(OUT), 'debug_frames') : null;
+    if (debugFramesDir) {
+      fs.mkdirSync(debugFramesDir, { recursive: true });
+    }
+
+    await page.evaluate(({ fps, frames }) => {
+      const durationMs = Math.round((frames * 1000) / fps);
+      window.__RENDER_DUR_MS = durationMs;
+      const baseFrame = document.getElementById('base');
+      if (baseFrame && baseFrame.contentWindow) {
+        baseFrame.contentWindow.__RENDER_DUR_MS = durationMs;
+      }
+    }, { fps: FPS, frames: FRAMES });
 
     for (let i = 0; i < FRAMES; i++) {
       const n = String(i).padStart(5, '0');
-      const frameTimeMs = Math.round((i * 1000) / FPS);
-      await page.evaluate((t) => {
-        if (typeof window.__SET_RENDER_TIME === 'function') {
-          window.__SET_RENDER_TIME(t);
+      const frameTimeMs = Math.round(i * frameIntervalMs);
+      await page.evaluate(({ tMs, frameIndex, frames, fps }) => {
+        const baseFrame = document.getElementById('base');
+        const target = baseFrame && baseFrame.contentWindow ? baseFrame.contentWindow : window;
+        if (typeof target.__RENDER_SET_FRAME === 'function') {
+          target.__RENDER_SET_FRAME(frameIndex, frames, fps);
         }
-      }, frameTimeMs);
+        if (typeof target.__SET_RENDER_TIME === 'function') {
+          target.__SET_RENDER_TIME(tMs);
+        }
+        target.__RENDER_T_MS = tMs;
+      }, { tMs: frameTimeMs, frameIndex: i, frames: FRAMES, fps: FPS });
       await page.evaluate(() => Promise.resolve());
       await page.screenshot({
         path: `${FRAME_DIR}/frame_${n}.png`,
         omitBackground: true
       });
 
-      const targetTime = captureStart + (i + 1) * frameIntervalMs;
-      const drift = targetTime - Date.now();
-      if (drift > 0) {
-        await page.waitForTimeout(drift);
+      if (debugFramesDir && (i === 0 || i === FRAMES - 1)) {
+        const debugName = i === 0 ? 'frame_00000.png' : 'frame_last.png';
+        await page.screenshot({
+          path: path.join(debugFramesDir, debugName),
+          omitBackground: true
+        });
       }
     }
 
