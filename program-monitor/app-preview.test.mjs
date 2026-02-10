@@ -48,3 +48,15 @@ test("render clock helper is available", () => {
   assert.ok(clockSource.includes("RenderClock"));
   assert.ok(clockSource.includes("__SET_RENDER_TIME"));
 });
+
+test("project loading falls back to local snapshot and hydrates names", () => {
+  assert.ok(source.includes("normalizeProjectTimelinePayload"));
+  assert.ok(source.includes("resolveProjectTimeline"));
+  assert.ok(source.includes("Saved locally. Remote draft save failed"));
+});
+
+test("stop and scrub preserve frame position", () => {
+  assert.ok(source.includes("const timelineOffset = getTimelineOffset(state.activeIndex);"));
+  assert.ok(source.includes("elements.baseVideo.currentTime = baseElapsed;"));
+  assert.ok(source.includes("syncOverlayPlayback(baseElapsed, false);"));
+});

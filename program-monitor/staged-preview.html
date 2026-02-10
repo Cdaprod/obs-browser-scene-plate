@@ -635,14 +635,19 @@
     }
 
     function stopAll() {
+      const timelineOffset = getTimelineOffset(state.activeIndex);
+      const baseElapsed = getBaseElapsed();
       stopPlayback();
-      state.activeIndex = 0;
-      state.pausedAt = 0;
-      state.basePausedAt = 0;
-      elements.statNode.textContent = "—";
-      updateTimelineUI(0);
+      state.pausedAt = timelineOffset + baseElapsed;
+      state.basePausedAt = baseElapsed;
+      if (activeBaseKind !== "page") {
+        elements.baseVideo.currentTime = baseElapsed;
+      }
+      syncOverlayPlayback(baseElapsed, false);
+      elements.statNode.textContent = String(state.activeIndex + 1);
+      updateTimelineUI(state.pausedAt);
       renderNodeTrack();
-      setStatus("Stopped.");
+      setStatus("Stopped at current frame.");
     }
 
     function getBaseElapsed() {
@@ -832,9 +837,7 @@
       const safeOffset = Math.max(0, Math.min(offsetSeconds, nodeDuration || 0));
 
       if (baseKind !== "page") {
-        if (!resume || !Number.isFinite(elements.baseVideo.currentTime)) {
-          elements.baseVideo.currentTime = safeOffset || 0;
-        }
+        elements.baseVideo.currentTime = safeOffset || 0;
         await elements.baseVideo.play().catch(() => {
           state.playing = false;
         });
@@ -931,7 +934,16 @@
         elapsed += duration;
       }
 
-      stopPlayback();
+      state.stopRequested = false;
+      state.playing = false;
+      if (rafId) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+      clearBaseHandlers();
+      elements.baseVideo.pause();
+      overlayVideos.forEach((video) => video.pause());
+      overlayAudios.forEach((audio) => audio.pause());
       state.activeIndex = targetIndex;
       elements.statNode.textContent = String(targetIndex + 1);
       await primeNode(targetIndex);
@@ -1069,13 +1081,14 @@
       finishScrub();
     });
 
-    loadTimeline();
-
-    if (state.nodes.length) {
-      primeNode(0).catch(() => {});
+    loadTimeline().then(async () => {
+      if (!state.nodes.length) {
+        return;
+      }
+      await primeNode(0).catch(() => {});
       renderNodeTrack();
       updateTimelineUI(0);
-    }
+    });
   </script>
 </body>
 </html>

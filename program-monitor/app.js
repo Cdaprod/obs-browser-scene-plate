@@ -1377,6 +1377,46 @@ function loadProjects() {
   }
 }
 
+function normalizeProjectTimelinePayload(payload) {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const candidate = Array.isArray(payload.nodes)
+    ? payload
+    : (payload.timeline && typeof payload.timeline === "object" ? payload.timeline : null);
+  if (!candidate || !Array.isArray(candidate.nodes) || !candidate.nodes.length) {
+    return null;
+  }
+  return {
+    version: Number.isFinite(candidate.version) ? candidate.version : 1,
+    nodes: candidate.nodes,
+    activeIndex: Number.isFinite(candidate.activeIndex) ? candidate.activeIndex : 0
+  };
+}
+
+function getProjectEntryById(projectId) {
+  if (!projectId) {
+    return null;
+  }
+  return loadProjects().find((entry) => entry.id === projectId) || null;
+}
+
+async function resolveProjectTimeline(entry) {
+  if (!entry?.id) {
+    return null;
+  }
+  try {
+    const remote = await loadProjectTimeline(entry.id);
+    const normalizedRemote = normalizeProjectTimelinePayload(remote);
+    if (normalizedRemote) {
+      return normalizedRemote;
+    }
+  } catch (error) {
+    console.warn("Falling back to local project snapshot", error);
+  }
+  return normalizeProjectTimelinePayload(entry.timeline);
+}
+
 function saveProjects(entries) {
   const index = entries.reduce((acc, entry) => {
     if (entry && entry.name) {
@@ -1396,6 +1436,26 @@ function saveProjects(entries) {
   } catch (error) {
     console.warn("Failed to save projects", error);
   }
+}
+
+async function loadProjectEntry(entry) {
+  const timeline = await resolveProjectTimeline(entry);
+  if (!timeline) {
+    setMessage("Saved project is empty.");
+    return;
+  }
+
+  state.nodes = timeline.nodes;
+  state.activeIndex = Number.isFinite(timeline.activeIndex) ? timeline.activeIndex : 0;
+  state.selectedIndex = null;
+  state.validationResults = [];
+  renderNodes();
+  await primeNode(state.activeIndex);
+  setCurrentProjectId(entry.id);
+  if (elements.projectName) {
+    elements.projectName.value = entry.name;
+  }
+  setMessage(`Loaded project: ${entry.name}`);
 }
 
 function getDefaultObsSettings() {
@@ -1540,22 +1600,7 @@ function renderProjects() {
     name.title = "Click to load this project";
     name.addEventListener("click", async () => {
       try {
-        const timeline = await loadProjectTimeline(entry.id);
-        if (!timeline || !Array.isArray(timeline.nodes) || !timeline.nodes.length) {
-          setMessage("Saved project is empty.");
-          return;
-        }
-        state.nodes = timeline.nodes;
-        state.activeIndex = Number.isFinite(timeline.activeIndex) ? timeline.activeIndex : 0;
-        state.selectedIndex = null;
-        state.validationResults = [];
-        renderNodes();
-        await primeNode(state.activeIndex);
-        setCurrentProjectId(entry.id);
-        if (elements.projectName) {
-          elements.projectName.value = entry.name;
-        }
-        setMessage(`Loaded project: ${entry.name}`);
+        await loadProjectEntry(entry);
       } catch (error) {
         console.error(error);
         setMessage("Failed to load project.");
@@ -1570,22 +1615,7 @@ function renderProjects() {
     loadBtn.textContent = "Load";
     loadBtn.addEventListener("click", async () => {
       try {
-        const timeline = await loadProjectTimeline(entry.id);
-        if (!timeline || !Array.isArray(timeline.nodes) || !timeline.nodes.length) {
-          setMessage("Saved project is empty.");
-          return;
-        }
-        state.nodes = timeline.nodes;
-        state.activeIndex = Number.isFinite(timeline.activeIndex) ? timeline.activeIndex : 0;
-        state.selectedIndex = null;
-        state.validationResults = [];
-        renderNodes();
-        await primeNode(state.activeIndex);
-        setCurrentProjectId(entry.id);
-        if (elements.projectName) {
-          elements.projectName.value = entry.name;
-        }
-        setMessage(`Loaded project: ${entry.name}`);
+        await loadProjectEntry(entry);
       } catch (error) {
         console.error(error);
         setMessage("Failed to load project.");
@@ -2081,11 +2111,13 @@ async function primeNode(index) {
 }
 
 function stopAll() {
+  const timelineOffset = getTimelineOffset(state.activeIndex);
+  const baseElapsed = getBaseElapsed();
   state.stopRequested = true;
   state.playing = false;
-  state.pausedAt = 0;
-  state.basePausedAt = 0;
-  state.currentTime = 0;
+  state.basePausedAt = baseElapsed;
+  state.pausedAt = timelineOffset + baseElapsed;
+  state.currentTime = state.pausedAt;
   if (rafId) {
     cancelAnimationFrame(rafId);
     rafId = null;
@@ -2094,29 +2126,21 @@ function stopAll() {
   clearBaseHandlers();
 
   elements.baseVideo.pause();
-  elements.baseVideo.currentTime = 0;
+  if (activeBaseKind !== "page" && activeBaseKind !== "image") {
+    elements.baseVideo.currentTime = baseElapsed;
+  }
   overlayVideos.forEach((video) => {
     video.pause();
-    video.currentTime = 0;
   });
   overlayAudios.forEach((audio) => {
     audio.pause();
-    audio.currentTime = 0;
   });
+  syncOverlayPlayback(baseElapsed, false);
 
-  elements.statT.textContent = "0.00";
-  state.durationInfo = { duration: 0, source: "none" };
-  elements.statDur.textContent = "0.00";
-  state.selectedIndex = null;
-  state.activeIndex = state.nodes.length ? 0 : -1;
+  elements.statT.textContent = baseElapsed.toFixed(2);
   renderNodes();
-  saveLocal();
-  if (state.nodes.length && state.activeIndex >= 0) {
-    primeNode(state.activeIndex).catch(() => {});
-  } else {
-    updateStatusDisplay();
-  }
-  updatePreviewScrubber(0);
+  updateStatusDisplay();
+  updatePreviewScrubber(state.pausedAt);
 }
 
 function clearNodeContent(node) {
@@ -2199,7 +2223,16 @@ async function seekToTime(targetTime, { autoplay = false } = {}) {
     elapsed += duration;
   }
 
-  stopAll();
+  state.stopRequested = false;
+  state.playing = false;
+  if (rafId) {
+    cancelAnimationFrame(rafId);
+    rafId = null;
+  }
+  clearBaseHandlers();
+  elements.baseVideo.pause();
+  overlayVideos.forEach((video) => video.pause());
+  overlayAudios.forEach((audio) => audio.pause());
   state.activeIndex = targetIndex;
   state.selectedIndex = null;
   await primeNode(targetIndex);
@@ -2388,7 +2421,12 @@ function saveProject() {
   entries.unshift({
     id: projectId,
     name,
-    savedAt: Date.now()
+    savedAt: Date.now(),
+    timeline: {
+      version: 1,
+      nodes: state.nodes,
+      activeIndex: state.activeIndex
+    }
   });
 
   const trimmed = entries.slice(0, PROJECTS_LIMIT);
@@ -2397,7 +2435,7 @@ function saveProject() {
   setCurrentProjectId(projectId);
   saveProjectTimeline(projectId).catch((error) => {
     console.error(error);
-    setMessage(`Failed to save project draft. ${error?.message || ""}`.trim());
+    setMessage(`Saved locally. Remote draft save failed: ${error?.message || "unknown error"}`);
   });
   setMessage(`Saved project: ${name}`);
 }
@@ -3222,13 +3260,17 @@ try {
     loadLocal();
   } else {
     const storedProjectId = getStoredProjectId();
-    const fallbackProjectId = storedProjectId || "default";
+    const storedEntry = getProjectEntryById(storedProjectId);
+    const fallbackProjectId = storedEntry?.id || storedProjectId || "default";
     setCurrentProjectId(fallbackProjectId);
-    loadProjectTimeline(currentProjectId)
+    resolveProjectTimeline({ id: currentProjectId, timeline: storedEntry?.timeline })
       .then((timeline) => {
         if (timeline && Array.isArray(timeline.nodes) && timeline.nodes.length) {
           state.nodes = timeline.nodes;
           state.activeIndex = Number.isFinite(timeline.activeIndex) ? timeline.activeIndex : 0;
+          if (storedEntry?.name && elements.projectName) {
+            elements.projectName.value = storedEntry.name;
+          }
         }
       })
       .catch((error) => {

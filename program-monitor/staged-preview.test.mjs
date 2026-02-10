@@ -24,3 +24,9 @@ test("staged preview reports missing stage id", () => {
 test("staged preview fetches stage payloads by id", () => {
   assert.ok(html.includes("/api/program-monitor/stage/"));
 });
+
+test("staged preview preserves paused frame state", () => {
+  assert.ok(html.includes("Stopped at current frame."));
+  assert.ok(html.includes("elements.baseVideo.currentTime = baseElapsed;"));
+  assert.ok(html.includes("state.pausedAt = timelineOffset + baseElapsed;"));
+});
