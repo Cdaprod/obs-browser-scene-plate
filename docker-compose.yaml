@@ -37,7 +37,7 @@ services:
       - "8793:8791"
     environment:
       - RENDERS_DIR=/renders
-      - PUBLIC_ORIGIN=${PUBLIC_ORIGIN}
+      - PUBLIC_ORIGIN=${PUBLIC_ORIGIN:-http://localhost:8789}
       - RENDER_ORIGIN=${RENDER_ORIGIN:-http://obs_plate}
     volumes:
       - type: bind

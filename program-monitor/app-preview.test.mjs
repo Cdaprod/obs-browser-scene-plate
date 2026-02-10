@@ -73,3 +73,10 @@ test("html/image elapsed time uses live clock while playing", () => {
   assert.ok(source.includes("return (performance.now() - baseStartTime) / 1000;"));
   assert.ok(source.includes("state.basePausedAt = 0;"));
 });
+
+test("api calls use same-origin /api paths", () => {
+  assert.ok(source.includes('function apiUrl(path)'));
+  assert.ok(source.includes("apiUrl('/api/projects')"));
+  assert.ok(source.includes("apiUrl('/api/exports')"));
+  assert.ok(!source.includes('http://${host}:${renderApiPort}/api/projects'));
+});
