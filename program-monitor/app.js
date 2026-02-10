@@ -419,6 +419,7 @@ const state = {
 const PROJECTS_KEY = "program-monitor.projects.v1";
 const PROJECTS_LIMIT = 20;
 const PROJECT_ACTIVE_KEY = "program-monitor.project.active.v1";
+const PROJECT_DRAFT_PREFIX = "programMonitor:draft:";
 const PROJECT_SAVE_DEBOUNCE_MS = 600;
 const OBS_SETTINGS_KEY = "program-monitor.obs.v1";
 const EXPORT_HISTORY_KEY = "obs-browser-export-history";
@@ -487,6 +488,7 @@ let activeBaseKind = "video";
 let baseStartTime = 0;
 let projectSaveTimer = null;
 let currentProjectId = "";
+let projectEntriesCache = [];
 let currentExportEntry = null;
 let recentMenuTimer = null;
 let uiBound = false;
@@ -1219,57 +1221,192 @@ function buildProjectId(name) {
     .slice(0, 48) || uuid();
 }
 
-async function loadProjectTimeline(projectId) {
+function normalizeProjectTimelinePayload(payload) {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const candidate = payload.timeline && typeof payload.timeline === "object"
+    ? payload.timeline
+    : payload;
+  if (!candidate || !Array.isArray(candidate.nodes)) {
+    return null;
+  }
+  return {
+    version: Number.isFinite(candidate.version) ? candidate.version : 1,
+    nodes: candidate.nodes,
+    nodesStructured: Array.isArray(candidate.nodesStructured) ? candidate.nodesStructured : [],
+    activeIndex: Number.isFinite(candidate.activeIndex) ? candidate.activeIndex : 0
+  };
+}
+
+function buildProjectPayloadFromState() {
+  return {
+    timeline: buildTimelineDescriptor({
+      version: 1,
+      nodes: state.nodes,
+      activeIndex: state.activeIndex
+    })
+  };
+}
+
+function getProjectDraftKey(projectId = currentProjectId) {
+  return `${PROJECT_DRAFT_PREFIX}${projectId || "new"}`;
+}
+
+function saveProjectDraft(projectId = currentProjectId) {
+  if (isFileProtocol) {
+    return;
+  }
+  try {
+    localStorage.setItem(getProjectDraftKey(projectId), JSON.stringify({
+      savedAt: Date.now(),
+      payload: buildProjectPayloadFromState()
+    }));
+  } catch (error) {
+    console.warn("Failed to save project draft", error);
+  }
+}
+
+function loadProjectDraft(projectId = currentProjectId) {
   if (isFileProtocol) {
     return null;
   }
+  try {
+    const raw = localStorage.getItem(getProjectDraftKey(projectId));
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw);
+    return normalizeProjectTimelinePayload(parsed?.payload);
+  } catch (error) {
+    console.warn("Failed to read project draft", error);
+    return null;
+  }
+}
+
+function clearProjectDraft(projectId = currentProjectId) {
+  if (isFileProtocol) {
+    return;
+  }
+  try {
+    localStorage.removeItem(getProjectDraftKey(projectId));
+  } catch (error) {
+    console.warn("Failed to clear project draft", error);
+  }
+}
+
+function applyTimelineToEditor(timeline, { projectId = "", projectName = "", notify = true } = {}) {
+  const normalized = normalizeProjectTimelinePayload(timeline);
+  if (!normalized) {
+    setMessage("Saved project is empty.");
+    return false;
+  }
+
+  state.nodes = normalized.nodes;
+  const maxIndex = Math.max(state.nodes.length - 1, 0);
+  state.activeIndex = Math.min(Math.max(normalized.activeIndex, 0), maxIndex);
+  state.selectedIndex = null;
+  state.validationResults = [];
+  renderNodes();
+  primeNode(state.activeIndex).catch(() => {});
+
+  if (projectId) {
+    setCurrentProjectId(projectId);
+  }
+  if (elements.projectName && projectName) {
+    elements.projectName.value = projectName;
+  }
+  if (notify && projectName) {
+    setMessage(`Loaded project: ${projectName}`);
+  }
+  return true;
+}
+
+async function fetchProjectIndex() {
+  if (isFileProtocol) {
+    return loadProjects();
+  }
+  const res = await fetch(`${renderApiBase}/api/projects`, { cache: "no-store" });
+  const { data, text } = await readJsonResponse(res);
+  if (!res.ok || !data?.ok) {
+    throw new Error(data?.error || text || "project_index_failed");
+  }
+  return Array.isArray(data.projects) ? data.projects : [];
+}
+
+async function fetchProjectState(projectId) {
   if (!projectId) {
     return null;
   }
-  const url = `${renderApiBase}/api/projects/${encodeURIComponent(projectId)}/timeline`;
-  const res = await fetch(url, {
+  const res = await fetch(`${renderApiBase}/api/projects/${encodeURIComponent(projectId)}`, {
     cache: "no-store"
   });
   const { data, text } = await readJsonResponse(res);
   if (!res.ok || !data?.ok) {
-    console.info("LOAD_DRAFT:status", res.status);
-    console.info("LOAD_DRAFT:body", text);
     throw new Error(data?.error || text || "project_load_failed");
   }
-  return data.timeline || null;
+  return data.project || null;
+}
+
+async function resolveProjectIdByName(name) {
+  const res = await fetch(`${renderApiBase}/api/projects:resolve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name })
+  });
+  const { data, text } = await readJsonResponse(res);
+  if (!res.ok || !data?.ok) {
+    throw new Error(data?.error || text || "project_resolve_failed");
+  }
+  const projectId = data.project_id || data.project?.project_id || data.project?.id;
+  if (!projectId) {
+    throw new Error("project_resolve_missing_id");
+  }
+  return {
+    projectId,
+    project: data.project || null
+  };
+}
+
+async function loadProjectTimeline(projectId) {
+  if (isFileProtocol || !projectId) {
+    return null;
+  }
+  const project = await fetchProjectState(projectId);
+  return normalizeProjectTimelinePayload(project?.payload);
+}
+
+async function saveProjectState(projectId, { name = "" } = {}) {
+  if (isFileProtocol || !projectId) {
+    return null;
+  }
+  const payload = buildProjectPayloadFromState();
+  const projectName = String(name || (elements.projectName ? elements.projectName.value : "") || projectId).trim();
+  const res = await fetch(`${renderApiBase}/api/projects/${encodeURIComponent(projectId)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: projectName,
+      payload
+    })
+  });
+  const { data, text } = await readJsonResponse(res);
+  if (!res.ok || !data?.ok) {
+    throw new Error(data?.error || text || "project_save_failed");
+  }
+  clearProjectDraft(projectId);
+  return data.project || null;
 }
 
 async function saveProjectTimeline(projectId) {
-  if (isFileProtocol) {
-    return;
-  }
-  if (!projectId) {
-    return;
-  }
-  const payload = {
-    version: 1,
-    nodes: state.nodes,
-    activeIndex: state.activeIndex
-  };
-  const url = `${renderApiBase}/api/projects/${encodeURIComponent(projectId)}/timeline`;
-  console.info("SAVE_DRAFT:request", url, payload);
-  const res = await fetch(url, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-  console.info("SAVE_DRAFT:status", res.status);
-  const { data, text } = await readJsonResponse(res);
-  if (!res.ok || !data?.ok) {
-    console.info("SAVE_DRAFT:body", text);
-    throw new Error(data?.error || text || "project_save_failed");
-  }
+  return saveProjectState(projectId);
 }
 
 function scheduleProjectSave() {
   if (isFileProtocol) {
     return;
   }
+  saveProjectDraft();
   if (!currentProjectId) {
     return;
   }
@@ -1277,40 +1414,10 @@ function scheduleProjectSave() {
     clearTimeout(projectSaveTimer);
   }
   projectSaveTimer = setTimeout(() => {
-    saveProjectTimeline(currentProjectId).catch((error) => {
+    saveProjectState(currentProjectId).catch((error) => {
       console.warn("Failed to save project draft", error);
     });
   }, PROJECT_SAVE_DEBOUNCE_MS);
-}
-
-function setPreviewCollapsed(collapsed) {
-  const isCollapsed = Boolean(collapsed);
-  document.body.classList.toggle("preview-collapsed", isCollapsed);
-  if (elements.togglePreview) {
-    elements.togglePreview.setAttribute("aria-pressed", String(!isCollapsed));
-  }
-
-  try {
-    localStorage.setItem(PREVIEW_COLLAPSE_KEY, JSON.stringify(isCollapsed));
-  } catch (error) {
-    console.warn("Failed to persist preview state", error);
-  }
-}
-
-function setObsPanelCollapsed(collapsed) {
-  const isCollapsed = Boolean(collapsed);
-  if (elements.obsPanelBody) {
-    elements.obsPanelBody.setAttribute("aria-hidden", String(isCollapsed));
-  }
-  if (elements.obsToggle) {
-    elements.obsToggle.setAttribute("aria-expanded", String(!isCollapsed));
-    elements.obsToggle.textContent = isCollapsed ? "Show OBS" : "Hide OBS";
-  }
-  try {
-    localStorage.setItem(OBS_PANEL_COLLAPSE_KEY, JSON.stringify(isCollapsed));
-  } catch (error) {
-    console.warn("Failed to persist OBS panel state", error);
-  }
 }
 
 function saveLocal() {
@@ -1377,46 +1484,6 @@ function loadProjects() {
   }
 }
 
-function normalizeProjectTimelinePayload(payload) {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  const candidate = Array.isArray(payload.nodes)
-    ? payload
-    : (payload.timeline && typeof payload.timeline === "object" ? payload.timeline : null);
-  if (!candidate || !Array.isArray(candidate.nodes) || !candidate.nodes.length) {
-    return null;
-  }
-  return {
-    version: Number.isFinite(candidate.version) ? candidate.version : 1,
-    nodes: candidate.nodes,
-    activeIndex: Number.isFinite(candidate.activeIndex) ? candidate.activeIndex : 0
-  };
-}
-
-function getProjectEntryById(projectId) {
-  if (!projectId) {
-    return null;
-  }
-  return loadProjects().find((entry) => entry.id === projectId) || null;
-}
-
-async function resolveProjectTimeline(entry) {
-  if (!entry?.id) {
-    return null;
-  }
-  try {
-    const remote = await loadProjectTimeline(entry.id);
-    const normalizedRemote = normalizeProjectTimelinePayload(remote);
-    if (normalizedRemote) {
-      return normalizedRemote;
-    }
-  } catch (error) {
-    console.warn("Falling back to local project snapshot", error);
-  }
-  return normalizeProjectTimelinePayload(entry.timeline);
-}
-
 function saveProjects(entries) {
   const index = entries.reduce((acc, entry) => {
     if (entry && entry.name) {
@@ -1438,130 +1505,52 @@ function saveProjects(entries) {
   }
 }
 
+async function refreshProjects() {
+  if (isFileProtocol) {
+    projectEntriesCache = loadProjects().map((entry) => ({
+      id: entry.id,
+      project_id: entry.id,
+      name: entry.name,
+      updated_at: entry.savedAt ? new Date(entry.savedAt).toISOString() : "",
+      timeline: entry.timeline || null
+    }));
+    renderProjects();
+    return projectEntriesCache;
+  }
+
+  try {
+    projectEntriesCache = await fetchProjectIndex();
+  } catch (error) {
+    console.warn("Failed to fetch project index", error);
+    setMessage("Failed to refresh projects list.");
+  }
+  renderProjects();
+  return projectEntriesCache;
+}
+
 async function loadProjectEntry(entry) {
-  const timeline = await resolveProjectTimeline(entry);
-  if (!timeline) {
-    setMessage("Saved project is empty.");
+  const projectId = entry?.project_id || entry?.id || "";
+  if (!projectId) {
     return;
   }
 
-  state.nodes = timeline.nodes;
-  state.activeIndex = Number.isFinite(timeline.activeIndex) ? timeline.activeIndex : 0;
-  state.selectedIndex = null;
-  state.validationResults = [];
-  renderNodes();
-  await primeNode(state.activeIndex);
-  setCurrentProjectId(entry.id);
-  if (elements.projectName) {
-    elements.projectName.value = entry.name;
-  }
-  setMessage(`Loaded project: ${entry.name}`);
-}
-
-function getDefaultObsSettings() {
-  return {
-    address: `ws://${host}:4455`,
-    password: "",
-    sceneName: "ASSET_SCENE",
-    inputName: "ASSET_MEDIA",
-    takeScene: false,
-    autoplay: true,
-    hud: false,
-    lastGoodAddress: ""
-  };
-}
-
-function loadObsSettings() {
-  try {
-    const raw = localStorage.getItem(OBS_SETTINGS_KEY);
-    if (!raw) {
-      return getDefaultObsSettings();
+  if (isFileProtocol) {
+    const timeline = normalizeProjectTimelinePayload(entry.timeline);
+    if (!applyTimelineToEditor(timeline, { projectId, projectName: entry.name })) {
+      return;
     }
-    const parsed = JSON.parse(raw);
-    return {
-      ...getDefaultObsSettings(),
-      ...parsed
-    };
-  } catch (error) {
-    console.warn("Failed to load OBS settings", error);
-    return getDefaultObsSettings();
-  }
-}
-
-function saveObsSettings(settings) {
-  try {
-    localStorage.setItem(OBS_SETTINGS_KEY, JSON.stringify(settings));
-  } catch (error) {
-    console.warn("Failed to save OBS settings", error);
-  }
-}
-
-function applyObsSettingsToInputs(settings) {
-  if (!settings) {
     return;
   }
-  if (elements.obsAddress) {
-    elements.obsAddress.value = settings.address || "";
-  }
-  if (elements.obsPassword) {
-    elements.obsPassword.value = settings.password || "";
-  }
-  if (elements.obsScene) {
-    elements.obsScene.value = settings.sceneName || "";
-  }
-  if (elements.obsInput) {
-    elements.obsInput.value = settings.inputName || "";
-  }
-  if (elements.obsTakeScene) {
-    elements.obsTakeScene.checked = Boolean(settings.takeScene);
-  }
-  if (elements.obsAutoplay) {
-    elements.obsAutoplay.checked = settings.autoplay !== false;
-  }
-  if (elements.obsHud) {
-    elements.obsHud.checked = Boolean(settings.hud);
-  }
-}
 
-function readObsSettingsFromInputs() {
-  return {
-    address: elements.obsAddress ? elements.obsAddress.value.trim() : "",
-    password: elements.obsPassword ? elements.obsPassword.value : "",
-    sceneName: elements.obsScene ? elements.obsScene.value.trim() : "",
-    inputName: elements.obsInput ? elements.obsInput.value.trim() : "",
-    takeScene: elements.obsTakeScene ? elements.obsTakeScene.checked : false,
-    autoplay: elements.obsAutoplay ? elements.obsAutoplay.checked : true,
-    hud: elements.obsHud ? elements.obsHud.checked : false
-  };
-}
-
-function persistObsSettingsFromInputs() {
-  const settings = {
-    ...loadObsSettings(),
-    ...readObsSettingsFromInputs()
-  };
-  saveObsSettings(settings);
-  return settings;
-}
-
-function parseObsAddressList(value, lastGoodAddress) {
-  const parts = String(value || "")
-    .split(/[\s,]+/)
-    .map((part) => part.trim())
-    .filter(Boolean);
-  const seen = new Set();
-  const addresses = [];
-  if (lastGoodAddress) {
-    addresses.push(lastGoodAddress);
-    seen.add(lastGoodAddress);
+  const project = await fetchProjectState(projectId);
+  const restoredDraft = loadProjectDraft(projectId);
+  const timeline = restoredDraft || normalizeProjectTimelinePayload(project?.payload);
+  if (!applyTimelineToEditor(timeline, {
+    projectId,
+    projectName: project?.name || entry?.name || projectId
+  })) {
+    return;
   }
-  parts.forEach((address) => {
-    if (!seen.has(address)) {
-      seen.add(address);
-      addresses.push(address);
-    }
-  });
-  return addresses;
 }
 
 function setProjectToolbarOpen(isOpen) {
@@ -1579,13 +1568,13 @@ function renderProjects() {
   if (!elements.projectList) {
     return;
   }
-  const entries = loadProjects();
+  const entries = projectEntriesCache;
   elements.projectList.innerHTML = "";
 
   if (!entries.length) {
     const empty = document.createElement("div");
     empty.className = "projectItem";
-    empty.innerHTML = `<div class=\"projectItemName\">No saved projects yet.</div>`;
+    empty.innerHTML = `<div class="projectItemName">No saved projects yet.</div>`;
     elements.projectList.appendChild(empty);
     return;
   }
@@ -1594,9 +1583,11 @@ function renderProjects() {
     const item = document.createElement("div");
     item.className = "projectItem";
 
+    const projectId = entry.project_id || entry.id || "";
+
     const name = document.createElement("div");
     name.className = "projectItemName";
-    name.textContent = entry.name;
+    name.textContent = entry.name || projectId;
     name.title = "Click to load this project";
     name.addEventListener("click", async () => {
       try {
@@ -1627,8 +1618,10 @@ function renderProjects() {
     stageBtn.textContent = "Open Stage";
     stageBtn.addEventListener("click", async () => {
       try {
-        const timeline = await loadProjectTimeline(entry.id);
-        const url = await buildStagePreviewUrlWithCache(timeline, entry.name);
+        const timeline = isFileProtocol
+          ? normalizeProjectTimelinePayload(entry.timeline)
+          : await loadProjectTimeline(projectId);
+        const url = await buildStagePreviewUrlWithCache(timeline, entry.name || "");
         if (url) {
           window.open(url, "_blank", "noopener");
         }
@@ -1641,10 +1634,29 @@ function renderProjects() {
     const deleteBtn = document.createElement("button");
     deleteBtn.type = "button";
     deleteBtn.textContent = "Delete";
-    deleteBtn.addEventListener("click", () => {
-      const next = loadProjects().filter((itemEntry) => itemEntry.name !== entry.name);
-      saveProjects(next);
-      renderProjects();
+    deleteBtn.addEventListener("click", async () => {
+      if (isFileProtocol) {
+        const next = loadProjects().filter((itemEntry) => itemEntry.id !== projectId);
+        saveProjects(next);
+        await refreshProjects();
+        return;
+      }
+      try {
+        const res = await fetch(`${renderApiBase}/api/projects/${encodeURIComponent(projectId)}`, {
+          method: "DELETE"
+        });
+        const { data, text } = await readJsonResponse(res);
+        if (!res.ok || !data?.ok) {
+          throw new Error(data?.error || text || "project_delete_failed");
+        }
+        if (currentProjectId === projectId) {
+          setCurrentProjectId("");
+        }
+        await refreshProjects();
+      } catch (error) {
+        console.error(error);
+        setMessage("Failed to delete project.");
+      }
     });
 
     actions.appendChild(loadBtn);
@@ -1656,6 +1668,52 @@ function renderProjects() {
 
     elements.projectList.appendChild(item);
   });
+}
+
+async function saveProject() {
+  const rawName = elements.projectName ? elements.projectName.value : "";
+  const name = (rawName || "").trim();
+  if (!name) {
+    setMessage("Name the project before saving.");
+    return;
+  }
+
+  if (isFileProtocol) {
+    const existing = loadProjects();
+    const current = existing.find((entry) => entry.name === name);
+    const entries = existing.filter((entry) => entry.name !== name);
+    const projectId = current ? current.id : buildProjectId(name);
+    entries.unshift({
+      id: projectId,
+      name,
+      savedAt: Date.now(),
+      timeline: buildProjectPayloadFromState().timeline
+    });
+    const trimmed = entries.slice(0, PROJECTS_LIMIT);
+    saveProjects(trimmed);
+    setCurrentProjectId(projectId);
+    await refreshProjects();
+    setMessage(`Saved project: ${name}`);
+    return;
+  }
+
+  try {
+    let projectId = currentProjectId;
+    if (!projectId) {
+      const resolved = await resolveProjectIdByName(name);
+      projectId = resolved.projectId;
+      setCurrentProjectId(projectId);
+    }
+    const saved = await saveProjectState(projectId, { name });
+    if (elements.projectName) {
+      elements.projectName.value = saved?.name || name;
+    }
+    await refreshProjects();
+    setMessage(`Saved project: ${saved?.name || name}`);
+  } catch (error) {
+    console.error(error);
+    setMessage(`Failed to save project. ${error?.message || ""}`.trim());
+  }
 }
 
 function validateExportDurations({ nodeIndex = null } = {}) {
@@ -2406,40 +2464,6 @@ function openBaseInNewTab() {
   window.open(parsed.baseUrl, "_blank", "noopener");
 }
 
-function saveProject() {
-  const rawName = elements.projectName ? elements.projectName.value : "";
-  const name = (rawName || "").trim();
-  if (!name) {
-    setMessage("Name the project before saving.");
-    return;
-  }
-
-  const existing = loadProjects();
-  const current = existing.find((entry) => entry.name === name);
-  const entries = existing.filter((entry) => entry.name !== name);
-  const projectId = current ? current.id : buildProjectId(name);
-  entries.unshift({
-    id: projectId,
-    name,
-    savedAt: Date.now(),
-    timeline: {
-      version: 1,
-      nodes: state.nodes,
-      activeIndex: state.activeIndex
-    }
-  });
-
-  const trimmed = entries.slice(0, PROJECTS_LIMIT);
-  saveProjects(trimmed);
-  renderProjects();
-  setCurrentProjectId(projectId);
-  saveProjectTimeline(projectId).catch((error) => {
-    console.error(error);
-    setMessage(`Saved locally. Remote draft save failed: ${error?.message || "unknown error"}`);
-  });
-  setMessage(`Saved project: ${name}`);
-}
-
 function validateNodes() {
   state.validationResults = state.nodes.map((node) => {
     const parsed = parseNodeText(node.text);
@@ -3070,7 +3094,7 @@ function bindUIOnce() {
       const isHidden = elements.projectToolbar?.classList.contains("hidden");
       setProjectToolbarOpen(isHidden);
       if (isHidden) {
-        renderProjects();
+        refreshProjects();
       }
     });
   }
@@ -3260,26 +3284,33 @@ try {
     loadLocal();
   } else {
     const storedProjectId = getStoredProjectId();
-    const storedEntry = getProjectEntryById(storedProjectId);
-    const fallbackProjectId = storedEntry?.id || storedProjectId || "default";
-    setCurrentProjectId(fallbackProjectId);
-    resolveProjectTimeline({ id: currentProjectId, timeline: storedEntry?.timeline })
-      .then((timeline) => {
-        if (timeline && Array.isArray(timeline.nodes) && timeline.nodes.length) {
-          state.nodes = timeline.nodes;
-          state.activeIndex = Number.isFinite(timeline.activeIndex) ? timeline.activeIndex : 0;
-          if (storedEntry?.name && elements.projectName) {
-            elements.projectName.value = storedEntry.name;
-          }
-        }
-      })
-      .catch((error) => {
-        console.warn("Failed to load project draft", error);
-      })
-      .finally(() => {
-        renderNodes();
-        primeNode(state.activeIndex).catch(() => {});
-      });
+    if (storedProjectId) {
+      setCurrentProjectId(storedProjectId);
+      fetchProjectState(storedProjectId)
+        .then((project) => {
+          const draftTimeline = loadProjectDraft(storedProjectId);
+          const timeline = draftTimeline || normalizeProjectTimelinePayload(project?.payload);
+          applyTimelineToEditor(timeline, {
+            projectId: storedProjectId,
+            projectName: project?.name || storedProjectId,
+            notify: false
+          });
+        })
+        .catch((error) => {
+          console.warn("Failed to load project draft", error);
+        })
+        .finally(() => {
+          renderNodes();
+          primeNode(state.activeIndex).catch(() => {});
+        });
+    } else {
+      const newDraft = loadProjectDraft("");
+      if (newDraft) {
+        applyTimelineToEditor(newDraft, { notify: false });
+      }
+      renderNodes();
+      primeNode(state.activeIndex).catch(() => {});
+    }
   }
   try {
     const stored = localStorage.getItem(PREVIEW_COLLAPSE_KEY);
@@ -3309,7 +3340,7 @@ try {
   }
   setExportStatus("Idle");
   setProjectToolbarOpen(false);
-  renderProjects();
+  refreshProjects();
   if (elements.recentMenu) {
     fetchRecentExports().then(renderExportHistory);
   }

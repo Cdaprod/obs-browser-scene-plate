@@ -23,7 +23,12 @@ const {
   gcStages,
   atomicWriteJson,
   projectTimelinePath,
+  projectStatePath,
   readJsonSafe,
+  readProjectState,
+  readProjectIndex,
+  resolveProjectByName,
+  saveProjectState,
   listProjectExports,
   buildRangeResponse,
   resolveExportFilePath,
@@ -361,5 +366,55 @@ test('deliverExportArtifacts copies artifacts into renders directory', async () 
   } finally {
     fs.rmSync(tempWorkspace, { recursive: true, force: true });
     fs.rmSync(tempRenders, { recursive: true, force: true });
+  }
+});
+
+
+test('resolveProjectByName returns stable ids for case-insensitive names', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'projects-resolve-'));
+  try {
+    const first = resolveProjectByName('Typewriter-1', { baseDir: tempDir });
+    const second = resolveProjectByName('  typewriter-1  ', { baseDir: tempDir });
+    assert.equal(first.project_id, second.project_id);
+    const index = readProjectIndex({ baseDir: tempDir });
+    assert.equal(index.length, 1);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('saveProjectState persists nodesStructured and can be re-read', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'projects-state-'));
+  try {
+    const projectId = 'typewriter-1';
+    const saved = saveProjectState({
+      projectId,
+      name: 'Typewriter-1',
+      payload: {
+        timeline: {
+          version: 1,
+          activeIndex: 0,
+          nodes: [{ id: 'n1', text: 'http://example.com/a.html', durationOverride: '' }],
+          nodesStructured: [{
+            id: 'n1',
+            text: 'http://example.com/a.html',
+            durationOverride: '',
+            base: { url: 'http://example.com/a.html', kind: 'page' },
+            overlays: [],
+            ambient: []
+          }]
+        }
+      },
+      baseDir: tempDir
+    });
+
+    assert.equal(saved.project_id, projectId);
+    const file = projectStatePath(projectId, { baseDir: tempDir });
+    const loaded = readProjectState(projectId, { baseDir: tempDir });
+    assert.ok(fs.existsSync(file));
+    assert.equal(loaded.payload.timeline.nodesStructured.length, 1);
+    assert.equal(loaded.payload.timeline.nodesStructured[0].base.kind, 'page');
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });

@@ -21,6 +21,12 @@ const os = require('os');
 const path = require('path');
 const url = require('url');
 
+const {
+  normalizeProjectName,
+  safeReadJson,
+  safeWriteJsonAtomic
+} = require('./render-utils');
+
 const PORT = Number(process.env.PORT || 8791);
 const RENDERS_DIR = process.env.RENDERS_DIR || '/renders';
 const DELIVER_EXPORTS = process.env.DELIVER_EXPORTS !== '0';
@@ -628,29 +634,146 @@ function readStageEntry({ stageId, dir = STAGE_DIR } = {}) {
 function ensureProjectDir(projectId, { baseDir = PROJECTS_DIR } = {}) {
   const safeId = safeName(projectId || '');
   const dir = path.join(baseDir, safeId);
-  fs.mkdirSync(dir, { recursive: true });
+  ensureDir(dir);
   return dir;
 }
 
 function readJsonSafe(filePath, fallback) {
-  try {
-    if (!fs.existsSync(filePath)) {
-      return fallback;
-    }
-    const raw = fs.readFileSync(filePath, 'utf8');
-    return JSON.parse(raw);
-  } catch (error) {
-    console.warn('readJsonSafe failed', error);
-    return fallback;
-  }
+  return safeReadJson(filePath, fallback);
 }
 
 function atomicWriteJson(filePath, data) {
-  const dir = path.dirname(filePath);
-  fs.mkdirSync(dir, { recursive: true });
-  const tempPath = `${filePath}.tmp`;
-  fs.writeFileSync(tempPath, JSON.stringify(data, null, 2));
-  fs.renameSync(tempPath, filePath);
+  safeWriteJsonAtomic(filePath, data);
+}
+
+function projectIndexPath({ baseDir = PROJECTS_DIR } = {}) {
+  return path.join(baseDir, '_index.json');
+}
+
+function projectStatePath(projectId, { baseDir = PROJECTS_DIR } = {}) {
+  const dir = ensureProjectDir(projectId, { baseDir });
+  return path.join(dir, 'project.json');
+}
+
+function readProjectIndex({ baseDir = PROJECTS_DIR } = {}) {
+  const index = readJsonSafe(projectIndexPath({ baseDir }), { version: 1, projects: [] });
+  const entries = Array.isArray(index?.projects) ? index.projects : [];
+  return entries
+    .filter((entry) => entry && entry.project_id && entry.name)
+    .sort((a, b) => Date.parse(b.updated_at || 0) - Date.parse(a.updated_at || 0));
+}
+
+function writeProjectIndex(entries, { baseDir = PROJECTS_DIR } = {}) {
+  atomicWriteJson(projectIndexPath({ baseDir }), {
+    version: 1,
+    projects: entries
+  });
+}
+
+function upsertProjectIndexEntry(entry, { baseDir = PROJECTS_DIR } = {}) {
+  const entries = readProjectIndex({ baseDir }).filter((item) => item.project_id !== entry.project_id);
+  entries.push(entry);
+  entries.sort((a, b) => Date.parse(b.updated_at || 0) - Date.parse(a.updated_at || 0));
+  writeProjectIndex(entries, { baseDir });
+  return entries;
+}
+
+function normalizeProjectTimeline(timeline) {
+  const source = timeline && typeof timeline === 'object' ? timeline : {};
+  const nodes = Array.isArray(source.nodes) ? source.nodes : [];
+  return {
+    version: Number.isFinite(source.version) ? source.version : 1,
+    activeIndex: Number.isFinite(source.activeIndex) ? source.activeIndex : 0,
+    nodes,
+    nodesStructured: Array.isArray(source.nodesStructured) ? source.nodesStructured : []
+  };
+}
+
+function normalizeProjectPayload(payload) {
+  if (payload && payload.timeline && typeof payload.timeline === 'object') {
+    return { timeline: normalizeProjectTimeline(payload.timeline) };
+  }
+  if (payload && Array.isArray(payload.nodes)) {
+    return { timeline: normalizeProjectTimeline(payload) };
+  }
+  return { timeline: normalizeProjectTimeline({ version: 1, nodes: [], activeIndex: 0 }) };
+}
+
+function readProjectState(projectId, { baseDir = PROJECTS_DIR } = {}) {
+  return readJsonSafe(projectStatePath(projectId, { baseDir }), null);
+}
+
+function buildProjectIdFromName(name) {
+  const normalized = normalizeProjectName(name).toLowerCase();
+  const slug = normalized
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64);
+  return slug || crypto.randomUUID();
+}
+
+function saveProjectState({ projectId, name, payload, nowIso = new Date().toISOString(), baseDir = PROJECTS_DIR } = {}) {
+  const normalizedName = normalizeProjectName(name);
+  const existing = readProjectState(projectId, { baseDir });
+  const next = {
+    id: projectId,
+    project_id: projectId,
+    name: normalizedName,
+    created_at: existing?.created_at || nowIso,
+    updated_at: nowIso,
+    payload: normalizeProjectPayload(payload)
+  };
+  atomicWriteJson(projectStatePath(projectId, { baseDir }), next);
+  upsertProjectIndexEntry({
+    project_id: projectId,
+    name: normalizedName,
+    created_at: next.created_at,
+    updated_at: next.updated_at
+  }, { baseDir });
+  atomicWriteJson(projectTimelinePath(projectId, { baseDir }), next.payload.timeline);
+  return next;
+}
+
+function resolveProjectByName(name, { baseDir = PROJECTS_DIR } = {}) {
+  const normalizedName = normalizeProjectName(name);
+  if (!normalizedName) {
+    throw new Error('missing_project_name');
+  }
+  const lowered = normalizedName.toLowerCase();
+  const existing = readProjectIndex({ baseDir }).find((entry) => String(entry.name || '').trim().toLowerCase() === lowered);
+  if (existing) {
+    const project = readProjectState(existing.project_id, { baseDir });
+    if (project) {
+      return project;
+    }
+    return saveProjectState({
+      projectId: existing.project_id,
+      name: existing.name,
+      payload: { timeline: { version: 1, activeIndex: 0, nodes: [], nodesStructured: [] } },
+      baseDir
+    });
+  }
+
+  let projectId = buildProjectIdFromName(normalizedName);
+  while (readProjectState(projectId, { baseDir })) {
+    projectId = `${buildProjectIdFromName(normalizedName)}-${Math.random().toString(16).slice(2, 8)}`;
+  }
+
+  return saveProjectState({
+    projectId,
+    name: normalizedName,
+    payload: { timeline: { version: 1, activeIndex: 0, nodes: [], nodesStructured: [] } },
+    baseDir
+  });
+}
+
+function deleteProjectState(projectId, { baseDir = PROJECTS_DIR } = {}) {
+  const projectDir = path.join(baseDir, safeName(projectId || ''));
+  if (fs.existsSync(projectDir)) {
+    fs.rmSync(projectDir, { recursive: true, force: true });
+  }
+  const entries = readProjectIndex({ baseDir }).filter((entry) => entry.project_id !== projectId);
+  writeProjectIndex(entries, { baseDir });
 }
 
 function projectTimelinePath(projectId, { baseDir = PROJECTS_DIR } = {}) {
@@ -727,11 +850,16 @@ function listProjectExports(projectId, { baseDir = PROJECTS_DIR } = {}) {
 }
 
 function getProjectTimeline(projectId) {
-  return readJsonSafe(projectTimelinePath(projectId), {
+  const project = readProjectState(projectId);
+  if (project?.payload?.timeline) {
+    return normalizeProjectTimeline(project.payload.timeline);
+  }
+  return normalizeProjectTimeline(readJsonSafe(projectTimelinePath(projectId), {
     version: 1,
     nodes: [],
-    activeIndex: 0
-  });
+    activeIndex: 0,
+    nodesStructured: []
+  }));
 }
 
 function buildProgramMonitorHtml({ baseUrl, layers }) {
@@ -1477,6 +1605,101 @@ function startServer() {
       return;
     }
 
+    if (req.method === 'GET' && parsed.pathname === '/api/projects') {
+      /**
+       * List Program Monitor projects from disk-backed project index.
+       *
+       * Example:
+       *   curl http://localhost:8791/api/projects
+       */
+      const projects = readProjectIndex();
+      return json(res, 200, { ok: true, projects });
+    }
+
+    if (req.method === 'POST' && parsed.pathname === '/api/projects:resolve') {
+      /**
+       * Resolve a project id from a human name, creating if absent.
+       *
+       * Example:
+       *   curl -X POST http://localhost:8791/api/projects:resolve \
+       *     -H "Content-Type: application/json" \
+       *     -d '{"name":"Typewriter-1"}'
+       */
+      let body;
+      try {
+        body = await parseBody(req);
+      } catch (err) {
+        const status = err.message === 'payload_too_large' ? 413 : 400;
+        return json(res, status, { ok: false, error: 'bad_json' });
+      }
+      try {
+        const project = resolveProjectByName(body?.name || '');
+        return json(res, 200, {
+          ok: true,
+          project_id: project.project_id,
+          name: project.name,
+          created_at: project.created_at,
+          updated_at: project.updated_at,
+          project
+        });
+      } catch (error) {
+        return json(res, 400, { ok: false, error: error.message || 'project_resolve_failed' });
+      }
+    }
+
+    const projectStateMatch = parsed.pathname.match(/^\/api\/projects\/([^/]+)$/);
+    if (projectStateMatch) {
+      const projectId = decodeURIComponent(projectStateMatch[1] || '');
+      if (req.method === 'GET') {
+        /**
+         * Fetch canonical project editor state for a project id.
+         *
+         * Example:
+         *   curl http://localhost:8791/api/projects/typewriter-1
+         */
+        const project = readProjectState(projectId);
+        if (!project) {
+          return json(res, 404, { ok: false, error: 'project_not_found' });
+        }
+        return json(res, 200, { ok: true, project });
+      }
+      if (req.method === 'PUT') {
+        /**
+         * Upsert canonical project editor state for a project id.
+         *
+         * Example:
+         *   curl -X PUT http://localhost:8791/api/projects/typewriter-1 \
+         *     -H "Content-Type: application/json" \
+         *     -d '{"name":"Typewriter-1","payload":{"timeline":{"version":1,"nodes":[{"text":"http://nginx/plate-default.html"}]}}}'
+         */
+        let body;
+        try {
+          body = await parseBody(req);
+        } catch (err) {
+          const status = err.message === 'payload_too_large' ? 413 : 400;
+          return json(res, status, { ok: false, error: 'bad_json' });
+        }
+        const existing = readProjectState(projectId);
+        const name = normalizeProjectName(body?.name || existing?.name || projectId);
+        const payload = body?.payload || (body?.timeline ? { timeline: body.timeline } : body);
+        const timeline = normalizeProjectPayload(payload).timeline;
+        if (!Array.isArray(timeline.nodes)) {
+          return json(res, 400, { ok: false, error: 'missing_timeline_nodes' });
+        }
+        const project = saveProjectState({
+          projectId,
+          name,
+          payload: { timeline }
+        });
+        return json(res, 200, { ok: true, project_id: projectId, project });
+      }
+      if (req.method === 'DELETE') {
+        deleteProjectState(projectId);
+        return json(res, 200, { ok: true, project_id: projectId });
+      }
+      return json(res, 405, { ok: false, error: 'method_not_allowed' });
+    }
+
     const projectTimelineMatch = parsed.pathname.match(/^\/api\/projects\/([^/]+)\/timeline$/);
     if (projectTimelineMatch) {
       const projectId = decodeURIComponent(projectTimelineMatch[1] || '');
@@ -1509,20 +1732,27 @@ function startServer() {
         if (!body || !Array.isArray(body.nodes)) {
           return json(res, 400, { ok: false, error: 'missing_timeline_nodes' });
         }
-        const timeline = {
+        const timeline = normalizeProjectTimeline({
           version: Number.isFinite(body.version) ? body.version : 1,
           nodes: body.nodes,
-          activeIndex: Number.isFinite(body.activeIndex) ? body.activeIndex : 0
-        };
+          activeIndex: Number.isFinite(body.activeIndex) ? body.activeIndex : 0,
+          nodesStructured: body.nodesStructured
+        });
         try {
           atomicWriteJson(projectTimelinePath(projectId), timeline);
+          const existing = readProjectState(projectId);
+          saveProjectState({
+            projectId,
+            name: existing?.name || projectId,
+            payload: { timeline }
+          });
           const bytes = Buffer.byteLength(JSON.stringify(timeline));
           console.log(`DRAFT_SAVE project=${projectId} path=${projectTimelinePath(projectId)} bytes=${bytes}`);
         } catch (error) {
           console.error(`DRAFT_SAVE_FAILED project=${projectId}`, error);
           return json(res, 500, { ok: false, error: 'timeline_write_failed' });
         }
-        return json(res, 200, { ok: true, project_id: projectId });
+        return json(res, 200, { ok: true, project_id: projectId, timeline });
       }
       return json(res, 405, { ok: false, error: 'method_not_allowed' });
     }
@@ -2230,6 +2460,12 @@ module.exports = {
   readJsonSafe,
   atomicWriteJson,
   projectTimelinePath,
+  projectStatePath,
+  readProjectIndex,
+  readProjectState,
+  resolveProjectByName,
+  saveProjectState,
+  normalizeProjectTimeline,
   listProjectExports,
   getProjectTimeline,
   buildRangeResponse,
