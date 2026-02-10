@@ -39,7 +39,7 @@ test("exports buttons are single-source-of-truth", () => {
 
 test("exports validate durations for HTML nodes", () => {
   assert.ok(source.includes("validateExportDurations"));
-  assert.ok(source.includes("applyDurationParamToNodeText"));
+  assert.ok(source.includes("durationSeconds: getNodeDuration(index)"));
 });
 
 test("render clock helper is available", () => {
@@ -76,7 +76,15 @@ test("html/image elapsed time uses live clock while playing", () => {
 
 test("api calls use same-origin /api paths", () => {
   assert.ok(source.includes('function apiUrl(path)'));
-  assert.ok(source.includes("apiUrl('/api/projects')"));
+  assert.ok(source.includes("fetchApiJson('/api/projects'"));
   assert.ok(source.includes("apiUrl('/api/exports')"));
   assert.ok(!source.includes('http://${host}:${renderApiPort}/api/projects'));
+});
+
+
+test("topic dial style spin params contribute duration hints", () => {
+  const utilsPath = path.resolve("program-monitor", "timeline-utils.js");
+  const utilsSource = fs.readFileSync(utilsPath, "utf8");
+  assert.ok(utilsSource.includes("\"spin\""));
+  assert.ok(utilsSource.includes("\"intro\""));
 });

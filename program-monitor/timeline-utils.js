@@ -88,7 +88,7 @@
 
     const secondsKeys = new Set(["duration", "dur", "length", "len", "time", "t", "seconds", "sec", "s"]);
     const msKeys = new Set(["ms", "msec", "millis", "milliseconds"]);
-    const componentMsKeys = new Set(["in", "out", "hold", "gap", "pause", "delay", "start", "intro", "outro"]);
+    const componentMsKeys = new Set(["in", "out", "hold", "gap", "pause", "delay", "start", "intro", "outro", "spin", "loop", "dwell"]);
 
     for (const key of secondsKeys) {
       const value = params.get(key);
