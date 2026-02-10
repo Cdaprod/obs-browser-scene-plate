@@ -36,3 +36,8 @@ test("exports buttons are single-source-of-truth", () => {
   assert.equal((html.match(/btnExportNode/g) || []).length, 1);
   assert.ok(source.includes("bindUIOnce"));
 });
+
+test("exports validate durations for HTML nodes", () => {
+  assert.ok(source.includes("validateExportDurations"));
+  assert.ok(source.includes("applyDurationParamToNodeText"));
+});
