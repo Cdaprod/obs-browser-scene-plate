@@ -146,6 +146,13 @@ async function render() {
 
     for (let i = 0; i < FRAMES; i++) {
       const n = String(i).padStart(5, '0');
+      const frameTimeMs = Math.round((i * 1000) / FPS);
+      await page.evaluate((t) => {
+        if (typeof window.__SET_RENDER_TIME === 'function') {
+          window.__SET_RENDER_TIME(t);
+        }
+      }, frameTimeMs);
+      await page.evaluate(() => Promise.resolve());
       await page.screenshot({
         path: `${FRAME_DIR}/frame_${n}.png`,
         omitBackground: true

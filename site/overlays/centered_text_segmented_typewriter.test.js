@@ -22,4 +22,12 @@ test("centered_text_segmented_typewriter documents audio defaults", async () => 
     html.includes("unlock=auto|gesture  audio unlock strategy"),
     "Audio param docs should describe unlock modes."
   );
+  assert.ok(
+    html.includes("dur=18.35") && html.includes("dur_ms=18350"),
+    "Docs should describe deterministic render duration params."
+  );
+  assert.ok(
+    html.includes("window.__SET_RENDER_TIME"),
+    "Docs should describe the render clock API."
+  );
 });
