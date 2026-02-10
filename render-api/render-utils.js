@@ -2,6 +2,9 @@
  * Render utility helpers for duration inference and argument parsing.
  */
 
+const fs = require('node:fs');
+const path = require('node:path');
+
 const DEFAULT_SECONDS = 4;
 const DEFAULT_PAD_SECONDS = 0.25;
 
@@ -89,11 +92,44 @@ function resolveRenderSeconds({
   return Math.max(0.01, paddedSeconds);
 }
 
+function ensureDir(dirPath) {
+  fs.mkdirSync(dirPath, { recursive: true });
+  return dirPath;
+}
+
+function safeReadJson(filePath, fallback = null) {
+  try {
+    if (!fs.existsSync(filePath)) {
+      return fallback;
+    }
+    const raw = fs.readFileSync(filePath, 'utf8');
+    return JSON.parse(raw);
+  } catch (error) {
+    return fallback;
+  }
+}
+
+function safeWriteJsonAtomic(filePath, data) {
+  const dir = path.dirname(filePath);
+  ensureDir(dir);
+  const tmp = `${filePath}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(data, null, 2));
+  fs.renameSync(tmp, filePath);
+}
+
+function normalizeProjectName(name) {
+  return String(name || '').trim().replace(/\s+/g, ' ');
+}
+
 module.exports = {
   DEFAULT_PAD_SECONDS,
   DEFAULT_SECONDS,
+  ensureDir,
   inferDurationFromQuery,
+  normalizeProjectName,
   parseArgs,
   parseOptionalNumber,
-  resolveRenderSeconds
+  resolveRenderSeconds,
+  safeReadJson,
+  safeWriteJsonAtomic
 };

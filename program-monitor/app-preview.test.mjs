@@ -49,10 +49,17 @@ test("render clock helper is available", () => {
   assert.ok(clockSource.includes("__SET_RENDER_TIME"));
 });
 
-test("project loading falls back to local snapshot and hydrates names", () => {
-  assert.ok(source.includes("normalizeProjectTimelinePayload"));
-  assert.ok(source.includes("resolveProjectTimeline"));
-  assert.ok(source.includes("Saved locally. Remote draft save failed"));
+test("project persistence uses canonical api save/load flows", () => {
+  assert.ok(source.includes("/api/projects:resolve"));
+  assert.ok(source.includes("saveProjectState"));
+  assert.ok(source.includes("fetchProjectState"));
+  assert.ok(source.includes("applyTimelineToEditor"));
+});
+
+test("project drafts persist locally per selected project", () => {
+  assert.ok(source.includes("programMonitor:draft:"));
+  assert.ok(source.includes("saveProjectDraft"));
+  assert.ok(source.includes("loadProjectDraft"));
 });
 
 test("stop and scrub preserve frame position", () => {
