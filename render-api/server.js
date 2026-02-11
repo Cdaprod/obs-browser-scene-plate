@@ -1115,6 +1115,20 @@ function updateJob(jobId, updates) {
   return next;
 }
 
+
+function parseRenderTimingLine(line = '') {
+  const match = String(line).match(/RENDER_TIMING:mode=([^\s]+)\s+degraded=(true|false)\s+animations=(\d+)\s+hooks=(\d+)/);
+  if (!match) {
+    return null;
+  }
+  return {
+    timing_mode: match[1],
+    timing_degraded: match[2] === 'true',
+    timing_animations: Number(match[3]),
+    timing_hooks: Number(match[4])
+  };
+}
+
 function pruneJobs({
   now = Date.now(),
   retentionMs = JOB_RETENTION_MS,
@@ -1273,6 +1287,15 @@ function spawnRenderJob({ jobId, url: targetUrl, outPath, fps, width, height, se
       if (line.includes('RENDER_STATE:encoding')) {
         updateJob(jobId, { state: 'encoding' });
       }
+      const timing = parseRenderTimingLine(line);
+      if (timing) {
+        updateJob(jobId, {
+          timingMode: timing.timing_mode,
+          timingDegraded: timing.timing_degraded,
+          timingAnimations: timing.timing_animations,
+          timingHooks: timing.timing_hooks
+        });
+      }
     }
   });
 
@@ -1338,6 +1361,10 @@ async function runTimelineJob({
       }
     };
     let debugFrameUsed = false;
+    let timelineTimingMode = null;
+    let timelineTimingDegraded = false;
+    let timelineTimingAnimations = 0;
+    let timelineTimingHooks = 0;
 
     updateJob(jobId, { state: 'rendering', progress: 0 });
 
@@ -1431,6 +1458,22 @@ async function runTimelineJob({
             const text = chunk.toString('utf8');
             process.stdout.write(text);
             writeLog(text);
+            for (const line of text.split('\n')) {
+              const timing = parseRenderTimingLine(line);
+              if (!timing) {
+                continue;
+              }
+              timelineTimingMode = timing.timing_mode;
+              timelineTimingDegraded = timelineTimingDegraded || timing.timing_degraded;
+              timelineTimingAnimations = Math.max(timelineTimingAnimations, timing.timing_animations);
+              timelineTimingHooks = Math.max(timelineTimingHooks, timing.timing_hooks);
+              updateJob(jobId, {
+                timingMode: timelineTimingMode,
+                timingDegraded: timelineTimingDegraded,
+                timingAnimations: timelineTimingAnimations,
+                timingHooks: timelineTimingHooks
+              });
+            }
           });
 
           child.stderr.on('data', (chunk) => {
@@ -1556,14 +1599,14 @@ function generatePreviewMp4({ inputPath, outputPath }) {
       '-y',
       '-i',
       inputPath,
+      '-filter_complex',
+      '[0:v]format=rgba[fg];color=c=black:s=16x16[bg];[bg][fg]scale2ref[bgm][fgm];[bgm][fgm]overlay=format=auto,format=yuv420p[vout]',
       '-map',
-      '0:v:0',
+      '[vout]',
       '-map',
       '0:a?',
       '-c:v',
       'libx264',
-      '-pix_fmt',
-      'yuv420p',
       '-movflags',
       '+faststart',
       '-c:a',
@@ -1897,7 +1940,11 @@ function startServer() {
             manifest_url: entry.manifest_url
               || `/exports/${encodeURIComponent(safeName(projectId))}/${encodeURIComponent(entry.job_id)}/manifest.json`,
             log_url: entry.log_url
-              || `/exports/${encodeURIComponent(safeName(projectId))}/${encodeURIComponent(entry.job_id)}/render.log`
+              || `/exports/${encodeURIComponent(safeName(projectId))}/${encodeURIComponent(entry.job_id)}/render.log`,
+            timing_mode: entry.timing_mode || job?.timingMode || null,
+            timing_degraded: entry.timing_degraded ?? job?.timingDegraded ?? null,
+            timing_animations: entry.timing_animations ?? job?.timingAnimations ?? null,
+            timing_hooks: entry.timing_hooks ?? job?.timingHooks ?? null
           };
         });
         return json(res, 200, { ok: true, project_id: projectId, exports: exportsList });
@@ -2138,7 +2185,11 @@ function startServer() {
               preview_url: previewUrl || null,
               status: 'ready',
               manifest_url: `${downloadBase}/manifest.json`,
-              log_url: `${downloadBase}/render.log`
+              log_url: `${downloadBase}/render.log`,
+              timing_mode: job.timingMode || timelineTimingMode || null,
+              timing_degraded: job.timingDegraded ?? timelineTimingDegraded,
+              timing_animations: job.timingAnimations ?? timelineTimingAnimations,
+              timing_hooks: job.timingHooks ?? timelineTimingHooks
             };
             atomicWriteJson(exportManifestPath(jobDir), manifest);
             const deliveryResult = await deliverExportArtifacts({
@@ -2191,7 +2242,11 @@ function startServer() {
             delivered_files: null,
             delivered_host_hint: RENDERS_HOST_PATH_HINT || null,
             manifest_url: `${downloadBase}/manifest.json`,
-            log_url: `${downloadBase}/render.log`
+            log_url: `${downloadBase}/render.log`,
+            timing_mode: job.timingMode || timelineTimingMode || null,
+            timing_degraded: job.timingDegraded ?? timelineTimingDegraded,
+            timing_animations: job.timingAnimations ?? timelineTimingAnimations,
+            timing_hooks: job.timingHooks ?? timelineTimingHooks
           };
           atomicWriteJson(exportManifestPath(jobDir), manifest);
           appendExportLog(jobDir, `export_error ${manifest.error}`);
@@ -2239,7 +2294,11 @@ function startServer() {
           : null,
         log_url: job.projectId
           ? `/exports/${encodeURIComponent(safeName(job.projectId))}/${encodeURIComponent(job.id)}/render.log`
-          : null
+          : null,
+        timing_mode: manifest?.timing_mode || job.timingMode || null,
+        timing_degraded: manifest?.timing_degraded ?? job.timingDegraded ?? null,
+        timing_animations: manifest?.timing_animations ?? job.timingAnimations ?? null,
+        timing_hooks: manifest?.timing_hooks ?? job.timingHooks ?? null
       });
     }
 
@@ -2256,7 +2315,11 @@ function startServer() {
         progress: job.progress,
         filename: job.filename,
         download_url: job.downloadUrl || null,
-        error: job.error || null
+        error: job.error || null,
+        timing_mode: job.timingMode || null,
+        timing_degraded: job.timingDegraded ?? null,
+        timing_animations: job.timingAnimations ?? null,
+        timing_hooks: job.timingHooks ?? null
       });
     }
 
@@ -2600,5 +2663,6 @@ module.exports = {
   resolveDeliveryDir,
   buildDebugFramePath,
   buildProgramMonitorHtml,
+  parseRenderTimingLine,
   startServer
 };

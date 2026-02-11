@@ -38,7 +38,8 @@ const {
   deliverExportArtifacts,
   resolveDeliveryDir,
   buildDebugFramePath,
-  buildProgramMonitorHtml
+  buildProgramMonitorHtml,
+  parseRenderTimingLine
 } = require('./server');
 
 test('safeName sanitizes unsafe characters and trims length', () => {
@@ -504,3 +505,22 @@ test('gcProgramMonitorCache prunes stale tmp and caps cached renders', () => {
   }
 });
 
+
+
+test('parseRenderTimingLine parses deterministic timing diagnostics', () => {
+  const parsed = parseRenderTimingLine('RENDER_TIMING:mode=waapi_seek_fallback degraded=true animations=7 hooks=2');
+  assert.deepEqual(parsed, {
+    timing_mode: 'waapi_seek_fallback',
+    timing_degraded: true,
+    timing_animations: 7,
+    timing_hooks: 2
+  });
+  assert.equal(parseRenderTimingLine('noise line'), null);
+});
+
+test('preview encoder uses explicit black compositing before yuv420p conversion', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, 'server.js'), 'utf8');
+  assert.ok(source.includes("'[0:v]format=rgba[fg];color=c=black:s=16x16[bg];[bg][fg]scale2ref[bgm][fgm];[bgm][fgm]overlay=format=auto,format=yuv420p[vout]'"));
+  assert.ok(source.includes("'-map'"));
+  assert.ok(source.includes("'[vout]'"));
+});
