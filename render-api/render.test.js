@@ -47,10 +47,18 @@ test('buildVirtualTimePolicyPayload rounds budget for advancing policy', () => {
   assert.equal(payload.budget, 17);
 });
 
-test('render loop applies frame clock to page and iframe targets', () => {
+test('render loop applies deterministic frame seek to page and iframe targets', () => {
   const source = fs.readFileSync(path.resolve(__dirname, 'render.js'), 'utf8');
   assert.ok(source.includes('const targets = [window];'));
   assert.ok(source.includes('baseFrame.contentWindow'));
-  assert.ok(source.includes('requestAnimationFrame'));
+  assert.ok(source.includes('document?.getAnimations?.()'));
+  assert.ok(source.includes('animation.currentTime = frameTimeMs'));
+  assert.ok(source.includes("typeof target.__setTimeMs === 'function'"));
+  assert.equal(source.includes('waitForTimeout(frameIntervalMs)'), false);
 });
 
+
+test('master encoding preserves alpha with prores 4444', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, 'render.js'), 'utf8');
+  assert.ok(source.includes('-c:v prores_ks -profile:v 4 -pix_fmt yuva444p10le'));
+});

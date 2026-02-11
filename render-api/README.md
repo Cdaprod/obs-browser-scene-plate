@@ -125,8 +125,15 @@ When ready, the response includes a `/renders/<file>.mov` path that Nginx can se
 Project exports include job-scoped paths like `/exports/<project>/<job>/render.mov` plus a
 `render_preview.mp4` for web playback.
 
+Encoding behavior:
+- `render.mov` is encoded as ProRes 4444 (`prores_ks`, `yuva444p10le`) so alpha is preserved for compositing workflows.
+- `render_preview.mp4` is encoded as H.264 (`yuv420p`) with explicit black-background compositing.
+
 Project drafts and exports are stored under the workspace directory (defaults to `/renders/workspace`).
-Render capture now uses a deterministic virtual-time clock (frame-stepped in headless Chromium) so HTML animation timing matches preview playback across the full requested duration.
+Render capture uses a deterministic frame-stepped render clock. It first attempts CDP virtual time, and when unavailable it falls back to deterministic per-frame seek (`document.getAnimations()` + render clock hooks).
+
+Set `RENDER_REQUIRE_DETERMINISTIC_TIME=1` to fail jobs when deterministic timing cannot be established.
+Manifest and job status payloads include timing diagnostics (`timing_mode`, `timing_degraded`, `timing_animations`, `timing_hooks`).
 
 Program Monitor exports default `padSeconds` to `0` so UI-measured node durations are rendered as-is unless an explicit pad is provided.
 

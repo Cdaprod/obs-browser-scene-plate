@@ -1,5 +1,5 @@
 /**
- * Render a URL to an H.264 MOV using Playwright screenshots + ffmpeg.
+ * Render a URL to a ProRes 4444 MOV using Playwright screenshots + ffmpeg.
  *
  * Usage:
  *   node /app/render.js --url=http://nginx/plate-default.html --out=/renders/output.mov \
@@ -28,6 +28,7 @@ const {
 const DEFAULT_WARMUP_MS = 250;
 const VIRTUAL_TIME_EVENT = 'Emulation.virtualTimeBudgetExpired';
 const VIRTUAL_TIME_ADVANCE_POLICY = 'pauseIfNetworkFetchesPending';
+const REQUIRE_DETERMINISTIC_TIME = process.env.RENDER_REQUIRE_DETERMINISTIC_TIME === '1';
 
 function exitWithError(message, code = 1) {
   console.error(message);
@@ -100,6 +101,96 @@ async function readDurationFromPage(page) {
     }
 
     return null;
+  });
+}
+
+async function inspectDeterministicCapabilities(page) {
+  return page.evaluate(() => {
+    const baseFrame = document.getElementById('base');
+    const targets = [window];
+    try {
+      if (baseFrame && baseFrame.contentWindow && baseFrame.contentWindow !== window) {
+        targets.push(baseFrame.contentWindow);
+      }
+    } catch (_) {
+      // cross-origin iframe; ignore
+    }
+
+    let animations = 0;
+    let hooks = 0;
+    for (const target of targets) {
+      try {
+        const docAnimations = target.document?.getAnimations?.() || [];
+        animations += docAnimations.length;
+      } catch (_) {
+        // ignore target read failures
+      }
+      if (typeof target.__SET_RENDER_TIME === 'function'
+        || typeof target.__RENDER_SET_FRAME === 'function'
+        || typeof target.__setTimeMs === 'function') {
+        hooks += 1;
+      }
+    }
+
+    return { animations, hooks };
+  });
+}
+
+async function applyDeterministicFrame(page, { tMs, frameIndex, frames, fps, durationMs }) {
+  return page.evaluate(async ({ tMs: frameTimeMs, frame, totalFrames, renderFps, durMs }) => {
+    const baseFrame = document.getElementById('base');
+    const targets = [window];
+    try {
+      if (baseFrame && baseFrame.contentWindow && baseFrame.contentWindow !== window) {
+        targets.push(baseFrame.contentWindow);
+      }
+    } catch (_) {
+      // cross-origin iframe; ignore
+    }
+
+    let animations = 0;
+    let hooks = 0;
+    for (const target of targets) {
+      try {
+        target.__RENDER_DUR_MS = durMs;
+        const docAnimations = target.document?.getAnimations?.() || [];
+        animations += docAnimations.length;
+        for (const animation of docAnimations) {
+          try {
+            animation.pause();
+            animation.currentTime = frameTimeMs;
+          } catch (_) {
+            // ignore non-seekable animations
+          }
+        }
+        if (typeof target.__RENDER_SET_FRAME === 'function') {
+          target.__RENDER_SET_FRAME(frame, totalFrames, renderFps);
+          hooks += 1;
+        }
+        if (typeof target.__SET_RENDER_TIME === 'function') {
+          target.__SET_RENDER_TIME(frameTimeMs);
+          hooks += 1;
+        }
+        if (typeof target.__setTimeMs === 'function') {
+          target.__setTimeMs(frameTimeMs);
+          hooks += 1;
+        }
+        target.__RENDER_T_MS = frameTimeMs;
+      } catch (_) {
+        // ignore target read failures
+      }
+    }
+
+    // Layout + paint flush.
+    document.body?.offsetHeight;
+    await new Promise((resolve) => requestAnimationFrame(() => resolve()));
+    return { animations, hooks };
+  }, {
+    tMs,
+    frame: frameIndex,
+    totalFrames: frames,
+    renderFps: fps,
+    durMs: durationMs
   });
 }
 
@@ -193,6 +284,7 @@ async function render() {
 
     console.log('RENDER_STATE:rendering');
     const frameIntervalMs = 1000 / FPS;
+    const durationMs = Math.round((FRAMES * 1000) / FPS);
     const debugFramesDir = debugFramesEnabled ? path.join(path.dirname(OUT), 'debug_frames') : null;
     if (debugFramesDir) {
       fs.mkdirSync(debugFramesDir, { recursive: true });
@@ -218,38 +310,47 @@ async function render() {
       }
     }, { fps: FPS, frames: FRAMES });
 
+    const deterministicCapabilities = await inspectDeterministicCapabilities(page);
+    let timingMode = 'virtual_time';
+    if (!virtualClockEnabled && deterministicCapabilities.animations > 0) {
+      timingMode = 'waapi_seek_fallback';
+    } else if (!virtualClockEnabled && deterministicCapabilities.hooks > 0) {
+      timingMode = 'hook_seek_fallback';
+    } else if (!virtualClockEnabled) {
+      timingMode = 'unlocked_fallback';
+    }
+
+    const timingDegraded = !virtualClockEnabled;
+    console.log(
+      `RENDER_TIMING:mode=${timingMode} degraded=${timingDegraded} animations=${deterministicCapabilities.animations} hooks=${deterministicCapabilities.hooks}`
+    );
+
+    if (
+      REQUIRE_DETERMINISTIC_TIME
+      && !virtualClockEnabled
+      && deterministicCapabilities.animations < 1
+      && deterministicCapabilities.hooks < 1
+    ) {
+      throw new Error('deterministic_timing_unavailable');
+    }
+
     for (let i = 0; i < FRAMES; i++) {
       if (virtualClockEnabled && cdp && i > 0) {
         await advanceVirtualTimeBy(cdp, frameIntervalMs);
       }
       const n = String(i).padStart(5, '0');
       const frameTimeMs = Math.round(i * frameIntervalMs);
-      await page.evaluate(({ tMs, frameIndex, frames, fps }) => {
-        const baseFrame = document.getElementById('base');
-        const targets = [window];
-        if (baseFrame && baseFrame.contentWindow && baseFrame.contentWindow !== window) {
-          targets.push(baseFrame.contentWindow);
-        }
-        targets.forEach((target) => {
-          if (typeof target.__RENDER_SET_FRAME === 'function') {
-            target.__RENDER_SET_FRAME(frameIndex, frames, fps);
-          }
-          if (typeof target.__SET_RENDER_TIME === 'function') {
-            target.__SET_RENDER_TIME(tMs);
-          }
-          target.__RENDER_T_MS = tMs;
-        });
-      }, { tMs: frameTimeMs, frameIndex: i, frames: FRAMES, fps: FPS });
-      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve())));
+      await applyDeterministicFrame(page, {
+        tMs: frameTimeMs,
+        frameIndex: i,
+        frames: FRAMES,
+        fps: FPS,
+        durationMs
+      });
       await page.screenshot({
         path: `${FRAME_DIR}/frame_${n}.png`,
         omitBackground: true
       });
-
-      if (!virtualClockEnabled) {
-        await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve())));
-        await page.waitForTimeout(frameIntervalMs);
-      }
 
       if (debugFramesDir && (i === 0 || i === FRAMES - 1)) {
         const debugName = i === 0 ? 'frame_00000.png' : 'frame_last.png';
@@ -264,7 +365,7 @@ async function render() {
     execSync(
       `ffmpeg -y -framerate ${FPS} ` +
       `-i ${FRAME_DIR}/frame_%05d.png ` +
-      `-c:v libx264 -pix_fmt yuv420p -profile:v high -level 4.1 ` +
+      `-c:v prores_ks -profile:v 4 -pix_fmt yuva444p10le ` +
       `-movflags +faststart ${OUT}`,
       { stdio: 'inherit' }
     );
