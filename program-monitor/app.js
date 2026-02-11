@@ -2178,7 +2178,9 @@ async function primeNode(index) {
 
 function stopAll() {
   const timelineOffset = getTimelineOffset(state.activeIndex);
-  const baseElapsed = getBaseElapsed();
+  const baseElapsed = state.playing && (activeBaseKind === "page" || activeBaseKind === "image")
+    ? Math.max(0, (performance.now() - baseStartTime) / 1000)
+    : getBaseElapsed();
   state.stopRequested = true;
   state.playing = false;
   state.basePausedAt = baseElapsed;
@@ -2328,7 +2330,11 @@ async function seekToTime(targetTime, { autoplay = false } = {}) {
 async function playActive({ resume = false, startOffsetSeconds = 0 } = {}) {
   state.stopRequested = false;
   state.playing = true;
-  if (!resume) {
+  if (resume) {
+    // Clear paused base clock immediately so stop/scrub reads live playback time
+    // even if primeNode() is still resolving.
+    state.basePausedAt = 0;
+  } else {
     state.pausedAt = 0;
     state.basePausedAt = 0;
   }

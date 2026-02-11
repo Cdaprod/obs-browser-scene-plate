@@ -88,3 +88,9 @@ test("topic dial style spin params contribute duration hints", () => {
   assert.ok(utilsSource.includes("\"spin\""));
   assert.ok(utilsSource.includes("\"intro\""));
 });
+
+test("resume path clears paused base clock before async priming", () => {
+  assert.ok(source.includes("if (resume)"));
+  assert.ok(source.includes("state.basePausedAt = 0;"));
+});
+
