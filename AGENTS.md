@@ -19,6 +19,7 @@
 - Overlay source files must include a single-line `Default URL (full params):` entry that matches the file name so the UI can preload query params.
 - Procedural overlays that need deterministic renders should implement the render clock contract (`window.__SET_RENDER_TIME(ms)` and `window.__RENDER_READY`) so render-api can drive frame-locked capture.
 - Render exports should use a deterministic frame-stepped virtual time clock so headless captures match Program Monitor preview timing for HTML overlays.
+- Program Monitor exports should keep inferred/measured duration authoritative (no implicit padding unless explicitly requested).
 
 ## UI/UX Expectations
 - Ensure the UI is responsive on mobile and desktop, with no overflow in header, actions, or preview areas.

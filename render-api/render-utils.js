@@ -8,6 +8,21 @@ const path = require('node:path');
 const DEFAULT_SECONDS = 4;
 const DEFAULT_PAD_SECONDS = 0.25;
 
+
+const VIRTUAL_TIME_TASK_STARVATION_LIMIT = 10000;
+
+function buildVirtualTimePolicyPayload({ policy, budget = null } = {}) {
+  const payload = {
+    policy,
+    waitForNavigation: false,
+    maxVirtualTimeTaskStarvationCount: VIRTUAL_TIME_TASK_STARVATION_LIMIT
+  };
+  if (policy !== 'pause' && Number.isFinite(budget)) {
+    payload.budget = Math.max(0, Math.ceil(budget));
+  }
+  return payload;
+}
+
 function parseArgs(argv) {
   const out = {};
   for (const a of argv) {
@@ -124,6 +139,7 @@ function normalizeProjectName(name) {
 module.exports = {
   DEFAULT_PAD_SECONDS,
   DEFAULT_SECONDS,
+  buildVirtualTimePolicyPayload,
   ensureDir,
   inferDurationFromQuery,
   normalizeProjectName,

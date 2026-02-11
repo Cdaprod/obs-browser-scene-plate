@@ -3,7 +3,8 @@ const assert = require('node:assert/strict');
 
 const {
   inferDurationFromQuery,
-  resolveRenderSeconds
+  resolveRenderSeconds,
+  buildVirtualTimePolicyPayload
 } = require('./render-utils');
 
 test('inferDurationFromQuery prefers seconds keys over millisecond sums', () => {
@@ -28,3 +29,19 @@ test('resolveRenderSeconds applies precedence and padding', () => {
   });
   assert.equal(seconds, 4.25);
 });
+
+test('buildVirtualTimePolicyPayload omits budget for pause policy', () => {
+  const payload = buildVirtualTimePolicyPayload({ policy: 'pause', budget: 16.6 });
+  assert.equal(payload.policy, 'pause');
+  assert.equal(Object.prototype.hasOwnProperty.call(payload, 'budget'), false);
+});
+
+test('buildVirtualTimePolicyPayload rounds budget for advancing policy', () => {
+  const payload = buildVirtualTimePolicyPayload({
+    policy: 'pauseIfNetworkFetchesPending',
+    budget: 16.2
+  });
+  assert.equal(payload.policy, 'pauseIfNetworkFetchesPending');
+  assert.equal(payload.budget, 17);
+});
+

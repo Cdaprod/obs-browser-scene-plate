@@ -21,29 +21,25 @@ const {
   inferDurationFromQuery,
   parseArgs,
   parseOptionalNumber,
-  resolveRenderSeconds
+  resolveRenderSeconds,
+  buildVirtualTimePolicyPayload
 } = require('./render-utils');
 
 const DEFAULT_WARMUP_MS = 250;
 const VIRTUAL_TIME_EVENT = 'Emulation.virtualTimeBudgetExpired';
-const VIRTUAL_TIME_TASK_STARVATION_LIMIT = 10000;
+const VIRTUAL_TIME_ADVANCE_POLICY = 'pauseIfNetworkFetchesPending';
 
 function exitWithError(message, code = 1) {
   console.error(message);
   process.exit(code);
 }
 
-async function setVirtualTimePolicy(cdp, policy, budget = 0) {
-  return cdp.send('Emulation.setVirtualTimePolicy', {
-    policy,
-    budget: Math.max(0, Math.ceil(budget)),
-    waitForNavigation: false,
-    maxVirtualTimeTaskStarvationCount: VIRTUAL_TIME_TASK_STARVATION_LIMIT
-  });
+async function setVirtualTimePolicy(cdp, { policy, budget = null } = {}) {
+  return cdp.send('Emulation.setVirtualTimePolicy', buildVirtualTimePolicyPayload({ policy, budget }));
 }
 
 async function setupVirtualTimeClock(cdp) {
-  await setVirtualTimePolicy(cdp, 'pause', 0);
+  await setVirtualTimePolicy(cdp, { policy: 'pause' });
 }
 
 async function advanceVirtualTimeBy(cdp, deltaMs) {
@@ -70,7 +66,7 @@ async function advanceVirtualTimeBy(cdp, deltaMs) {
     }
 
     cdp.on(VIRTUAL_TIME_EVENT, onBudgetExpired);
-    setVirtualTimePolicy(cdp, 'advance', budget).catch((error) => {
+    setVirtualTimePolicy(cdp, { policy: VIRTUAL_TIME_ADVANCE_POLICY, budget }).catch((error) => {
       if (settled) {
         return;
       }
@@ -80,7 +76,7 @@ async function advanceVirtualTimeBy(cdp, deltaMs) {
       reject(error);
     });
   });
-  await setVirtualTimePolicy(cdp, 'pause', 0);
+  await setVirtualTimePolicy(cdp, { policy: 'pause' });
 }
 
 async function readDurationFromPage(page) {
@@ -142,7 +138,7 @@ async function render() {
     });
 
     page = await context.newPage();
-    const cdp = await context.newCDPSession(page);
+    let cdp = null;
 
     page.on('console', (msg) => {
       console.log(`BROWSER_CONSOLE:${msg.type()} ${msg.text()}`);
@@ -191,7 +187,7 @@ async function render() {
       defaultSeconds: DEFAULT_SECONDS
     });
 
-    const FRAMES = Math.max(1, Math.ceil(FPS * SECONDS));
+    const FRAMES = Math.max(1, Math.round(FPS * SECONDS));
     console.log(`RENDER_STATE:frames fps=${FPS} seconds=${SECONDS} frames=${FRAMES}`);
     console.log(`CAPTURE url=${URL} duration_sec=${SECONDS} fps=${FPS} frames_total=${FRAMES}`);
 
@@ -203,11 +199,13 @@ async function render() {
     }
 
     try {
+      cdp = await context.newCDPSession(page);
       await setupVirtualTimeClock(cdp);
       virtualClockEnabled = true;
       console.log('RENDER_STATE:virtual_time enabled');
     } catch (error) {
       virtualClockEnabled = false;
+      cdp = null;
       console.warn(`RENDER_STATE:virtual_time disabled reason=${error.message || error}`);
     }
 
@@ -221,7 +219,7 @@ async function render() {
     }, { fps: FPS, frames: FRAMES });
 
     for (let i = 0; i < FRAMES; i++) {
-      if (virtualClockEnabled && i > 0) {
+      if (virtualClockEnabled && cdp && i > 0) {
         await advanceVirtualTimeBy(cdp, frameIntervalMs);
       }
       const n = String(i).padStart(5, '0');
@@ -244,6 +242,7 @@ async function render() {
       });
 
       if (!virtualClockEnabled) {
+        await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve())));
         await page.waitForTimeout(frameIntervalMs);
       }
 
