@@ -134,6 +134,13 @@ Override with `WORKSPACE_DIR` if you need a different location.
 
 Stage cache entries are stored under `${WORKSPACE_DIR}/stage` and survive restarts until TTL cleanup.
 
+Cache and memory hygiene defaults for export UI backends:
+- `PROGRAM_MONITOR_TMP_TTL_MS` (default `1800000`) prunes stale Program Monitor temp html/list files.
+- `PROGRAM_MONITOR_CACHE_TTL_MS` (default `21600000`) bounds Program Monitor node/timeline cache age.
+- `PROGRAM_MONITOR_CACHE_MAX_FILES` (default `120`) caps retained Program Monitor node/timeline cached files per directory.
+- `JOB_RETENTION_MS` (default `3600000`) trims completed in-memory job/status entries and stale job json files.
+- `JOB_MEMORY_LIMIT` (default `400`) limits retained in-memory jobs after pruning.
+
 ## Delivery to /renders
 
 Exports are written to the workspace and (by default) delivered into the renders mount at:

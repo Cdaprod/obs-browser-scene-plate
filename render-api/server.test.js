@@ -22,6 +22,8 @@ const {
   readStage,
   deleteStage,
   gcStages,
+  pruneJobs,
+  gcProgramMonitorCache,
   atomicWriteJson,
   projectTimelinePath,
   projectStatePath,
@@ -432,3 +434,73 @@ test('saveProjectState persists nodesStructured and can be re-read', () => {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+test('pruneJobs removes old completed jobs and preserves active jobs', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'render-jobs-'));
+  try {
+    const jobsMap = new Map([
+      ['ready-old', { id: 'ready-old', state: 'ready', updatedAt: '2024-01-01T00:00:00.000Z' }],
+      ['error-new', { id: 'error-new', state: 'error', updatedAt: '2024-01-02T00:00:00.000Z' }],
+      ['rendering', { id: 'rendering', state: 'rendering', updatedAt: '2024-01-01T00:00:00.000Z' }]
+    ]);
+    fs.mkdirSync(tempDir, { recursive: true });
+    fs.writeFileSync(path.join(tempDir, 'ready-old.json'), '{}');
+
+    pruneJobs({
+      now: Date.parse('2024-01-03T00:00:00.000Z'),
+      retentionMs: 24 * 60 * 60 * 1000,
+      memoryLimit: 20,
+      jobsMap,
+      jobsDir: tempDir
+    });
+
+    assert.equal(jobsMap.has('ready-old'), false);
+    assert.equal(jobsMap.has('error-new'), false);
+    assert.equal(jobsMap.has('rendering'), true);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('gcProgramMonitorCache prunes stale tmp and caps cached renders', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-cache-'));
+  try {
+    const tmpDir = path.join(tempRoot, 'tmp');
+    const nodeDir = path.join(tempRoot, 'nodes');
+    const timelineDir = path.join(tempRoot, 'timelines');
+    fs.mkdirSync(tmpDir, { recursive: true });
+    fs.mkdirSync(nodeDir, { recursive: true });
+    fs.mkdirSync(timelineDir, { recursive: true });
+
+    const staleTmp = path.join(tmpDir, 'old.html');
+    const freshTmp = path.join(tmpDir, 'new.html');
+    fs.writeFileSync(staleTmp, 'old');
+    fs.writeFileSync(freshTmp, 'new');
+    fs.utimesSync(staleTmp, new Date('2024-01-01T00:00:00.000Z'), new Date('2024-01-01T00:00:00.000Z'));
+    fs.utimesSync(freshTmp, new Date('2024-01-03T00:00:00.000Z'), new Date('2024-01-03T00:00:00.000Z'));
+
+    ['a.mov', 'b.mov', 'c.mov'].forEach((name, index) => {
+      const file = path.join(nodeDir, name);
+      fs.writeFileSync(file, name);
+      const d = new Date(Date.parse('2024-01-03T00:00:00.000Z') - (index * 1000));
+      fs.utimesSync(file, d, d);
+    });
+
+    gcProgramMonitorCache({
+      now: Date.parse('2024-01-03T00:00:20.000Z'),
+      tmpDir,
+      nodeDir,
+      timelineDir,
+      tmpTtlMs: 30 * 1000,
+      cacheTtlMs: 10 * 60 * 1000,
+      cacheMaxFiles: 2
+    });
+
+    assert.equal(fs.existsSync(staleTmp), false);
+    assert.equal(fs.existsSync(freshTmp), true);
+    assert.equal(fs.readdirSync(nodeDir).length, 2);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+

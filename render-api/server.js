@@ -41,10 +41,15 @@ const PROGRAM_MONITOR_DIR = path.join(RENDERS_DIR, 'program-monitor');
 const PROGRAM_MONITOR_TMP_DIR = path.join(PROGRAM_MONITOR_DIR, 'tmp');
 const PROGRAM_MONITOR_NODE_DIR = path.join(PROGRAM_MONITOR_DIR, 'nodes');
 const PROGRAM_MONITOR_TIMELINE_DIR = path.join(PROGRAM_MONITOR_DIR, 'timelines');
+const PROGRAM_MONITOR_TMP_TTL_MS = Number(process.env.PROGRAM_MONITOR_TMP_TTL_MS || 30 * 60 * 1000);
+const PROGRAM_MONITOR_CACHE_TTL_MS = Number(process.env.PROGRAM_MONITOR_CACHE_TTL_MS || 6 * 60 * 60 * 1000);
+const PROGRAM_MONITOR_CACHE_MAX_FILES = Number(process.env.PROGRAM_MONITOR_CACHE_MAX_FILES || 120);
 const STAGE_TTL_SECONDS = Number(process.env.STAGE_TTL_SECONDS || 60 * 60 * 6);
 const WORKSPACE_DIR = process.env.WORKSPACE_DIR || path.join(RENDERS_DIR, 'workspace');
 const PROJECTS_DIR = path.join(WORKSPACE_DIR, 'projects');
 const STAGE_DIR = path.join(WORKSPACE_DIR, 'stage');
+const JOB_RETENTION_MS = Number(process.env.JOB_RETENTION_MS || 60 * 60 * 1000);
+const JOB_MEMORY_LIMIT = Number(process.env.JOB_MEMORY_LIMIT || 400);
 
 const PROGRAM_MONITOR_AUDIO_EXTENSIONS = ['.mp3', '.wav', '.m4a', '.aac', '.ogg'];
 const PROGRAM_MONITOR_IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp', '.gif'];
@@ -1110,6 +1115,105 @@ function updateJob(jobId, updates) {
   return next;
 }
 
+function pruneJobs({
+  now = Date.now(),
+  retentionMs = JOB_RETENTION_MS,
+  memoryLimit = JOB_MEMORY_LIMIT,
+  jobsMap = jobs,
+  jobsDir = JOBS_DIR
+} = {}) {
+  const completedStates = new Set(['ready', 'error']);
+  const entries = Array.from(jobsMap.entries());
+  const completed = [];
+
+  for (const [jobId, job] of entries) {
+    if (!job || !completedStates.has(job.state)) {
+      continue;
+    }
+    const updatedAt = Date.parse(job.updatedAt || job.createdAt || '');
+    completed.push({ jobId, updatedAt: Number.isFinite(updatedAt) ? updatedAt : 0 });
+    if (!Number.isFinite(updatedAt) || now - updatedAt < retentionMs) {
+      continue;
+    }
+    jobsMap.delete(jobId);
+    try {
+      fs.rmSync(path.join(jobsDir, `${jobId}.json`), { force: true });
+    } catch (_) {
+      // ignore cleanup errors
+    }
+  }
+
+  if (jobsMap.size <= memoryLimit) {
+    return;
+  }
+
+  completed
+    .sort((a, b) => a.updatedAt - b.updatedAt)
+    .forEach(({ jobId }) => {
+      if (jobsMap.size <= memoryLimit) {
+        return;
+      }
+      jobsMap.delete(jobId);
+      try {
+        fs.rmSync(path.join(jobsDir, `${jobId}.json`), { force: true });
+      } catch (_) {
+        // ignore cleanup errors
+      }
+    });
+}
+
+function pruneRenderCacheDir({ dirPath, now = Date.now(), ttlMs = PROGRAM_MONITOR_CACHE_TTL_MS, maxFiles = PROGRAM_MONITOR_CACHE_MAX_FILES } = {}) {
+  if (!dirPath || !fs.existsSync(dirPath)) {
+    return;
+  }
+  const entries = fs.readdirSync(dirPath, { withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => {
+      const filePath = path.join(dirPath, entry.name);
+      const stats = fs.statSync(filePath);
+      return { filePath, mtimeMs: stats.mtimeMs };
+    })
+    .sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+  entries.forEach((entry, index) => {
+    const expired = now - entry.mtimeMs > ttlMs;
+    const overLimit = index >= maxFiles;
+    if (!expired && !overLimit) {
+      return;
+    }
+    fs.rmSync(entry.filePath, { force: true });
+  });
+}
+
+function gcProgramMonitorCache({
+  now = Date.now(),
+  tmpDir = PROGRAM_MONITOR_TMP_DIR,
+  nodeDir = PROGRAM_MONITOR_NODE_DIR,
+  timelineDir = PROGRAM_MONITOR_TIMELINE_DIR,
+  tmpTtlMs = PROGRAM_MONITOR_TMP_TTL_MS,
+  cacheTtlMs = PROGRAM_MONITOR_CACHE_TTL_MS,
+  cacheMaxFiles = PROGRAM_MONITOR_CACHE_MAX_FILES
+} = {}) {
+  const tmpDirs = [tmpDir];
+  tmpDirs.forEach((dirPath) => {
+    if (!dirPath || !fs.existsSync(dirPath)) {
+      return;
+    }
+    fs.readdirSync(dirPath, { withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .forEach((entry) => {
+        const filePath = path.join(dirPath, entry.name);
+        const stats = fs.statSync(filePath);
+        if (now - stats.mtimeMs > tmpTtlMs) {
+          fs.rmSync(filePath, { force: true });
+        }
+      });
+  });
+
+  pruneRenderCacheDir({ dirPath: nodeDir, now, ttlMs: cacheTtlMs, maxFiles: cacheMaxFiles });
+  pruneRenderCacheDir({ dirPath: timelineDir, now, ttlMs: cacheTtlMs, maxFiles: cacheMaxFiles });
+}
+
 function parseBody(req) {
   return new Promise((resolve, reject) => {
     let data = '';
@@ -1218,6 +1322,7 @@ async function runTimelineJob({
 }) {
   let logStream = null;
   let writeLog = () => {};
+  let listFile = null;
   try {
     const fps = options.fps;
     const width = options.width;
@@ -1358,7 +1463,7 @@ async function runTimelineJob({
     updateJob(jobId, { state: 'encoding', progress: 95 });
 
     ensureDir(outputDir);
-    const listFile = path.join(PROGRAM_MONITOR_TMP_DIR, `timeline-${jobId}.txt`);
+    listFile = path.join(PROGRAM_MONITOR_TMP_DIR, `timeline-${jobId}.txt`);
     fs.writeFileSync(
       listFile,
       nodeOutputs.map((filePath) => `file '${filePath.replace(/'/g, "'\\''")}'`).join('\n')
@@ -1422,6 +1527,13 @@ async function runTimelineJob({
       onError(error);
     }
   } finally {
+    if (listFile) {
+      try {
+        fs.rmSync(listFile, { force: true });
+      } catch (_) {
+        // ignore tmp cleanup errors
+      }
+    }
     if (logStream) {
       logStream.end();
     }
@@ -1474,6 +1586,8 @@ function generatePreviewMp4({ inputPath, outputPath }) {
 
 function startServer() {
   gcStages();
+  gcProgramMonitorCache();
+  pruneJobs();
   const renderMountState = getRendersDirDiagnostics({ rendersDir: RENDERS_DIR });
   console.log(`render-api workspace_dir=${WORKSPACE_DIR}`);
   console.log(`render-api renders_dir=${RENDERS_DIR} delivery_subdir=${DELIVERY_SUBDIR}`);
@@ -2421,6 +2535,8 @@ function startServer() {
 
   const gcInterval = setInterval(() => {
     gcStages();
+    gcProgramMonitorCache();
+    pruneJobs();
   }, 5 * 60 * 1000);
   server.on('close', () => {
     clearInterval(gcInterval);
@@ -2464,6 +2580,8 @@ module.exports = {
   readStage,
   deleteStage,
   gcStages,
+  pruneJobs,
+  gcProgramMonitorCache,
   ensureProjectDir,
   readJsonSafe,
   atomicWriteJson,

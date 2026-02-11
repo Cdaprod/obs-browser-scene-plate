@@ -422,7 +422,7 @@ const PROJECT_ACTIVE_KEY = "program-monitor.project.active.v1";
 const PROJECT_DRAFT_PREFIX = "programMonitor:draft:";
 const PROJECT_SAVE_DEBOUNCE_MS = 600;
 const OBS_SETTINGS_KEY = "program-monitor.obs.v1";
-const EXPORT_HISTORY_KEY = "obs-browser-export-history";
+const EXPORT_HISTORY_KEY = "program-monitor.export-history.v1";
 const EXPORT_HISTORY_LIMIT = 8;
 
 const elements = {
@@ -491,6 +491,8 @@ let currentProjectId = "";
 let projectEntriesCache = [];
 let currentExportEntry = null;
 let recentMenuTimer = null;
+let recentFetchController = null;
+let exportPollInFlight = false;
 let uiBound = false;
 const PREVIEW_COLLAPSE_KEY = "program-monitor.preview-collapsed";
 const OBS_PANEL_COLLAPSE_KEY = "program-monitor.obs-collapsed";
@@ -812,11 +814,15 @@ function mapRenderEntry(item) {
 
 async function fetchRecentExports() {
   const projectId = currentProjectId || "";
+  if (recentFetchController) {
+    recentFetchController.abort();
+  }
+  recentFetchController = new AbortController();
   try {
     let entries = [];
     if (projectId) {
       const projectUrl = apiUrl(`/api/projects/${encodeURIComponent(projectId)}/exports`);
-      const projectRes = await fetch(projectUrl, { cache: "no-store" });
+      const projectRes = await fetch(projectUrl, { cache: "no-store", signal: recentFetchController.signal });
       const projectData = await projectRes.json();
       if (!projectRes.ok || !projectData.ok) {
         throw new Error(projectData.error || "recent_failed");
@@ -825,7 +831,7 @@ async function fetchRecentExports() {
     }
 
     if (!entries.length) {
-      const rendersRes = await fetch(apiUrl('/api/renders?limit=8'), { cache: "no-store" });
+      const rendersRes = await fetch(apiUrl('/api/renders?limit=8'), { cache: "no-store", signal: recentFetchController.signal });
       const rendersData = await rendersRes.json();
       if (rendersRes.ok && rendersData.ok) {
         entries = (rendersData.renders || []).map((item) => mapRenderEntry(item));
@@ -836,8 +842,13 @@ async function fetchRecentExports() {
     saveExportHistory(sorted);
     return sorted;
   } catch (err) {
+    if (err && err.name === "AbortError") {
+      return loadExportHistory();
+    }
     console.warn("Recent exports unavailable, using cached history.", err);
     return loadExportHistory();
+  } finally {
+    recentFetchController = null;
   }
 }
 
@@ -1970,6 +1981,7 @@ function clearExportPoll() {
     clearInterval(exportPollTimer);
     exportPollTimer = null;
   }
+  exportPollInFlight = false;
 }
 
 function clearBaseHandlers() {
@@ -2831,10 +2843,16 @@ async function exportNode() {
 
   const statusUrl = apiUrl(data.status_url || '');
   exportPollTimer = setInterval(() => {
+    if (exportPollInFlight) {
+      return;
+    }
+    exportPollInFlight = true;
     pollJobStatus(statusUrl).catch((error) => {
       console.error(error);
       setExportStatus("Error");
       clearExportPoll();
+    }).finally(() => {
+      exportPollInFlight = false;
     });
   }, 1000);
 }
@@ -3348,3 +3366,12 @@ try {
   console.error(error);
   setMessage(`Startup error: ${error?.message || error}`);
 }
+
+window.addEventListener("beforeunload", () => {
+  clearExportPoll();
+  setRecentMenuPolling(false);
+  if (recentFetchController) {
+    recentFetchController.abort();
+    recentFetchController = null;
+  }
+});

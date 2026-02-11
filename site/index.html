@@ -774,7 +774,7 @@
         const openDefault = document.getElementById("openDefault");
         const baseInfo = document.getElementById("baseInfo");
 
-        const EXPORT_HISTORY_KEY = "obs-browser-export-history";
+        const EXPORT_HISTORY_KEY = "obs-browser-site-export-history";
         const EXPORT_HISTORY_LIMIT = 8;
         const portraitQuery = window.matchMedia("(max-width: 720px) and (orientation: portrait)");
 
@@ -822,14 +822,22 @@
         const host = window.location.hostname;   // e.g. 192.168.0.25
         const renderApiPort = 8793;
         const webPort = window.location.port || 8789;
+        const isFileProtocol = window.location.protocol === "file:";
 
-        const renderApiBase = `http://${host}:${renderApiPort}`;
-        const downloadBase = `http://${host}:${webPort}`;
+        const renderApiBase = isFileProtocol ? `http://${host}:${renderApiPort}` : "";
+        const downloadBase = isFileProtocol ? `http://${host}:${webPort}` : window.location.origin;
+
+        function apiUrl(path) {
+            const normalized = path.startsWith("/") ? path : `/${path}`;
+            return `${renderApiBase}${normalized}`;
+        }
 
         let items = [];
         let activePath = "";
         let currentFullUrl = "";
         let pollTimer = null;
+        let pollInFlight = false;
+        let recentFetchController = null;
         let selectionToken = 0;
         let urlUpdateTimer = null;
 
@@ -977,9 +985,13 @@
         }
 
         async function fetchRecentExports() {
-            const url = `${renderApiBase}/api/renders?limit=${EXPORT_HISTORY_LIMIT}`;
+            const url = apiUrl(`/api/renders?limit=${EXPORT_HISTORY_LIMIT}`);
+            if (recentFetchController) {
+                recentFetchController.abort();
+            }
+            recentFetchController = new AbortController();
             try {
-                const res = await fetch(url, { cache: "no-store" });
+                const res = await fetch(url, { cache: "no-store", signal: recentFetchController.signal });
                 const data = await res.json();
                 if (!res.ok || !data.ok) {
                     throw new Error(data.error || "recent_failed");
@@ -1001,8 +1013,13 @@
                 saveExportHistory(sorted);
                 return sorted;
             } catch (err) {
+                if (err && err.name === "AbortError") {
+                    return loadExportHistory();
+                }
                 console.warn("Recent exports unavailable, using cached history.", err);
                 return loadExportHistory();
+            } finally {
+                recentFetchController = null;
             }
         }
 
@@ -1389,7 +1406,7 @@
                     payload.seconds = Number(secondsOverride);
                 }
 
-                const res = await fetch(`${renderApiBase}/api/render`, {
+                const res = await fetch(apiUrl(`/api/render`), {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify(payload)
@@ -1404,10 +1421,14 @@
                     throw new Error("missing_status_url");
                 }
 
-                const statusUrl = `${renderApiBase}${data.status_url}`;
+                const statusUrl = apiUrl(data.status_url);
                 setExportStatus("Rendering");
 
                 pollTimer = setInterval(async () => {
+                    if (pollInFlight) {
+                        return;
+                    }
+                    pollInFlight = true;
                     try {
                         const done = await pollJobStatus(statusUrl);
                         if (done && pollTimer) {
@@ -1424,6 +1445,8 @@
                             clearInterval(pollTimer);
                             pollTimer = null;
                         }
+                    } finally {
+                        pollInFlight = false;
                     }
                 }, 900);
             } catch (err) {
@@ -1510,6 +1533,19 @@
             if (event.key === "Escape" && !exportModal.classList.contains("hidden")) {
                 closeExportModal();
             }
+        });
+
+
+        window.addEventListener("beforeunload", () => {
+            if (pollTimer) {
+                clearInterval(pollTimer);
+                pollTimer = null;
+            }
+            if (recentFetchController) {
+                recentFetchController.abort();
+                recentFetchController = null;
+            }
+            pollInFlight = false;
         });
 
         filterEl.addEventListener("input", render);
