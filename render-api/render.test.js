@@ -62,3 +62,8 @@ test('master encoding preserves alpha with prores 4444', () => {
   const source = fs.readFileSync(path.resolve(__dirname, 'render.js'), 'utf8');
   assert.ok(source.includes('-c:v prores_ks -profile:v 4 -pix_fmt yuva444p10le'));
 });
+
+test('render init script marks capture mode for overlays', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, 'render.js'), 'utf8');
+  assert.ok(source.includes('window.__RENDER_CAPTURE = true'));
+});

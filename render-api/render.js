@@ -240,6 +240,7 @@ async function render() {
     });
 
     await page.addInitScript(() => {
+      window.__RENDER_CAPTURE = true;
       window.__RENDER_SECONDS_EVENT = null;
       window.addEventListener('render:duration', (event) => {
         const seconds = event && event.detail ? Number(event.detail.seconds) : NaN;
