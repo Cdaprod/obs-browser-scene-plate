@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const {
   inferDurationFromQuery,
@@ -43,5 +45,12 @@ test('buildVirtualTimePolicyPayload rounds budget for advancing policy', () => {
   });
   assert.equal(payload.policy, 'pauseIfNetworkFetchesPending');
   assert.equal(payload.budget, 17);
+});
+
+test('render loop applies frame clock to page and iframe targets', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, 'render.js'), 'utf8');
+  assert.ok(source.includes('const targets = [window];'));
+  assert.ok(source.includes('baseFrame.contentWindow'));
+  assert.ok(source.includes('requestAnimationFrame'));
 });
 

@@ -226,16 +226,21 @@ async function render() {
       const frameTimeMs = Math.round(i * frameIntervalMs);
       await page.evaluate(({ tMs, frameIndex, frames, fps }) => {
         const baseFrame = document.getElementById('base');
-        const target = baseFrame && baseFrame.contentWindow ? baseFrame.contentWindow : window;
-        if (typeof target.__RENDER_SET_FRAME === 'function') {
-          target.__RENDER_SET_FRAME(frameIndex, frames, fps);
+        const targets = [window];
+        if (baseFrame && baseFrame.contentWindow && baseFrame.contentWindow !== window) {
+          targets.push(baseFrame.contentWindow);
         }
-        if (typeof target.__SET_RENDER_TIME === 'function') {
-          target.__SET_RENDER_TIME(tMs);
-        }
-        target.__RENDER_T_MS = tMs;
+        targets.forEach((target) => {
+          if (typeof target.__RENDER_SET_FRAME === 'function') {
+            target.__RENDER_SET_FRAME(frameIndex, frames, fps);
+          }
+          if (typeof target.__SET_RENDER_TIME === 'function') {
+            target.__SET_RENDER_TIME(tMs);
+          }
+          target.__RENDER_T_MS = tMs;
+        });
       }, { tMs: frameTimeMs, frameIndex: i, frames: FRAMES, fps: FPS });
-      await page.evaluate(() => Promise.resolve());
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => resolve())));
       await page.screenshot({
         path: `${FRAME_DIR}/frame_${n}.png`,
         omitBackground: true
