@@ -128,6 +128,8 @@ Project exports include job-scoped paths like `/exports/<project>/<job>/render.m
 Project drafts and exports are stored under the workspace directory (defaults to `/renders/workspace`).
 Render capture now uses a deterministic virtual-time clock (frame-stepped in headless Chromium) so HTML animation timing matches preview playback across the full requested duration.
 
+Program Monitor exports default `padSeconds` to `0` so UI-measured node durations are rendered as-is unless an explicit pad is provided.
+
 Override with `WORKSPACE_DIR` if you need a different location.
 
 Stage cache entries are stored under `${WORKSPACE_DIR}/stage` and survive restarts until TTL cleanup.

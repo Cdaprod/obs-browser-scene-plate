@@ -1956,7 +1956,7 @@ function startServer() {
       const width = parseOptionalNumber(options.width) ?? 1080;
       const height = parseOptionalNumber(options.height) ?? 1920;
       const warmupMs = parseOptionalNumber(options.warmupMs);
-      const padSeconds = parseOptionalNumber(options.padSeconds);
+      const padSeconds = parseOptionalNumber(options.padSeconds) ?? 0;
       const durationSeconds = parseOptionalNumber(options.duration_seconds);
 
       const jobId = createJobId();
@@ -2192,7 +2192,7 @@ function startServer() {
       const width = parseOptionalNumber(options.width) ?? 1080;
       const height = parseOptionalNumber(options.height) ?? 1920;
       const warmupMs = parseOptionalNumber(options.warmupMs);
-      const padSeconds = parseOptionalNumber(options.padSeconds);
+      const padSeconds = parseOptionalNumber(options.padSeconds) ?? 0;
       const durationSeconds = parseOptionalNumber(options.duration_seconds)
         ?? parseOptionalNumber(body?.node?.duration_seconds);
       try {
@@ -2299,7 +2299,7 @@ function startServer() {
       const width = parseOptionalNumber(options.width) ?? 1080;
       const height = parseOptionalNumber(options.height) ?? 1920;
       const warmupMs = parseOptionalNumber(options.warmupMs);
-      const padSeconds = parseOptionalNumber(options.padSeconds);
+      const padSeconds = parseOptionalNumber(options.padSeconds) ?? 0;
 
       ensureDir(PROGRAM_MONITOR_TIMELINE_DIR);
       const timelineHash = buildProgramMonitorTimelineHash(timeline, { fps, width, height });
