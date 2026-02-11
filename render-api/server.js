@@ -522,7 +522,12 @@ function assertHtmlDurationSeconds({ url, durationSeconds, context = '' } = {}) 
 
 function buildProgramMonitorTimelineHash(timeline, { fps, width, height }) {
   return buildProgramMonitorHash({
-    nodes: (timeline.nodes || []).map((node) => node.text || ''),
+    nodes: (timeline.nodes || []).map((node) => ({
+      text: node.text || '',
+      durationSeconds: parseOptionalNumber(node.durationSeconds)
+        ?? parseOptionalNumber(node.duration_seconds)
+        ?? null
+    })),
     fps,
     width,
     height
@@ -1252,12 +1257,15 @@ async function runTimelineJob({
         context: `timeline_node_${index}`
       });
 
+      const nodeDurationSeconds = parseOptionalNumber(node.durationSeconds)
+        ?? defaultDurationSeconds;
       const nodeHash = buildProgramMonitorHash({
         baseUrl: normalizedBase,
         layers: normalizedLayers,
         fps,
         width,
-        height
+        height,
+        durationSeconds: Number.isFinite(nodeDurationSeconds) ? nodeDurationSeconds : null
       });
 
       const html = buildProgramMonitorHtml({
@@ -1279,11 +1287,9 @@ async function runTimelineJob({
         width,
         height,
         fps,
-        seconds: null
+        seconds: Number.isFinite(nodeDurationSeconds) ? nodeDurationSeconds : null
       });
       const nodeOutPath = path.join(PROGRAM_MONITOR_NODE_DIR, nodeFilename);
-      const nodeDurationSeconds = parseOptionalNumber(node.durationSeconds)
-        ?? defaultDurationSeconds;
       assertHtmlDurationSeconds({
         url: normalizedBase,
         durationSeconds: nodeDurationSeconds,
@@ -2203,7 +2209,8 @@ function startServer() {
         layers: normalizedLayers,
         fps,
         width,
-        height
+        height,
+        durationSeconds: Number.isFinite(durationSeconds) ? durationSeconds : null
       });
 
       const html = buildProgramMonitorHtml({
@@ -2222,7 +2229,7 @@ function startServer() {
         width,
         height,
         fps,
-        seconds: null
+        seconds: Number.isFinite(durationSeconds) ? durationSeconds : null
       });
       const outPath = path.join(PROGRAM_MONITOR_NODE_DIR, filename);
 
@@ -2449,6 +2456,7 @@ module.exports = {
   parseProgramMonitorText,
   classifyProgramMonitorUrl,
   buildProgramMonitorFilename,
+  buildProgramMonitorTimelineHash,
   assertHtmlDurationSeconds,
   createStageEntry,
   readStageEntry,

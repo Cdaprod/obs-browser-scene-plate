@@ -25,10 +25,62 @@ const {
 } = require('./render-utils');
 
 const DEFAULT_WARMUP_MS = 250;
+const VIRTUAL_TIME_EVENT = 'Emulation.virtualTimeBudgetExpired';
+const VIRTUAL_TIME_TASK_STARVATION_LIMIT = 10000;
 
 function exitWithError(message, code = 1) {
   console.error(message);
   process.exit(code);
+}
+
+async function setVirtualTimePolicy(cdp, policy, budget = 0) {
+  return cdp.send('Emulation.setVirtualTimePolicy', {
+    policy,
+    budget: Math.max(0, Math.ceil(budget)),
+    waitForNavigation: false,
+    maxVirtualTimeTaskStarvationCount: VIRTUAL_TIME_TASK_STARVATION_LIMIT
+  });
+}
+
+async function setupVirtualTimeClock(cdp) {
+  await setVirtualTimePolicy(cdp, 'pause', 0);
+}
+
+async function advanceVirtualTimeBy(cdp, deltaMs) {
+  const budget = Math.max(1, Math.ceil(deltaMs));
+  await new Promise((resolve, reject) => {
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cdp.off(VIRTUAL_TIME_EVENT, onBudgetExpired);
+      reject(new Error('virtual_time_budget_timeout'));
+    }, Math.max(2000, budget * 2));
+
+    function onBudgetExpired() {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      cdp.off(VIRTUAL_TIME_EVENT, onBudgetExpired);
+      resolve();
+    }
+
+    cdp.on(VIRTUAL_TIME_EVENT, onBudgetExpired);
+    setVirtualTimePolicy(cdp, 'advance', budget).catch((error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeout);
+      cdp.off(VIRTUAL_TIME_EVENT, onBudgetExpired);
+      reject(error);
+    });
+  });
+  await setVirtualTimePolicy(cdp, 'pause', 0);
 }
 
 async function readDurationFromPage(page) {
@@ -77,6 +129,7 @@ async function render() {
   const FRAME_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'render-frames-'));
   let browser;
   let page;
+  let virtualClockEnabled = false;
 
   try {
     browser = await chromium.launch({
@@ -89,6 +142,7 @@ async function render() {
     });
 
     page = await context.newPage();
+    const cdp = await context.newCDPSession(page);
 
     page.on('console', (msg) => {
       console.log(`BROWSER_CONSOLE:${msg.type()} ${msg.text()}`);
@@ -148,6 +202,15 @@ async function render() {
       fs.mkdirSync(debugFramesDir, { recursive: true });
     }
 
+    try {
+      await setupVirtualTimeClock(cdp);
+      virtualClockEnabled = true;
+      console.log('RENDER_STATE:virtual_time enabled');
+    } catch (error) {
+      virtualClockEnabled = false;
+      console.warn(`RENDER_STATE:virtual_time disabled reason=${error.message || error}`);
+    }
+
     await page.evaluate(({ fps, frames }) => {
       const durationMs = Math.round((frames * 1000) / fps);
       window.__RENDER_DUR_MS = durationMs;
@@ -158,6 +221,9 @@ async function render() {
     }, { fps: FPS, frames: FRAMES });
 
     for (let i = 0; i < FRAMES; i++) {
+      if (virtualClockEnabled && i > 0) {
+        await advanceVirtualTimeBy(cdp, frameIntervalMs);
+      }
       const n = String(i).padStart(5, '0');
       const frameTimeMs = Math.round(i * frameIntervalMs);
       await page.evaluate(({ tMs, frameIndex, frames, fps }) => {
@@ -176,6 +242,10 @@ async function render() {
         path: `${FRAME_DIR}/frame_${n}.png`,
         omitBackground: true
       });
+
+      if (!virtualClockEnabled) {
+        await page.waitForTimeout(frameIntervalMs);
+      }
 
       if (debugFramesDir && (i === 0 || i === FRAMES - 1)) {
         const debugName = i === 0 ? 'frame_00000.png' : 'frame_last.png';

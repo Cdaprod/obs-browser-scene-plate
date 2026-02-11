@@ -18,21 +18,29 @@
       --nle-segment: rgba(255, 255, 255, 0.08);
     }
 
+    html,
     body {
       margin: 0;
+      width: 100%;
+      min-height: 100%;
       background: var(--nle-bg);
       color: var(--text);
       font-family: var(--sans);
-      height: 100vh;
-      height: 100dvh;
-      overflow: hidden;
+    }
+
+    body {
+      min-height: 100vh;
+      min-height: 100dvh;
+      overflow-x: hidden;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
     }
 
     .nle-app {
       display: flex;
       flex-direction: column;
-      height: 100vh;
-      height: 100dvh;
+      min-height: 100vh;
+      min-height: 100dvh;
     }
 
     .nle-header {
