@@ -18,10 +18,12 @@
 - Avoid dropping existing parameters when composing preview or copy URLs.
 - Overlay source files must include a single-line `Default URL (full params):` entry that matches the file name so the UI can preload query params.
 - Procedural overlays that need deterministic renders should implement the render clock contract (`window.__SET_RENDER_TIME(ms)` and `window.__RENDER_READY`) so render-api can drive frame-locked capture.
+- Render exports should use a deterministic frame-stepped virtual time clock so headless captures match Program Monitor preview timing for HTML overlays.
 
 ## UI/UX Expectations
 - Ensure the UI is responsive on mobile and desktop, with no overflow in header, actions, or preview areas.
 - Prefer flex wrapping and safe text overflow behaviors for long URLs.
+- Stage/timeline popup pages must remain vertically scrollable on small mobile viewports so transport and export controls are reachable.
 - For iframe-heavy scenes (e.g. `lan_app_stack_scene.html`), gate animations until initial iframe loads finish and show a lightweight loading overlay to avoid dropped frames.
 - Use `overlays/compression_artifact_glitch.html` for glitching analogue static; keep `analogue_static_loop.html` as the steady, non-burst static layer.
 

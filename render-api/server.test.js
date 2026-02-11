@@ -14,6 +14,7 @@ const {
   parseProgramMonitorText,
   classifyProgramMonitorUrl,
   buildProgramMonitorFilename,
+  buildProgramMonitorTimelineHash,
   assertHtmlDurationSeconds,
   createStageEntry,
   readStageEntry,
@@ -173,7 +174,20 @@ test('buildProgramMonitorFilename is deterministic', () => {
     fps: 60,
     seconds: null
   });
+
   assert.equal(filename, 'program-monitor-node_1080x1920_60fps_auto_abc123.mov');
+});
+
+test('buildProgramMonitorTimelineHash includes node duration metadata', () => {
+  const withDuration = buildProgramMonitorTimelineHash({
+    nodes: [{ text: 'http://obs-plate/overlays/demo.html', durationSeconds: 13 }]
+  }, { fps: 60, width: 1080, height: 1920 });
+
+  const withoutDuration = buildProgramMonitorTimelineHash({
+    nodes: [{ text: 'http://obs-plate/overlays/demo.html' }]
+  }, { fps: 60, width: 1080, height: 1920 });
+
+  assert.notEqual(withDuration, withoutDuration);
 });
 
 test('buildProgramMonitorHtml uses iframe for HTML overlays', () => {

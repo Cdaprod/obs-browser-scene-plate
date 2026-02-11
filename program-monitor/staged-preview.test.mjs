@@ -30,3 +30,9 @@ test("staged preview preserves paused frame state", () => {
   assert.ok(html.includes("elements.baseVideo.currentTime = baseElapsed;"));
   assert.ok(html.includes("state.pausedAt = timelineOffset + baseElapsed;"));
 });
+
+test("staged preview allows vertical page scrolling on mobile", () => {
+  assert.ok(html.includes("overflow-y: auto"));
+  assert.ok(html.includes("-webkit-overflow-scrolling: touch"));
+});
+
