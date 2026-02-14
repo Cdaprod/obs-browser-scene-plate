@@ -1129,6 +1129,12 @@ function parseRenderTimingLine(line = '') {
   };
 }
 
+/**
+ * Invariant:
+ * Export callbacks must never reference timing metadata from outer function locals.
+ * All timing metadata must be passed explicitly via job/result payload objects.
+ * Fallback resolution must use explicit objects, never identifier fallbacks.
+ */
 
 function resolveTimingMetadata({ job = null, fallback = {} } = {}) {
   const fromJob = job || {};

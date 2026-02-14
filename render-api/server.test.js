@@ -550,3 +550,47 @@ test('resolveTimingMetadata prefers job fields and falls back safely', () => {
     timing_hooks: 2
   });
 });
+
+test('export callback timing fields remain ReferenceError-safe across timing source scenarios', () => {
+  const projectTiming = (timing) => ({
+    timing_mode: timing?.timing_mode ?? null,
+    timing_degraded: timing?.timing_degraded ?? null,
+    timing_animations: timing?.timing_animations ?? null,
+    timing_hooks: timing?.timing_hooks ?? null
+  });
+
+  // Scenario 1: job timing metadata exists.
+  const fromJob = resolveTimingMetadata({
+    job: { timingMode: 'virtual_time', timingDegraded: false, timingAnimations: 5, timingHooks: 1 },
+    fallback: { timing_mode: 'waapi_seek_fallback', timing_degraded: true, timing_animations: 2, timing_hooks: 2 }
+  });
+  assert.deepEqual(projectTiming(fromJob), {
+    timing_mode: 'virtual_time',
+    timing_degraded: false,
+    timing_animations: 5,
+    timing_hooks: 1
+  });
+
+  // Scenario 2: job timing metadata absent, explicit fallback provided.
+  const fromFallback = resolveTimingMetadata({
+    job: {},
+    fallback: { timing_mode: 'waapi_seek_fallback', timing_degraded: true, timing_animations: 7, timing_hooks: 3 }
+  });
+  assert.deepEqual(projectTiming(fromFallback), {
+    timing_mode: 'waapi_seek_fallback',
+    timing_degraded: true,
+    timing_animations: 7,
+    timing_hooks: 3
+  });
+
+  // Scenario 3: cached-node path style run where neither job timing nor fallback is populated.
+  // Must stay ReferenceError-safe and resolve to null fields.
+  assert.doesNotThrow(() => {
+    assert.deepEqual(projectTiming(resolveTimingMetadata({ job: null, fallback: null })), {
+      timing_mode: null,
+      timing_degraded: null,
+      timing_animations: null,
+      timing_hooks: null
+    });
+  });
+});
