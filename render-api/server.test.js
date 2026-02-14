@@ -39,7 +39,8 @@ const {
   resolveDeliveryDir,
   buildDebugFramePath,
   buildProgramMonitorHtml,
-  parseRenderTimingLine
+  parseRenderTimingLine,
+  resolveTimingMetadata
 } = require('./server');
 
 test('safeName sanitizes unsafe characters and trims length', () => {
@@ -523,4 +524,29 @@ test('preview encoder uses explicit black compositing before yuv420p conversion'
   assert.ok(source.includes("'[0:v]format=rgba[fg];color=c=black:s=16x16[bg];[bg][fg]scale2ref[bgm][fgm];[bgm][fgm]overlay=format=auto,format=yuv420p[vout]'"));
   assert.ok(source.includes("'-map'"));
   assert.ok(source.includes("'[vout]'"));
+});
+
+
+test('resolveTimingMetadata prefers job fields and falls back safely', () => {
+  const resolved = resolveTimingMetadata({
+    job: { timingMode: 'virtual_time', timingDegraded: false, timingAnimations: 3, timingHooks: 1 },
+    fallback: { timing_mode: 'waapi_seek_fallback', timing_degraded: true, timing_animations: 7, timing_hooks: 2 }
+  });
+  assert.deepEqual(resolved, {
+    timing_mode: 'virtual_time',
+    timing_degraded: false,
+    timing_animations: 3,
+    timing_hooks: 1
+  });
+
+  const fallbackOnly = resolveTimingMetadata({
+    job: null,
+    fallback: { timing_mode: 'waapi_seek_fallback', timing_degraded: true, timing_animations: 7, timing_hooks: 2 }
+  });
+  assert.deepEqual(fallbackOnly, {
+    timing_mode: 'waapi_seek_fallback',
+    timing_degraded: true,
+    timing_animations: 7,
+    timing_hooks: 2
+  });
 });
