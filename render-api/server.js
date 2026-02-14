@@ -1129,6 +1129,18 @@ function parseRenderTimingLine(line = '') {
   };
 }
 
+
+function resolveTimingMetadata({ job = null, fallback = {} } = {}) {
+  const fromJob = job || {};
+  const fromFallback = fallback || {};
+  return {
+    timing_mode: fromJob.timingMode ?? fromFallback.timing_mode ?? null,
+    timing_degraded: fromJob.timingDegraded ?? fromFallback.timing_degraded ?? null,
+    timing_animations: fromJob.timingAnimations ?? fromFallback.timing_animations ?? null,
+    timing_hooks: fromJob.timingHooks ?? fromFallback.timing_hooks ?? null
+  };
+}
+
 function pruneJobs({
   now = Date.now(),
   retentionMs = JOB_RETENTION_MS,
@@ -1561,13 +1573,33 @@ async function runTimelineJob({
       downloadUrl: `${downloadBase}/${timelineFilename}`
     });
     if (typeof onReady === 'function') {
-      await Promise.resolve(onReady({ timelineFilename, timelineOutPath }));
+      await Promise.resolve(onReady({
+        timelineFilename,
+        timelineOutPath,
+        timing: resolveTimingMetadata({
+          job: jobs.get(jobId),
+          fallback: {
+            timing_mode: timelineTimingMode,
+            timing_degraded: timelineTimingDegraded,
+            timing_animations: timelineTimingAnimations,
+            timing_hooks: timelineTimingHooks
+          }
+        })
+      }));
     }
   } catch (error) {
     console.error(error);
     updateJob(jobId, { state: 'error', error: error.message || 'timeline_failed' });
     if (typeof onError === 'function') {
-      onError(error);
+      onError(error, resolveTimingMetadata({
+        job: jobs.get(jobId),
+        fallback: {
+          timing_mode: timelineTimingMode,
+          timing_degraded: timelineTimingDegraded,
+          timing_animations: timelineTimingAnimations,
+          timing_hooks: timelineTimingHooks
+        }
+      }));
     }
   } finally {
     if (listFile) {
@@ -2152,7 +2184,7 @@ function startServer() {
         downloadBase,
         debugFramePath,
         logPath: exportLogPath(jobDir),
-        onReady: async ({ timelineFilename, timelineOutPath }) => {
+        onReady: async ({ timelineFilename, timelineOutPath, timing }) => {
           try {
             const stats = fs.statSync(timelineOutPath);
             const previewFilename = 'render_preview.mp4';
@@ -2186,10 +2218,10 @@ function startServer() {
               status: 'ready',
               manifest_url: `${downloadBase}/manifest.json`,
               log_url: `${downloadBase}/render.log`,
-              timing_mode: job.timingMode || timelineTimingMode || null,
-              timing_degraded: job.timingDegraded ?? timelineTimingDegraded,
-              timing_animations: job.timingAnimations ?? timelineTimingAnimations,
-              timing_hooks: job.timingHooks ?? timelineTimingHooks
+              timing_mode: timing?.timing_mode ?? null,
+              timing_degraded: timing?.timing_degraded ?? null,
+              timing_animations: timing?.timing_animations ?? null,
+              timing_hooks: timing?.timing_hooks ?? null
             };
             atomicWriteJson(exportManifestPath(jobDir), manifest);
             const deliveryResult = await deliverExportArtifacts({
@@ -2221,7 +2253,7 @@ function startServer() {
             console.error(error);
           }
         },
-        onError: (error) => {
+        onError: (error, timing) => {
           const outputRelpath = buildProjectExportRelpath(projectId, jobId, 'render.mov');
           const outputName = `${safeName(projectId)}_${safeName(jobId)}.mov`;
           const manifest = {
@@ -2243,10 +2275,10 @@ function startServer() {
             delivered_host_hint: RENDERS_HOST_PATH_HINT || null,
             manifest_url: `${downloadBase}/manifest.json`,
             log_url: `${downloadBase}/render.log`,
-            timing_mode: job.timingMode || timelineTimingMode || null,
-            timing_degraded: job.timingDegraded ?? timelineTimingDegraded,
-            timing_animations: job.timingAnimations ?? timelineTimingAnimations,
-            timing_hooks: job.timingHooks ?? timelineTimingHooks
+            timing_mode: timing?.timing_mode ?? null,
+            timing_degraded: timing?.timing_degraded ?? null,
+            timing_animations: timing?.timing_animations ?? null,
+            timing_hooks: timing?.timing_hooks ?? null
           };
           atomicWriteJson(exportManifestPath(jobDir), manifest);
           appendExportLog(jobDir, `export_error ${manifest.error}`);
@@ -2664,5 +2696,6 @@ module.exports = {
   buildDebugFramePath,
   buildProgramMonitorHtml,
   parseRenderTimingLine,
+  resolveTimingMetadata,
   startServer
 };
