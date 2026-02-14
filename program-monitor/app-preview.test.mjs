@@ -42,6 +42,14 @@ test("exports validate durations for HTML nodes", () => {
   assert.ok(source.includes("durationSeconds: getNodeDuration(index)"));
 });
 
+
+
+test("stage exports omit timeline and render plan payloads", () => {
+  assert.ok(source.includes("stage_id: stageId || undefined"));
+  assert.ok(source.includes("timeline: stageId ? undefined : timelinePayload"));
+  assert.ok(source.includes("render_plan: stageId ? undefined : compileCurrentTimelinePlan()"));
+});
+
 test("render clock helper is available", () => {
   const clockPath = path.resolve("site", "js", "render_clock_v1.js");
   const clockSource = fs.readFileSync(clockPath, "utf8");

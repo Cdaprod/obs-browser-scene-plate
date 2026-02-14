@@ -2627,7 +2627,7 @@ async function exportTimeline() {
       project_id: projectId,
       stage_id: stageId || undefined,
       timeline: stageId ? undefined : timelinePayload,
-      render_plan: compileCurrentTimelinePlan(),
+      render_plan: stageId ? undefined : compileCurrentTimelinePlan(),
       format: "mov",
       options: DEFAULT_EXPORT_OPTIONS
     })
