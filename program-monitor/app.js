@@ -3,399 +3,98 @@
  * Usage: open /program-monitor/ in the browser.
  */
 
-const fallbackUtils = (() => {
-  const STORAGE_KEY = "program-monitor.timeline.v1";
-  const audioExt = [".mp3", ".wav", ".m4a", ".aac", ".ogg"];
-  const imageExt = [".png", ".jpg", ".jpeg", ".webp", ".gif"];
-  const pageExt = [".html", ".htm"];
-  const videoExt = [".mp4", ".mov", ".webm", ".mkv"];
-
-  const parseNodeText = (text) => {
-    const rawLines = (text || "")
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line && !line.startsWith("//") && !line.startsWith("#"));
-
-    const explicitBaseIndex = rawLines.findIndex((line) => /^base\s*:/i.test(line));
-    const lines = rawLines.map((line, index) => {
-      if (index === explicitBaseIndex) {
-        return line.replace(/^base\s*:/i, "").trim();
-      }
-      return line;
-    });
-
-    let baseIndex = 0;
-    if (explicitBaseIndex >= 0) {
-      baseIndex = explicitBaseIndex;
-    } else if (lines.length > 1) {
-      const nonAudioLines = lines.filter((line) => classifyUrl(line) !== "audio");
-      const overlayLike = (line) => /\/overlays?\//i.test(line);
-      const nonOverlayLines = nonAudioLines.filter((line) => !overlayLike(line));
-      if (nonOverlayLines.length && lines.some(overlayLike)) {
-        baseIndex = lines.lastIndexOf(nonOverlayLines[nonOverlayLines.length - 1]);
-      }
-    }
-
-    const baseUrl = lines[baseIndex] || "";
-    const layers = lines.filter((_, index) => index !== baseIndex);
-
-    return {
-      baseUrl,
-      layers,
-      lines,
-      baseIndex,
-      explicitBase: explicitBaseIndex >= 0
-    };
-  };
-
-  const getDurationHintSeconds = (url) => {
-    if (!url) {
-      return 0;
-    }
-
-    let parsed;
-    try {
-      parsed = url.includes("://") ? new URL(url) : new URL(url, "http://localhost");
-    } catch (error) {
-      return 0;
-    }
-
-    const params = parsed.searchParams;
-    if (!params || Array.from(params.keys()).length === 0) {
-      return 0;
-    }
-
-    const secondsKeys = new Set(["duration", "dur", "length", "len", "time", "t", "seconds", "sec", "s"]);
-    const msKeys = new Set(["ms", "msec", "millis", "milliseconds"]);
-    const componentMsKeys = new Set(["in", "out", "hold", "gap", "pause", "delay", "start", "intro", "outro", "spin", "loop", "dwell"]);
-
-    for (const key of secondsKeys) {
-      const value = params.get(key);
-      if (!value) {
-        continue;
-      }
-      const parsedValue = Number.parseFloat(value);
-      if (Number.isFinite(parsedValue) && parsedValue > 0) {
-        return parsedValue >= 1000 ? parsedValue / 1000 : parsedValue;
-      }
-    }
-
-    for (const key of msKeys) {
-      const value = params.get(key);
-      if (!value) {
-        continue;
-      }
-      const parsedValue = Number.parseFloat(value);
-      if (Number.isFinite(parsedValue) && parsedValue > 0) {
-        return parsedValue / 1000;
-      }
-    }
-
-    let totalMs = 0;
-    params.forEach((value, rawKey) => {
-      const key = rawKey.toLowerCase();
-      const baseKey = key.replace(/\d+$/, "");
-      if (!componentMsKeys.has(baseKey)) {
-        return;
-      }
-      const parsedValue = Number.parseFloat(value);
-      if (Number.isFinite(parsedValue) && parsedValue > 0) {
-        totalMs += parsedValue;
-      }
-    });
-
-    if (totalMs > 0) {
-      return Math.max(totalMs / 1000, getTypewriterDurationHintSeconds(params));
-    }
-
-    const typewriterHint = getTypewriterDurationHintSeconds(params);
-    if (typewriterHint > 0) {
-      return typewriterHint;
-    }
-
-    return 0;
-  };
-
-  const getTypewriterDurationHintSeconds = (params) => {
-    if (!params) {
-      return 0;
-    }
-
-    const sentenceEntries = [];
-    params.forEach((value, key) => {
-      if (!value) {
-        return;
-      }
-      if (/^s\d+$/i.test(key)) {
-        sentenceEntries.push(value);
-      }
-    });
-
-    if (!sentenceEntries.length) {
-      return 0;
-    }
-
-    const cps = Number.parseFloat(params.get("cps") || "22");
-    const inMs = Number.parseFloat(params.get("in") || "420");
-    const outMs = Number.parseFloat(params.get("out") || "360");
-    const holdMs = Number.parseFloat(params.get("hold") || "2600");
-    const gapMs = Number.parseFloat(params.get("gap") || "320");
-    const pauseMs = Number.parseFloat(params.get("pause") || "650");
-
-    const safeCps = Number.isFinite(cps) && cps > 0 ? cps : 22;
-    const safeIn = Number.isFinite(inMs) && inMs >= 0 ? inMs : 0;
-    const safeOut = Number.isFinite(outMs) && outMs >= 0 ? outMs : 0;
-    const safeHold = Number.isFinite(holdMs) && holdMs >= 0 ? holdMs : 0;
-    const safeGap = Number.isFinite(gapMs) && gapMs >= 0 ? gapMs : 0;
-    const safePause = Number.isFinite(pauseMs) && pauseMs >= 0 ? pauseMs : 0;
-
-    const typingMs = sentenceEntries.reduce((total, sentence) => {
-      const length = sentence.trim().length;
-      return total + (length / safeCps) * 1000;
-    }, 0);
-
-    const sentenceCount = sentenceEntries.length;
-    const gaps = sentenceCount > 1 ? safeGap * (sentenceCount - 1) : 0;
-    const holds = safeHold * sentenceCount;
-    const pauses = safePause * sentenceCount;
-
-    const totalMs = safeIn + typingMs + pauses + holds + gaps + safeOut;
-    if (!Number.isFinite(totalMs) || totalMs <= 0) {
-      return 0;
-    }
-
-    return totalMs / 1000;
-  };
-
-  const extractPathname = (url) => {
-    if (!url) {
-      return "";
-    }
-    if (!url.includes("://")) {
-      return url;
-    }
-    try {
-      return new URL(url).pathname.toLowerCase();
-    } catch (error) {
-      return url;
-    }
-  };
-
-  const classifyUrl = (url) => {
-    const lower = (url || "").toLowerCase();
-    const path = extractPathname(lower);
-
-    if (audioExt.some((ext) => path.endsWith(ext))) {
-      return "audio";
-    }
-    if (imageExt.some((ext) => path.endsWith(ext))) {
-      return "image";
-    }
-    if (pageExt.some((ext) => path.endsWith(ext))) {
-      return "page";
-    }
-    if (videoExt.some((ext) => path.endsWith(ext))) {
-      return "video";
-    }
-    return "video";
-  };
-
-  const isHttpUrl = (url) => /^https?:\/\//i.test(url || "");
-
-  const uuid = () => {
-    if (typeof window !== "undefined" && window.crypto && typeof window.crypto.randomUUID === "function") {
-      return window.crypto.randomUUID();
-    }
-    if (typeof window !== "undefined" && window.crypto && typeof window.crypto.getRandomValues === "function") {
-      const bytes = new Uint8Array(16);
-      window.crypto.getRandomValues(bytes);
-      bytes[6] = (bytes[6] & 0x0f) | 0x40;
-      bytes[8] = (bytes[8] & 0x3f) | 0x80;
-      const hex = Array.from(bytes)
-        .map((value) => value.toString(16).padStart(2, "0"))
-        .join("");
-      return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-    }
-    return `id_${Date.now().toString(16)}_${Math.random().toString(16).slice(2)}`;
-  };
-
-  const getPlaybackStartIndex = (activeIndex, totalNodes) => {
-    const total = Number.isFinite(totalNodes) ? totalNodes : 0;
-    if (total <= 0) {
-      return -1;
-    }
-
-    if (!Number.isFinite(activeIndex) || activeIndex < 0 || activeIndex >= total) {
-      return 0;
-    }
-
-    return activeIndex;
-  };
-
-  const resolvePlaybackScope = (selectedIndex, totalNodes) => {
-    const total = Number.isFinite(totalNodes) ? totalNodes : 0;
-    if (total <= 0) {
-      return { mode: "empty", startIndex: -1 };
-    }
-
-    if (Number.isFinite(selectedIndex) && selectedIndex >= 0 && selectedIndex < total) {
-      return { mode: "node", startIndex: selectedIndex };
-    }
-
-    return { mode: "timeline", startIndex: 0 };
-  };
-
-  const buildNodeDescriptor = (node) => {
-    const text = node && node.text ? String(node.text) : "";
-    const parsed = parseNodeText(text);
-    const baseUrl = parsed.baseUrl || "";
-    const baseKind = baseUrl ? classifyUrl(baseUrl) : "unknown";
-    const overlays = [];
-    const ambient = [];
-
-    parsed.layers.forEach((url) => {
-      const kind = classifyUrl(url);
-      if (kind === "audio") {
-        ambient.push({ url, kind });
-        return;
-      }
-      overlays.push({ url, kind });
-    });
-
-    return {
-      id: node && node.id ? node.id : "",
-      text,
-      durationOverride: node && node.durationOverride ? node.durationOverride : "",
-      base: { url: baseUrl, kind: baseKind },
-      overlays,
-      ambient
-    };
-  };
-
-  const buildTimelineDescriptor = (timeline) => {
-    const safeTimeline = timeline || { nodes: [], activeIndex: 0 };
-    const nodes = Array.isArray(safeTimeline.nodes) ? safeTimeline.nodes : [];
-    const activeIndex = Number.isFinite(safeTimeline.activeIndex) ? safeTimeline.activeIndex : 0;
-
-    return {
-      version: Number.isFinite(safeTimeline.version) ? safeTimeline.version : 1,
-      activeIndex,
-      nodes,
-      nodesStructured: nodes.map((node) => buildNodeDescriptor(node))
-    };
-  };
-
-  const buildTimelinePlayerUrl = ({
-    origin,
-    timeline,
-    name,
-    autoplay = true,
-    hud = false
-  } = {}) => {
-    if (!origin) {
-      return "";
-    }
-
-    const payload = encodeTimelinePayload(
-      buildTimelineDescriptor(timeline || { version: 1, nodes: [], activeIndex: 0 })
-    );
-    if (!payload) {
-      return "";
-    }
-
-    let url;
-    try {
-      url = new URL("/program-monitor/timeline_player.html", origin);
-    } catch (error) {
-      return "";
-    }
-
-    url.searchParams.set("data", payload);
-    if (name) {
-      url.searchParams.set("name", name);
-    }
-    url.searchParams.set("autoplay", autoplay ? "1" : "0");
-    url.searchParams.set("hud", hud ? "1" : "0");
-
-    return url.toString();
-  };
-
-  const encodeTimelinePayload = (payload) => {
-    if (payload === undefined) {
-      return "";
-    }
-    try {
-      const json = JSON.stringify(payload);
-      if (typeof Buffer !== "undefined") {
-        return Buffer.from(json, "utf8").toString("base64");
-      }
-      if (typeof window !== "undefined" && typeof window.btoa === "function") {
-        const encoder = new TextEncoder();
-        const bytes = encoder.encode(json);
-        let binary = "";
-        bytes.forEach((value) => {
-          binary += String.fromCharCode(value);
-        });
-        return window.btoa(binary);
-      }
-      return "";
-    } catch (error) {
-      return "";
-    }
-  };
-
-  const decodeTimelinePayload = (value) => {
-    if (!value) {
-      return null;
-    }
-    try {
-      let json = "";
-      if (typeof Buffer !== "undefined") {
-        json = Buffer.from(value, "base64").toString("utf8");
-      } else if (typeof window !== "undefined" && typeof window.atob === "function") {
-        const binary = window.atob(value);
-        const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-        const decoder = new TextDecoder("utf-8");
-        json = decoder.decode(bytes);
-      }
-      return json ? JSON.parse(json) : null;
-    } catch (error) {
-      return null;
-    }
-  };
-
-  return {
-    STORAGE_KEY,
-    parseNodeText,
-    getDurationHintSeconds,
-    classifyUrl,
-    isHttpUrl,
-    uuid,
-    getPlaybackStartIndex,
-    resolvePlaybackScope,
-    buildNodeDescriptor,
-    buildTimelineDescriptor,
-    buildTimelinePlayerUrl,
-    encodeTimelinePayload,
-    decodeTimelinePayload
-  };
-})();
-
-const programMonitorUtils = window.ProgramMonitorUtils || fallbackUtils;
-const {
+import {
+  parseNodeText,
   classifyUrl,
   getDurationHintSeconds,
-  getPlaybackStartIndex,
-  isHttpUrl,
-  parseNodeText,
-  buildNodeDescriptor,
-  buildTimelineDescriptor,
-  buildTimelinePlayerUrl,
   encodeTimelinePayload,
-  resolvePlaybackScope,
-  STORAGE_KEY,
-  uuid
-} = programMonitorUtils;
+  buildTimelineDescriptor,
+  compileTimeline
+} from "./timeline/core.js";
+
+const STORAGE_KEY = "program-monitor.timeline.v1";
+
+function isHttpUrl(url) {
+  return /^https?:\/\//i.test(url || "");
+}
+
+function uuid() {
+  if (typeof window !== "undefined" && window.crypto && typeof window.crypto.randomUUID === "function") {
+    return window.crypto.randomUUID();
+  }
+  if (typeof window !== "undefined" && window.crypto && typeof window.crypto.getRandomValues === "function") {
+    const bytes = new Uint8Array(16);
+    window.crypto.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes)
+      .map((value) => value.toString(16).padStart(2, "0"))
+      .join("");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+  return `id_${Date.now().toString(16)}_${Math.random().toString(16).slice(2)}`;
+}
+
+function getPlaybackStartIndex(activeIndex, totalNodes) {
+  const total = Number.isFinite(totalNodes) ? totalNodes : 0;
+  if (total <= 0) {
+    return -1;
+  }
+
+  if (!Number.isFinite(activeIndex) || activeIndex < 0 || activeIndex >= total) {
+    return 0;
+  }
+
+  return activeIndex;
+}
+
+function resolvePlaybackScope(selectedIndex, totalNodes) {
+  const total = Number.isFinite(totalNodes) ? totalNodes : 0;
+  if (total <= 0) {
+    return { mode: "empty", startIndex: -1 };
+  }
+
+  if (Number.isFinite(selectedIndex) && selectedIndex >= 0 && selectedIndex < total) {
+    return { mode: "node", startIndex: selectedIndex };
+  }
+
+  return { mode: "timeline", startIndex: 0 };
+}
+
+function buildTimelinePlayerUrl({
+  origin,
+  timeline,
+  name,
+  autoplay = true,
+  hud = false
+} = {}) {
+  if (!origin) {
+    return "";
+  }
+
+  const payload = encodeTimelinePayload(
+    buildTimelineDescriptor(timeline || { version: 1, nodes: [], activeIndex: 0 })
+  );
+  if (!payload) {
+    return "";
+  }
+
+  let url;
+  try {
+    url = new URL("/program-monitor/timeline_player.html", origin);
+  } catch (error) {
+    return "";
+  }
+
+  url.searchParams.set("data", payload);
+  if (name) {
+    url.searchParams.set("name", name);
+  }
+  url.searchParams.set("autoplay", autoplay ? "1" : "0");
+  url.searchParams.set("hud", hud ? "1" : "0");
+
+  return url.toString();
+}
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -503,6 +202,20 @@ const renderApiPort = 8793;
 const renderApiBase = isFileProtocol ? `http://${host}:${renderApiPort}` : "";
 const downloadBase = isFileProtocol ? `http://${host}:8789` : window.location.origin;
 const DEFAULT_IMAGE_DURATION_SECONDS = 5;
+const DEFAULT_EXPORT_OPTIONS = Object.freeze({ fps: 60, width: 1080, height: 1920 });
+
+function compileCurrentTimelinePlan() {
+  return compileTimeline({
+    timeline: {
+      version: 1,
+      nodes: state.nodes,
+      activeIndex: state.activeIndex
+    },
+    fps: DEFAULT_EXPORT_OPTIONS.fps,
+    width: DEFAULT_EXPORT_OPTIONS.width,
+    height: DEFAULT_EXPORT_OPTIONS.height
+  });
+}
 
 function apiUrl(path) {
   const normalized = path.startsWith("/") ? path : `/${path}`;
@@ -2826,7 +2539,7 @@ async function exportNode() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       node: { text: nodeText, duration_seconds: durationSeconds },
-      options: { fps: 60, width: 1080, height: 1920 }
+      options: DEFAULT_EXPORT_OPTIONS
     })
   });
 
@@ -2914,8 +2627,9 @@ async function exportTimeline() {
       project_id: projectId,
       stage_id: stageId || undefined,
       timeline: stageId ? undefined : timelinePayload,
+      render_plan: compileCurrentTimelinePlan(),
       format: "mov",
-      options: { fps: 60, width: 1080, height: 1920 }
+      options: DEFAULT_EXPORT_OPTIONS
     })
   });
 
