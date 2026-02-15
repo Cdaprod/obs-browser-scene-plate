@@ -153,6 +153,14 @@ body.preview-collapsed .previewPanel {
   color: var(--muted);
 }
 
+
+.projectStatus {
+  width: 100%;
+  font-size: 12px;
+  color: var(--muted);
+  opacity: 0.9;
+  overflow-wrap: anywhere;
+}
 .projectList {
   display: flex;
   flex-direction: column;

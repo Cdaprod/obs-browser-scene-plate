@@ -167,6 +167,7 @@ const elements = {
   projectToolbar: $("#projectToolbar"),
   projectName: $("#projectName"),
   projectList: $("#projectList"),
+  projectsStatus: $("#projectsStatus"),
   projectsToggle: $("#btnProjects"),
   projectSave: $("#projectSave"),
   openStage: $("#btnOpenStage"),
@@ -215,33 +216,27 @@ function supportsProjectApi() {
   return window.location.port !== "4173";
 }
 
-function getAppBaseUrl() {
+function resolveProjectIndexUrl() {
   const baseTag = document.querySelector("base");
-  if (baseTag?.href) {
-    return baseTag.href;
-  }
-  return new URL(".", window.location.href).toString();
-}
-
-function getProjectIndexCandidateUrls() {
-  const appBase = getAppBaseUrl();
-  const currentUrl = new URL(window.location.href);
-  const origin = window.location.origin;
-  const candidates = [
-    new URL("projects/_index.json", appBase).toString(),
-    new URL("./projects/_index.json", currentUrl).toString(),
-    new URL("/program-monitor/projects/_index.json", origin).toString(),
-    new URL("/projects/_index.json", origin).toString()
-  ];
-  return Array.from(new Set(candidates));
+  const baseUrl = baseTag?.href ? new URL(baseTag.href) : new URL(window.location.href);
+  baseUrl.pathname = baseUrl.pathname.replace(/[^/]*$/, "");
+  return new URL("projects/_index.json", baseUrl).toString();
 }
 
 async function fetchJsonNoStore(url) {
-  const res = await fetch(url, { cache: "no-store" });
+  const separator = url.includes("?") ? "&" : "?";
+  const finalUrl = `${url}${separator}_=${Date.now()}`;
+  const res = await fetch(finalUrl, {
+    cache: "no-store",
+    headers: {
+      "Cache-Control": "no-store"
+    }
+  });
   if (!res.ok) {
-    throw new Error(`HTTP ${res.status} ${res.statusText}`);
+    throw new Error(`HTTP ${res.status} ${res.statusText} @ ${finalUrl}`);
   }
-  return res.json();
+  const data = await res.json();
+  return { data, finalUrl };
 }
 const renderApiPort = 8793;
 const renderApiBase = isFileProtocol ? `http://${host}:${renderApiPort}` : "";
@@ -276,6 +271,13 @@ function autogrow(el) {
 
 function setMessage(text) {
   elements.message.textContent = text || "";
+}
+
+function setProjectsStatus(text) {
+  if (!elements.projectsStatus) {
+    return;
+  }
+  elements.projectsStatus.textContent = text || "";
 }
 
 async function readJsonResponse(res) {
@@ -1476,29 +1478,31 @@ async function loadProjectIndexWithFallback() {
   const localProjects = mapLocalEntriesToProjectIndex(loadProjects());
   const deletedProjectMap = loadDeletedProjectMap();
   if (!isFileProtocol) {
-    const candidateUrls = getProjectIndexCandidateUrls();
-    console.info("[projects] trying stage index urls=", candidateUrls);
-    for (const stageIndexUrl of candidateUrls) {
-      try {
-        const json = await fetchJsonNoStore(`${stageIndexUrl}?_=${Date.now()}`);
-        const staticProjects = normalizeProjectIndexPayload(json);
-        console.info("[projects] stage index loaded; count=", staticProjects.length, "url=", stageIndexUrl);
-        if (staticProjects.length) {
-          const { merged, revivedProjectIds } = mergeProjectEntries(staticProjects, localProjects, deletedProjectMap);
-          if (revivedProjectIds.length) {
-            revivedProjectIds.forEach((projectId) => {
-              delete deletedProjectMap[projectId];
-            });
-            saveDeletedProjectMap(deletedProjectMap);
-          }
-          saveProjects(mapProjectIndexEntriesToLocal(merged).slice(0, PROJECTS_LIMIT));
-          return merged;
-        }
-      } catch (error) {
-        console.warn("[projects] stage index candidate failed", stageIndexUrl, error);
+    const indexUrl = resolveProjectIndexUrl();
+    setProjectsStatus(`Loading index: ${indexUrl}`);
+    console.info("[projects] loading stage index=", indexUrl);
+    try {
+      const { data, finalUrl } = await fetchJsonNoStore(indexUrl);
+      const staticProjects = normalizeProjectIndexPayload(data);
+      if (!Array.isArray(data?.projects)) {
+        throw new Error(`Index schema invalid @ ${finalUrl}`);
       }
+      console.info("[projects] stage index loaded; count=", staticProjects.length, "url=", finalUrl);
+      setProjectsStatus(`Index OK: ${finalUrl} (${staticProjects.length} projects)`);
+      const { merged, revivedProjectIds } = mergeProjectEntries(staticProjects, localProjects, deletedProjectMap);
+      if (revivedProjectIds.length) {
+        revivedProjectIds.forEach((projectId) => {
+          delete deletedProjectMap[projectId];
+        });
+        saveDeletedProjectMap(deletedProjectMap);
+      }
+      saveProjects(mapProjectIndexEntriesToLocal(merged).slice(0, PROJECTS_LIMIT));
+      return merged;
+    } catch (error) {
+      console.warn("[projects] stage index failed", indexUrl, error);
+      setProjectsStatus(`Index unavailable: ${error?.message || error}`);
+      setMessage("Projects index unavailable; showing local saved projects only.");
     }
-    setMessage("Projects index unavailable; showing local saved projects only.");
   }
   return localProjects.filter((entry) => {
     const id = entry.project_id || entry.id;
