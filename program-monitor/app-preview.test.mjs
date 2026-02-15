@@ -75,7 +75,9 @@ test("project drafts persist locally per selected project", () => {
 test("project list storage supports migration and static index fallback", () => {
   assert.ok(source.includes("program-monitor.projects.v1"));
   assert.ok(source.includes("program-monitor.projects.migrated.v1"));
+  assert.ok(source.includes("program-monitor.projects.deleted.v1"));
   assert.ok(source.includes('localStorage.getItem("program-monitor.pr")'));
+  assert.ok(source.includes("markProjectDeleted"));
   assert.ok(source.includes("function supportsProjectApi()"));
   assert.ok(source.includes('window.location.port !== "4173"'));
   assert.ok(source.includes('if (!supportsProjectApi()) {'));
