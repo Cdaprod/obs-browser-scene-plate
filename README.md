@@ -83,6 +83,13 @@ If `RENDERS_HOST_PATH` is not set, outputs fall back to `./renders` in the repo.
 
 `RENDERS_HOST_PATH=/mnt/b/Video/Projects/P7-SHARED-Procedurally-Generated/ingest/originals`
 
+
+**Program Monitor projects index source (Windows):**
+
+`PROGRAM_MONITOR_PROJECTS_PATH=B:/Video/Projects/P7-SHARED-Procedurally-Generated/ingest/originals/workspace/projects`
+
+Program Monitor reads `/program-monitor/projects/_index.json` from this mapped host folder.
+
 ---
 
 ## Program Monitor

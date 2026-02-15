@@ -69,10 +69,17 @@ Program Monitor reads the stage index from `/program-monitor/projects/_index.jso
 
 Set `PROGRAM_MONITOR_PROJECTS_PATH` in your shell or `.env` if your editable projects live somewhere else (for example, an SMB/shared path used by iOS Files/Textastic).
 
-Example:
+Examples:
 
 ```sh
-PROGRAM_MONITOR_PROJECTS_PATH=/mnt/media/Video/Projects/P7-SHARED-Procedurally-Generated/ingest/originals/program-monitor/projects
+# Windows host path
+PROGRAM_MONITOR_PROJECTS_PATH=B:/Video/Projects/P7-SHARED-Procedurally-Generated/ingest/originals/workspace/projects
+docker compose up -d --force-recreate
+```
+
+```sh
+# Linux/WSL host path
+PROGRAM_MONITOR_PROJECTS_PATH=/mnt/b/Video/Projects/P7-SHARED-Procedurally-Generated/ingest/originals/workspace/projects
 docker compose up -d --force-recreate
 ```
 
