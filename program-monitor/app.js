@@ -119,6 +119,7 @@ const state = {
 
 const PROJECTS_KEY = "program-monitor.projects.v1";
 const PROJECTS_MIGRATION_KEY = "program-monitor.projects.migrated.v1";
+const PROJECTS_DELETED_KEY = "program-monitor.projects.deleted.v1";
 const PROJECTS_LIMIT = 20;
 const PROJECT_ACTIVE_KEY = "program-monitor.project.active.v1";
 const PROJECT_DRAFT_PREFIX = "programMonitor:draft:";
@@ -1277,6 +1278,46 @@ function migrateLegacyProjectEntry(entries) {
   }
 }
 
+
+function loadDeletedProjectIds() {
+  try {
+    const raw = localStorage.getItem(PROJECTS_DELETED_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((id) => typeof id === "string" && id) : [];
+  } catch (error) {
+    console.warn("Failed to load deleted project ids", error);
+    return [];
+  }
+}
+
+function saveDeletedProjectIds(ids) {
+  try {
+    const unique = Array.from(new Set(ids.filter((id) => typeof id === "string" && id)));
+    localStorage.setItem(PROJECTS_DELETED_KEY, JSON.stringify(unique));
+  } catch (error) {
+    console.warn("Failed to save deleted project ids", error);
+  }
+}
+
+function markProjectDeleted(projectId) {
+  if (!projectId) {
+    return;
+  }
+  const deleted = loadDeletedProjectIds();
+  if (deleted.includes(projectId)) {
+    return;
+  }
+  saveDeletedProjectIds([...deleted, projectId]);
+}
+
+function clearProjectDeletedMark(projectId) {
+  if (!projectId) {
+    return;
+  }
+  const next = loadDeletedProjectIds().filter((id) => id !== projectId);
+  saveDeletedProjectIds(next);
+}
+
 function saveProjects(entries) {
   const index = entries.reduce((acc, entry) => {
     if (entry && entry.name) {
@@ -1335,12 +1376,16 @@ function mapProjectIndexEntriesToLocal(entries) {
     }));
 }
 
-function mergeProjectEntries(stageEntries, localEntries) {
-  const merged = [...stageEntries];
+function mergeProjectEntries(stageEntries, localEntries, deletedIds = []) {
+  const deleted = new Set(deletedIds);
+  const merged = stageEntries.filter((entry) => {
+    const id = entry.project_id || entry.id;
+    return id && !deleted.has(id);
+  });
   const seen = new Set(merged.map((entry) => entry.project_id || entry.id));
   localEntries.forEach((entry) => {
     const id = entry.project_id || entry.id;
-    if (id && !seen.has(id)) {
+    if (id && !deleted.has(id) && !seen.has(id)) {
       merged.push(entry);
       seen.add(id);
     }
@@ -1365,6 +1410,7 @@ function normalizeProjectIndexPayload(payload) {
 
 async function loadProjectIndexWithFallback() {
   const localProjects = mapLocalEntriesToProjectIndex(loadProjects());
+  const deletedProjectIds = loadDeletedProjectIds();
   if (!isFileProtocol) {
     const appBase = getAppBaseUrl();
     const stageIndexUrl = new URL("projects/_index.json", appBase).toString();
@@ -1375,7 +1421,7 @@ async function loadProjectIndexWithFallback() {
       const staticProjects = normalizeProjectIndexPayload(json);
       console.info("[projects] stage index loaded; count=", staticProjects.length);
       if (staticProjects.length) {
-        const merged = mergeProjectEntries(staticProjects, localProjects);
+        const merged = mergeProjectEntries(staticProjects, localProjects, deletedProjectIds);
         saveProjects(mapProjectIndexEntriesToLocal(merged).slice(0, PROJECTS_LIMIT));
         return merged;
       }
@@ -1383,7 +1429,10 @@ async function loadProjectIndexWithFallback() {
       console.warn("[projects] stage index failed; falling back to localStorage", error);
     }
   }
-  return localProjects;
+  return localProjects.filter((entry) => {
+    const id = entry.project_id || entry.id;
+    return id && !deletedProjectIds.includes(id);
+  });
 }
 
 async function loadProjectEntry(entry) {
@@ -1503,6 +1552,7 @@ function renderProjects() {
     deleteBtn.addEventListener("click", async () => {
       const next = loadProjects().filter((itemEntry) => itemEntry.id !== projectId);
       saveProjects(next);
+      markProjectDeleted(projectId);
       if (currentProjectId === projectId) {
         setCurrentProjectId("");
       }
@@ -1554,6 +1604,7 @@ async function saveProject() {
       ...existing.filter((entry) => entry.id !== projectId)
     ].slice(0, PROJECTS_LIMIT);
     saveProjects(nextEntries);
+    clearProjectDeletedMark(projectId);
     setCurrentProjectId(projectId);
 
     const saved = await saveProjectState(projectId, { name });
