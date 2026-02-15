@@ -213,6 +213,22 @@ function supportsProjectApi() {
   }
   return window.location.port !== "4173";
 }
+
+function getAppBaseUrl() {
+  const baseTag = document.querySelector("base");
+  if (baseTag?.href) {
+    return baseTag.href;
+  }
+  return new URL(".", window.location.href).toString();
+}
+
+async function fetchJsonNoStore(url) {
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status} ${res.statusText}`);
+  }
+  return res.json();
+}
 const renderApiPort = 8793;
 const renderApiBase = isFileProtocol ? `http://${host}:${renderApiPort}` : "";
 const downloadBase = isFileProtocol ? `http://${host}:8789` : window.location.origin;
@@ -1308,6 +1324,30 @@ function mapLocalEntriesToProjectIndex(entries) {
   }));
 }
 
+function mapProjectIndexEntriesToLocal(entries) {
+  return entries
+    .filter((entry) => entry && (entry.project_id || entry.id || entry.name))
+    .map((entry) => ({
+      id: entry.project_id || entry.id || buildProjectId(entry.name || "project"),
+      name: entry.name || entry.project_id || entry.id || "Untitled",
+      savedAt: entry.updated_at ? Date.parse(entry.updated_at) || Date.now() : Date.now(),
+      timeline: entry.timeline || null
+    }));
+}
+
+function mergeProjectEntries(stageEntries, localEntries) {
+  const merged = [...stageEntries];
+  const seen = new Set(merged.map((entry) => entry.project_id || entry.id));
+  localEntries.forEach((entry) => {
+    const id = entry.project_id || entry.id;
+    if (id && !seen.has(id)) {
+      merged.push(entry);
+      seen.add(id);
+    }
+  });
+  return merged;
+}
+
 function normalizeProjectIndexPayload(payload) {
   const sourceEntries = Array.isArray(payload)
     ? payload
@@ -1326,26 +1366,21 @@ function normalizeProjectIndexPayload(payload) {
 async function loadProjectIndexWithFallback() {
   const localProjects = mapLocalEntriesToProjectIndex(loadProjects());
   if (!isFileProtocol) {
+    const appBase = getAppBaseUrl();
+    const stageIndexUrl = new URL("projects/_index.json", appBase).toString();
+    console.info("[projects] appBase=", appBase);
+    console.info("[projects] trying stage index=", stageIndexUrl);
     try {
-      const indexRes = await fetch("/program-monitor/projects/_index.json", { cache: "no-store" });
-      if (indexRes.ok) {
-        const json = await indexRes.json();
-        const staticProjects = normalizeProjectIndexPayload(json);
-        if (staticProjects.length) {
-          const merged = [...localProjects];
-          const seen = new Set(merged.map((entry) => entry.project_id || entry.id));
-          staticProjects.forEach((entry) => {
-            const id = entry.project_id || entry.id;
-            if (id && !seen.has(id)) {
-              merged.push(entry);
-              seen.add(id);
-            }
-          });
-          return merged;
-        }
+      const json = await fetchJsonNoStore(stageIndexUrl);
+      const staticProjects = normalizeProjectIndexPayload(json);
+      console.info("[projects] stage index loaded; count=", staticProjects.length);
+      if (staticProjects.length) {
+        const merged = mergeProjectEntries(staticProjects, localProjects);
+        saveProjects(mapProjectIndexEntriesToLocal(merged).slice(0, PROJECTS_LIMIT));
+        return merged;
       }
     } catch (error) {
-      console.warn("Static project index unavailable, falling back to local storage", error);
+      console.warn("[projects] stage index failed; falling back to localStorage", error);
     }
   }
   return localProjects;

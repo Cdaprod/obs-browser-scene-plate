@@ -75,11 +75,13 @@ test("project drafts persist locally per selected project", () => {
 test("project list storage supports migration and static index fallback", () => {
   assert.ok(source.includes("program-monitor.projects.v1"));
   assert.ok(source.includes("program-monitor.projects.migrated.v1"));
-  assert.ok(source.includes('fetch("/program-monitor/projects/_index.json"'));
   assert.ok(source.includes('localStorage.getItem("program-monitor.pr")'));
   assert.ok(source.includes("function supportsProjectApi()"));
   assert.ok(source.includes('window.location.port !== "4173"'));
   assert.ok(source.includes('if (!supportsProjectApi()) {'));
+  assert.ok(source.includes("function getAppBaseUrl()"));
+  assert.ok(source.includes('new URL("projects/_index.json", appBase).toString()'));
+  assert.ok(source.includes('console.info("[projects] trying stage index=", stageIndexUrl);'));
 });
 
 test("stop and scrub preserve frame position", () => {
