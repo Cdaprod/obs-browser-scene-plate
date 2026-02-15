@@ -1709,7 +1709,6 @@ function clearExportPoll() {
 }
 
 function clearBaseHandlers() {
-  clearDurationListeners();
   if (baseEndedHandler) {
     elements.baseVideo.removeEventListener("ended", baseEndedHandler);
     baseEndedHandler = null;
@@ -1738,18 +1737,37 @@ function isMediaDurationClock() {
     && state.durationInfo?.source === "base";
 }
 
+function formatDurationDisplay(durationInfo) {
+  if (durationInfo?.source === "base" && durationInfo?.state === "unbounded") {
+    return "live";
+  }
+  const duration = Number(durationInfo?.duration);
+  if (Number.isFinite(duration) && duration > 0) {
+    return duration.toFixed(2);
+  }
+  return durationInfo?.source === "base" ? "loading…" : "0.00";
+}
+
 function updateMediaDurationFromVideo(videoEl = elements.baseVideo) {
   const resolved = resolveMediaDurationSeconds(videoEl);
   if (resolved.state === "ready") {
-    state.durationInfo = { duration: resolved.seconds, source: "base" };
-    elements.statDur.textContent = resolved.seconds.toFixed(2);
+    state.durationInfo = { duration: resolved.seconds, source: "base", state: resolved.state };
+    elements.statDur.textContent = formatDurationDisplay(state.durationInfo);
     setPreviewScrubberDisabled(false);
     updateTimelineMetrics();
     return true;
   }
 
-  state.durationInfo = { duration: 0, source: "base" };
-  elements.statDur.textContent = "loading…";
+  if (resolved.state === "unbounded") {
+    state.durationInfo = { duration: 0, source: "base", state: resolved.state };
+    elements.statDur.textContent = formatDurationDisplay(state.durationInfo);
+    setPreviewScrubberDisabled(true);
+    updateTimelineMetrics();
+    return false;
+  }
+
+  state.durationInfo = { duration: 0, source: "base", state: resolved.state };
+  elements.statDur.textContent = formatDurationDisplay(state.durationInfo);
   setPreviewScrubberDisabled(true);
   return false;
 }
@@ -1763,6 +1781,8 @@ function bindBaseDurationListeners() {
     const ready = updateMediaDurationFromVideo(elements.baseVideo);
     if (ready) {
       setMessage("");
+    } else if (state.durationInfo?.state === "unbounded") {
+      setMessage("Live stream duration is unbounded.");
     } else {
       setMessage("loading duration…");
     }
@@ -1807,7 +1827,7 @@ function resolveDurationInfo({ baseKind, baseUrl, overrideSeconds, baseDuration,
     if (base) {
       return { duration: base, source: "base" };
     }
-    return { duration: 0, source: "base" };
+    return { duration: 0, source: "base", state: "loading" };
   }
   if (hint) {
     return { duration: hint, source: "hint" };
@@ -1818,6 +1838,7 @@ function resolveDurationInfo({ baseKind, baseUrl, overrideSeconds, baseDuration,
 async function primeNode(index) {
   clearLayers();
   clearBaseHandlers();
+  clearDurationListeners();
   const node = state.nodes[index];
   if (!node) {
     setBaseKind("video");
@@ -1893,12 +1914,17 @@ async function primeNode(index) {
   });
 
   duration = durationInfo.duration;
-  state.durationInfo = durationInfo;
+  state.durationInfo = durationInfo.source === "base"
+    ? { ...durationInfo, state: durationInfo.state || "loading" }
+    : durationInfo;
 
   if (!duration && baseKind !== "page" && baseKind !== "image") {
     if (Number.isFinite(overrideSeconds) && overrideSeconds > 0) {
       setMessage("Using duration override for streaming source.");
       setPreviewScrubberDisabled(false);
+    } else if (state.durationInfo?.state === "unbounded") {
+      setMessage("Live stream duration is unbounded.");
+      setPreviewScrubberDisabled(true);
     } else {
       setMessage("loading duration…");
       setPreviewScrubberDisabled(true);
@@ -1907,7 +1933,7 @@ async function primeNode(index) {
     setPreviewScrubberDisabled(false);
   }
 
-  elements.statDur.textContent = duration > 0 ? duration.toFixed(2) : (durationInfo.source === "base" ? "loading…" : "0.00");
+  elements.statDur.textContent = formatDurationDisplay(state.durationInfo);
   updateStatusDisplay();
   updateTimelineMetrics();
 
@@ -2223,7 +2249,7 @@ async function playActive({ resume = false, startOffsetSeconds = 0 } = {}) {
     const durationInfo = state.durationInfo || { duration: 0, source: "none" };
     const duration = Number.isFinite(durationInfo.duration) ? durationInfo.duration : 0;
     elements.statT.textContent = current.toFixed(2);
-    elements.statDur.textContent = (Number.isFinite(duration) ? duration : 0).toFixed(2);
+    elements.statDur.textContent = formatDurationDisplay(durationInfo);
     updatePreviewScrubber(getTimelineOffset(state.activeIndex) + current);
 
     const shouldAdvanceOnDuration = duration > 0
