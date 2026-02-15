@@ -91,6 +91,9 @@ test("project list storage supports migration and canonical index diagnostics", 
 
 test("saving loaded project reuses active project id when names match", () => {
   assert.ok(source.includes("const cacheEntry = projectEntriesCache.find"));
+  assert.ok(source.includes("currentProjectId"));
+  assert.ok(source.includes("(cacheEntry?.name || \"\") === name"));
+  assert.ok(source.includes("const projectId = isExplicitEdit"));
   assert.ok(source.includes("? currentProjectId"));
 });
 
