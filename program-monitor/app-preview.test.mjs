@@ -6,6 +6,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { resolveMediaDurationSeconds } from "./media-duration.js";
 
 const filePath = path.resolve("program-monitor", "app.js");
 const source = fs.readFileSync(filePath, "utf8");
@@ -102,3 +103,16 @@ test("resume path clears paused base clock before async priming", () => {
   assert.ok(source.includes("state.basePausedAt = 0;"));
 });
 
+
+test("media duration resolver reports loading until finite metadata duration", () => {
+  const video = { duration: Number.NaN };
+  assert.deepEqual(resolveMediaDurationSeconds(video), { state: "loading", seconds: 0 });
+
+  video.duration = 70.75;
+  assert.deepEqual(resolveMediaDurationSeconds(video), { state: "ready", seconds: 70.75 });
+});
+
+test("preview media duration path avoids fallback duration clamp", () => {
+  assert.ok(source.includes('state.durationInfo = { duration: 0, source: "base" };'));
+  assert.ok(source.includes('elements.statDur.textContent = "loading…"'));
+});
