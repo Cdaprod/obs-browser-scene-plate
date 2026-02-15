@@ -118,6 +118,7 @@ const state = {
 };
 
 const PROJECTS_KEY = "program-monitor.projects.v1";
+const PROJECTS_MIGRATION_KEY = "program-monitor.projects.migrated.v1";
 const PROJECTS_LIMIT = 20;
 const PROJECT_ACTIVE_KEY = "program-monitor.project.active.v1";
 const PROJECT_DRAFT_PREFIX = "programMonitor:draft:";
@@ -1197,20 +1198,45 @@ function loadLocal() {
 function loadProjects() {
   try {
     const raw = localStorage.getItem(PROJECTS_KEY);
-    if (!raw) {
-      return [];
-    }
-    const parsed = JSON.parse(raw);
+    const parsed = raw ? JSON.parse(raw) : {};
     const entries = Array.isArray(parsed.entries) ? parsed.entries : [];
-    return entries
+    const normalized = entries
       .filter((entry) => entry && entry.name)
       .map((entry) => ({
         ...entry,
         id: entry.id || uuid()
       }));
+    if (!normalized.length) {
+      return migrateLegacyProjectEntry(normalized);
+    }
+    return normalized;
   } catch (error) {
     console.warn("Failed to load saved projects", error);
     return [];
+  }
+}
+
+function migrateLegacyProjectEntry(entries) {
+  try {
+    const alreadyMigrated = localStorage.getItem(PROJECTS_MIGRATION_KEY) === "1";
+    if (alreadyMigrated) {
+      return entries;
+    }
+
+    const legacyName = (localStorage.getItem("program-monitor.pr") || "").trim();
+    localStorage.setItem(PROJECTS_MIGRATION_KEY, "1");
+    if (!legacyName) {
+      return entries;
+    }
+
+    const projectId = buildProjectId(legacyName);
+    const migratedEntries = [{ id: projectId, name: legacyName, savedAt: Date.now() }, ...entries]
+      .slice(0, PROJECTS_LIMIT);
+    saveProjects(migratedEntries);
+    return migratedEntries;
+  } catch (error) {
+    console.warn("Failed to migrate legacy project entry", error);
+    return entries;
   }
 }
 
@@ -1236,31 +1262,72 @@ function saveProjects(entries) {
 }
 
 async function refreshProjects() {
-  if (isFileProtocol) {
-    projectEntriesCache = loadProjects().map((entry) => ({
-      id: entry.id,
-      project_id: entry.id,
-      name: entry.name,
-      updated_at: entry.savedAt ? new Date(entry.savedAt).toISOString() : "",
-      timeline: entry.timeline || null
-    }));
-    renderProjects();
-    return projectEntriesCache;
-  }
-
   try {
-    projectEntriesCache = await fetchProjectIndex();
+    projectEntriesCache = await loadProjectIndexWithFallback();
     const hasCurrent = projectEntriesCache.some((entry) => (entry.project_id || entry.id) === currentProjectId);
     if (!hasCurrent) {
       const firstProjectId = projectEntriesCache[0]?.project_id || projectEntriesCache[0]?.id || "";
       setCurrentProjectId(firstProjectId);
     }
   } catch (error) {
-    console.warn("Failed to fetch project index", error);
+    console.warn("Failed to refresh project list", error);
     setMessage("Failed to refresh projects list.");
   }
   renderProjects();
   return projectEntriesCache;
+}
+
+function mapLocalEntriesToProjectIndex(entries) {
+  return entries.map((entry) => ({
+    id: entry.id,
+    project_id: entry.id,
+    name: entry.name,
+    updated_at: entry.savedAt ? new Date(entry.savedAt).toISOString() : "",
+    timeline: entry.timeline || null
+  }));
+}
+
+function normalizeProjectIndexPayload(payload) {
+  const sourceEntries = Array.isArray(payload)
+    ? payload
+    : Array.isArray(payload?.projects)
+      ? payload.projects
+      : [];
+  return sourceEntries
+    .filter((entry) => entry && (entry.project_id || entry.id || entry.name))
+    .map((entry) => ({
+      ...entry,
+      project_id: entry.project_id || entry.id || buildProjectId(entry.name || "project"),
+      id: entry.id || entry.project_id || buildProjectId(entry.name || "project")
+    }));
+}
+
+async function loadProjectIndexWithFallback() {
+  const localProjects = mapLocalEntriesToProjectIndex(loadProjects());
+  if (!isFileProtocol) {
+    try {
+      const indexRes = await fetch("/program-monitor/projects/_index.json", { cache: "no-store" });
+      if (indexRes.ok) {
+        const json = await indexRes.json();
+        const staticProjects = normalizeProjectIndexPayload(json);
+        if (staticProjects.length) {
+          const merged = [...localProjects];
+          const seen = new Set(merged.map((entry) => entry.project_id || entry.id));
+          staticProjects.forEach((entry) => {
+            const id = entry.project_id || entry.id;
+            if (id && !seen.has(id)) {
+              merged.push(entry);
+              seen.add(id);
+            }
+          });
+          return merged;
+        }
+      }
+    } catch (error) {
+      console.warn("Static project index unavailable, falling back to local storage", error);
+    }
+  }
+  return localProjects;
 }
 
 async function loadProjectEntry(entry) {
@@ -1269,17 +1336,25 @@ async function loadProjectEntry(entry) {
     return;
   }
 
+  const localTimeline = normalizeProjectTimelinePayload(entry?.timeline);
   if (isFileProtocol) {
-    const timeline = normalizeProjectTimelinePayload(entry.timeline);
-    if (!applyTimelineToEditor(timeline, { projectId, projectName: entry.name })) {
+    if (!applyTimelineToEditor(localTimeline, { projectId, projectName: entry.name })) {
       return;
     }
     return;
   }
 
-  const project = await fetchProjectState(projectId);
   const restoredDraft = loadProjectDraft(projectId);
-  const timeline = restoredDraft || normalizeProjectTimelinePayload(project?.payload);
+  if (restoredDraft || localTimeline) {
+    applyTimelineToEditor(restoredDraft || localTimeline, {
+      projectId,
+      projectName: entry?.name || projectId,
+      notify: false
+    });
+  }
+
+  const project = await fetchProjectState(projectId);
+  const timeline = restoredDraft || normalizeProjectTimelinePayload(project?.payload) || localTimeline;
   if (!applyTimelineToEditor(timeline, {
     projectId,
     projectName: project?.name || entry?.name || projectId
@@ -1370,24 +1445,21 @@ function renderProjects() {
     deleteBtn.type = "button";
     deleteBtn.textContent = "Delete";
     deleteBtn.addEventListener("click", async () => {
-      if (isFileProtocol) {
-        const next = loadProjects().filter((itemEntry) => itemEntry.id !== projectId);
-        saveProjects(next);
-        await refreshProjects();
-        return;
+      const next = loadProjects().filter((itemEntry) => itemEntry.id !== projectId);
+      saveProjects(next);
+      if (currentProjectId === projectId) {
+        setCurrentProjectId("");
       }
-      try {
-        await fetchApiJson(`/api/projects/${encodeURIComponent(projectId)}`, {
-          method: "DELETE"
-        }, "Project delete failed");
-        if (currentProjectId === projectId) {
-          setCurrentProjectId("");
+      if (!isFileProtocol) {
+        try {
+          await fetchApiJson(`/api/projects/${encodeURIComponent(projectId)}`, {
+            method: "DELETE"
+          }, "Project delete failed");
+        } catch (error) {
+          console.warn("Project delete on API failed; removed local entry only.", error);
         }
-        await refreshProjects();
-      } catch (error) {
-        console.error(error);
-        setMessage("Failed to delete project.");
       }
+      await refreshProjects();
     });
 
     actions.appendChild(loadBtn);
@@ -1409,32 +1481,25 @@ async function saveProject() {
     return;
   }
 
-  if (isFileProtocol) {
-    const existing = loadProjects();
-    const current = existing.find((entry) => entry.name === name);
-    const entries = existing.filter((entry) => entry.name !== name);
-    const projectId = current ? current.id : buildProjectId(name);
-    entries.unshift({
-      id: projectId,
-      name,
-      savedAt: Date.now(),
-      timeline: buildProjectPayloadFromState().timeline
-    });
-    const trimmed = entries.slice(0, PROJECTS_LIMIT);
-    saveProjects(trimmed);
-    setCurrentProjectId(projectId);
-    await refreshProjects();
-    setMessage(`Saved project: ${name}`);
-    return;
-  }
-
   try {
-    let projectId = currentProjectId;
-    if (!projectId) {
-      const resolved = await resolveProjectIdByName(name);
-      projectId = resolved.projectId;
-      setCurrentProjectId(projectId);
-    }
+    const existing = loadProjects();
+    const currentEntry = existing.find((entry) => entry.id === currentProjectId) || null;
+    const isExplicitEdit = Boolean(currentEntry && currentEntry.name === name);
+    const projectId = isExplicitEdit
+      ? currentEntry.id
+      : `${buildProjectId(name)}-${uuid().slice(0, 8)}`;
+    const nextEntries = [
+      {
+        id: projectId,
+        name,
+        savedAt: Date.now(),
+        timeline: buildProjectPayloadFromState().timeline
+      },
+      ...existing.filter((entry) => entry.id !== projectId)
+    ].slice(0, PROJECTS_LIMIT);
+    saveProjects(nextEntries);
+    setCurrentProjectId(projectId);
+
     const saved = await saveProjectState(projectId, { name });
     if (elements.projectName) {
       elements.projectName.value = saved?.name || name;
