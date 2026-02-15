@@ -88,6 +88,12 @@ test("project list storage supports migration and canonical index diagnostics", 
   assert.ok(source.includes("revivedProjectIds"));
 });
 
+
+test("saving loaded project reuses active project id when names match", () => {
+  assert.ok(source.includes("const cacheEntry = projectEntriesCache.find"));
+  assert.ok(source.includes("? currentProjectId"));
+});
+
 test("projects panel includes index status row", () => {
   assert.ok(html.includes('id="projectsStatus"'));
 });

@@ -1673,9 +1673,13 @@ async function saveProject() {
   try {
     const existing = loadProjects();
     const currentEntry = existing.find((entry) => entry.id === currentProjectId) || null;
-    const isExplicitEdit = Boolean(currentEntry && currentEntry.name === name);
+    const cacheEntry = projectEntriesCache.find((entry) => (entry.project_id || entry.id) === currentProjectId) || null;
+    const isExplicitEdit = Boolean(
+      currentProjectId
+      && ((currentEntry && currentEntry.name === name) || ((cacheEntry?.name || "") === name))
+    );
     const projectId = isExplicitEdit
-      ? currentEntry.id
+      ? currentProjectId
       : `${buildProjectId(name)}-${uuid().slice(0, 8)}`;
     const nextEntries = [
       {
