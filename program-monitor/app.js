@@ -202,6 +202,17 @@ const OBS_PANEL_COLLAPSE_KEY = "program-monitor.obs-collapsed";
 
 const isFileProtocol = window.location.protocol === "file:";
 const host = window.location.hostname || "localhost";
+
+function supportsProjectApi() {
+  const params = new URLSearchParams(window.location.search || "");
+  if (params.get("pm_api") === "1") {
+    return true;
+  }
+  if (isFileProtocol) {
+    return false;
+  }
+  return window.location.port !== "4173";
+}
 const renderApiPort = 8793;
 const renderApiBase = isFileProtocol ? `http://${host}:${renderApiPort}` : "";
 const downloadBase = isFileProtocol ? `http://${host}:8789` : window.location.origin;
@@ -1068,7 +1079,7 @@ function applyTimelineToEditor(timeline, { projectId = "", projectName = "", not
 }
 
 async function fetchProjectIndex() {
-  if (isFileProtocol) {
+  if (isFileProtocol || !supportsProjectApi()) {
     return loadProjects();
   }
   const data = await fetchApiJson('/api/projects', { cache: "no-store" }, "Project list failed");
@@ -1076,7 +1087,7 @@ async function fetchProjectIndex() {
 }
 
 async function fetchProjectState(projectId) {
-  if (!projectId) {
+  if (!projectId || !supportsProjectApi()) {
     return null;
   }
   const data = await fetchApiJson(
@@ -1104,7 +1115,7 @@ async function resolveProjectIdByName(name) {
 }
 
 async function loadProjectTimeline(projectId) {
-  if (isFileProtocol || !projectId) {
+  if (!projectId || !supportsProjectApi()) {
     return null;
   }
   const project = await fetchProjectState(projectId);
@@ -1112,8 +1123,15 @@ async function loadProjectTimeline(projectId) {
 }
 
 async function saveProjectState(projectId, { name = "" } = {}) {
-  if (isFileProtocol || !projectId) {
+  if (!projectId) {
     return null;
+  }
+  if (!supportsProjectApi()) {
+    return {
+      project_id: projectId,
+      id: projectId,
+      name: String(name || (elements.projectName ? elements.projectName.value : "") || projectId).trim()
+    };
   }
   const payload = buildProjectPayloadFromState();
   const projectName = String(name || (elements.projectName ? elements.projectName.value : "") || projectId).trim();
@@ -1138,6 +1156,9 @@ function scheduleProjectSave() {
     return;
   }
   saveProjectDraft();
+  if (!supportsProjectApi()) {
+    return;
+  }
   if (!currentProjectId) {
     return;
   }
@@ -1353,7 +1374,7 @@ async function loadProjectEntry(entry) {
     });
   }
 
-  const project = await fetchProjectState(projectId);
+  const project = supportsProjectApi() ? await fetchProjectState(projectId) : null;
   const timeline = restoredDraft || normalizeProjectTimelinePayload(project?.payload) || localTimeline;
   if (!applyTimelineToEditor(timeline, {
     projectId,
@@ -1450,7 +1471,7 @@ function renderProjects() {
       if (currentProjectId === projectId) {
         setCurrentProjectId("");
       }
-      if (!isFileProtocol) {
+      if (supportsProjectApi()) {
         try {
           await fetchApiJson(`/api/projects/${encodeURIComponent(projectId)}`, {
             method: "DELETE"
@@ -3200,7 +3221,7 @@ try {
     const storedProjectId = getStoredProjectId();
     if (storedProjectId) {
       setCurrentProjectId(storedProjectId);
-      fetchProjectState(storedProjectId)
+      Promise.resolve(supportsProjectApi() ? fetchProjectState(storedProjectId) : null)
         .then((project) => {
           const draftTimeline = loadProjectDraft(storedProjectId);
           const timeline = draftTimeline || normalizeProjectTimelinePayload(project?.payload);
