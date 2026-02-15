@@ -77,6 +77,9 @@ test("project list storage supports migration and static index fallback", () => 
   assert.ok(source.includes("program-monitor.projects.migrated.v1"));
   assert.ok(source.includes('fetch("/program-monitor/projects/_index.json"'));
   assert.ok(source.includes('localStorage.getItem("program-monitor.pr")'));
+  assert.ok(source.includes("function supportsProjectApi()"));
+  assert.ok(source.includes('window.location.port !== "4173"'));
+  assert.ok(source.includes('if (!supportsProjectApi()) {'));
 });
 
 test("stop and scrub preserve frame position", () => {
