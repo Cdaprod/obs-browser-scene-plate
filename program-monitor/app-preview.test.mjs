@@ -104,15 +104,20 @@ test("resume path clears paused base clock before async priming", () => {
 });
 
 
-test("media duration resolver reports loading until finite metadata duration", () => {
+test("media duration resolver reports loading/unbounded/ready states", () => {
   const video = { duration: Number.NaN };
   assert.deepEqual(resolveMediaDurationSeconds(video), { state: "loading", seconds: 0 });
+
+  video.duration = Number.POSITIVE_INFINITY;
+  assert.deepEqual(resolveMediaDurationSeconds(video), { state: "unbounded", seconds: Number.POSITIVE_INFINITY });
 
   video.duration = 70.75;
   assert.deepEqual(resolveMediaDurationSeconds(video), { state: "ready", seconds: 70.75 });
 });
 
-test("preview media duration path avoids fallback duration clamp", () => {
-  assert.ok(source.includes('state.durationInfo = { duration: 0, source: "base" };'));
-  assert.ok(source.includes('elements.statDur.textContent = "loading…"'));
+test("preview media duration path handles loading/live and listener cleanup", () => {
+  assert.ok(source.includes('setMessage("loading duration…")'));
+  assert.ok(source.includes('setMessage("Live stream duration is unbounded.")'));
+  assert.ok(source.includes('function clearDurationListeners()'));
+  assert.ok(source.includes('function clearBaseHandlers()'));
 });

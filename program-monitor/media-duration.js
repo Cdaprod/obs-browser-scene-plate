@@ -7,6 +7,9 @@ export function resolveMediaDurationSeconds(videoEl) {
   if (Number.isFinite(seconds) && seconds > 0) {
     return { state: "ready", seconds };
   }
+  if (seconds === Number.POSITIVE_INFINITY) {
+    return { state: "unbounded", seconds: Number.POSITIVE_INFINITY };
+  }
   return { state: "loading", seconds: 0 };
 }
 
