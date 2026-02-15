@@ -223,6 +223,19 @@ function getAppBaseUrl() {
   return new URL(".", window.location.href).toString();
 }
 
+function getProjectIndexCandidateUrls() {
+  const appBase = getAppBaseUrl();
+  const currentUrl = new URL(window.location.href);
+  const origin = window.location.origin;
+  const candidates = [
+    new URL("projects/_index.json", appBase).toString(),
+    new URL("./projects/_index.json", currentUrl).toString(),
+    new URL("/program-monitor/projects/_index.json", origin).toString(),
+    new URL("/projects/_index.json", origin).toString()
+  ];
+  return Array.from(new Set(candidates));
+}
+
 async function fetchJsonNoStore(url) {
   const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) {
@@ -1279,21 +1292,46 @@ function migrateLegacyProjectEntry(entries) {
 }
 
 
-function loadDeletedProjectIds() {
+function loadDeletedProjectMap() {
   try {
     const raw = localStorage.getItem(PROJECTS_DELETED_KEY);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed.filter((id) => typeof id === "string" && id) : [];
+    const parsed = raw ? JSON.parse(raw) : {};
+    if (Array.isArray(parsed)) {
+      return parsed.reduce((acc, id) => {
+        if (typeof id === "string" && id) {
+          acc[id] = 0;
+        }
+        return acc;
+      }, {});
+    }
+    if (!parsed || typeof parsed !== "object") {
+      return {};
+    }
+    return Object.entries(parsed).reduce((acc, [id, deletedAt]) => {
+      if (typeof id !== "string" || !id) {
+        return acc;
+      }
+      const normalizedDeletedAt = Number.isFinite(deletedAt) ? deletedAt : Date.parse(String(deletedAt || ""));
+      acc[id] = Number.isFinite(normalizedDeletedAt) ? normalizedDeletedAt : Date.now();
+      return acc;
+    }, {});
   } catch (error) {
     console.warn("Failed to load deleted project ids", error);
-    return [];
+    return {};
   }
 }
 
-function saveDeletedProjectIds(ids) {
+function saveDeletedProjectMap(deletedMap) {
   try {
-    const unique = Array.from(new Set(ids.filter((id) => typeof id === "string" && id)));
-    localStorage.setItem(PROJECTS_DELETED_KEY, JSON.stringify(unique));
+    const normalized = Object.entries(deletedMap || {}).reduce((acc, [id, deletedAt]) => {
+      if (typeof id !== "string" || !id) {
+        return acc;
+      }
+      const value = Number.isFinite(deletedAt) ? deletedAt : Date.now();
+      acc[id] = value;
+      return acc;
+    }, {});
+    localStorage.setItem(PROJECTS_DELETED_KEY, JSON.stringify(normalized));
   } catch (error) {
     console.warn("Failed to save deleted project ids", error);
   }
@@ -1303,19 +1341,24 @@ function markProjectDeleted(projectId) {
   if (!projectId) {
     return;
   }
-  const deleted = loadDeletedProjectIds();
-  if (deleted.includes(projectId)) {
+  const deletedMap = loadDeletedProjectMap();
+  if (Number.isFinite(deletedMap[projectId])) {
     return;
   }
-  saveDeletedProjectIds([...deleted, projectId]);
+  deletedMap[projectId] = Date.now();
+  saveDeletedProjectMap(deletedMap);
 }
 
 function clearProjectDeletedMark(projectId) {
   if (!projectId) {
     return;
   }
-  const next = loadDeletedProjectIds().filter((id) => id !== projectId);
-  saveDeletedProjectIds(next);
+  const deletedMap = loadDeletedProjectMap();
+  if (!(projectId in deletedMap)) {
+    return;
+  }
+  delete deletedMap[projectId];
+  saveDeletedProjectMap(deletedMap);
 }
 
 function saveProjects(entries) {
@@ -1376,21 +1419,42 @@ function mapProjectIndexEntriesToLocal(entries) {
     }));
 }
 
-function mergeProjectEntries(stageEntries, localEntries, deletedIds = []) {
-  const deleted = new Set(deletedIds);
-  const merged = stageEntries.filter((entry) => {
+function mergeProjectEntries(stageEntries, localEntries, deletedMap = {}) {
+  const revivedProjectIds = [];
+  const merged = [];
+  const seen = new Set();
+
+  stageEntries.forEach((entry) => {
     const id = entry.project_id || entry.id;
-    return id && !deleted.has(id);
-  });
-  const seen = new Set(merged.map((entry) => entry.project_id || entry.id));
-  localEntries.forEach((entry) => {
-    const id = entry.project_id || entry.id;
-    if (id && !deleted.has(id) && !seen.has(id)) {
+    if (!id || seen.has(id)) {
+      return;
+    }
+    const deletedAt = Number.isFinite(deletedMap[id]) ? deletedMap[id] : Number.NaN;
+    const updatedAt = Date.parse(entry.updated_at || entry.created_at || "");
+    const shouldHide = Number.isFinite(deletedAt) && (!Number.isFinite(updatedAt) || updatedAt <= deletedAt);
+    if (!shouldHide) {
       merged.push(entry);
       seen.add(id);
+      if (Number.isFinite(deletedAt) && Number.isFinite(updatedAt) && updatedAt > deletedAt) {
+        revivedProjectIds.push(id);
+      }
     }
   });
-  return merged;
+
+  localEntries.forEach((entry) => {
+    const id = entry.project_id || entry.id;
+    if (!id || seen.has(id)) {
+      return;
+    }
+    const deletedAt = Number.isFinite(deletedMap[id]) ? deletedMap[id] : Number.NaN;
+    if (Number.isFinite(deletedAt)) {
+      return;
+    }
+    merged.push(entry);
+    seen.add(id);
+  });
+
+  return { merged, revivedProjectIds };
 }
 
 function normalizeProjectIndexPayload(payload) {
@@ -1410,28 +1474,35 @@ function normalizeProjectIndexPayload(payload) {
 
 async function loadProjectIndexWithFallback() {
   const localProjects = mapLocalEntriesToProjectIndex(loadProjects());
-  const deletedProjectIds = loadDeletedProjectIds();
+  const deletedProjectMap = loadDeletedProjectMap();
   if (!isFileProtocol) {
-    const appBase = getAppBaseUrl();
-    const stageIndexUrl = new URL("projects/_index.json", appBase).toString();
-    console.info("[projects] appBase=", appBase);
-    console.info("[projects] trying stage index=", stageIndexUrl);
-    try {
-      const json = await fetchJsonNoStore(stageIndexUrl);
-      const staticProjects = normalizeProjectIndexPayload(json);
-      console.info("[projects] stage index loaded; count=", staticProjects.length);
-      if (staticProjects.length) {
-        const merged = mergeProjectEntries(staticProjects, localProjects, deletedProjectIds);
-        saveProjects(mapProjectIndexEntriesToLocal(merged).slice(0, PROJECTS_LIMIT));
-        return merged;
+    const candidateUrls = getProjectIndexCandidateUrls();
+    console.info("[projects] trying stage index urls=", candidateUrls);
+    for (const stageIndexUrl of candidateUrls) {
+      try {
+        const json = await fetchJsonNoStore(`${stageIndexUrl}?_=${Date.now()}`);
+        const staticProjects = normalizeProjectIndexPayload(json);
+        console.info("[projects] stage index loaded; count=", staticProjects.length, "url=", stageIndexUrl);
+        if (staticProjects.length) {
+          const { merged, revivedProjectIds } = mergeProjectEntries(staticProjects, localProjects, deletedProjectMap);
+          if (revivedProjectIds.length) {
+            revivedProjectIds.forEach((projectId) => {
+              delete deletedProjectMap[projectId];
+            });
+            saveDeletedProjectMap(deletedProjectMap);
+          }
+          saveProjects(mapProjectIndexEntriesToLocal(merged).slice(0, PROJECTS_LIMIT));
+          return merged;
+        }
+      } catch (error) {
+        console.warn("[projects] stage index candidate failed", stageIndexUrl, error);
       }
-    } catch (error) {
-      console.warn("[projects] stage index failed; falling back to localStorage", error);
     }
+    setMessage("Projects index unavailable; showing local saved projects only.");
   }
   return localProjects.filter((entry) => {
     const id = entry.project_id || entry.id;
-    return id && !deletedProjectIds.includes(id);
+    return id && !Number.isFinite(deletedProjectMap[id]);
   });
 }
 

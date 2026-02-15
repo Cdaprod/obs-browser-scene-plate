@@ -82,8 +82,10 @@ test("project list storage supports migration and static index fallback", () => 
   assert.ok(source.includes('window.location.port !== "4173"'));
   assert.ok(source.includes('if (!supportsProjectApi()) {'));
   assert.ok(source.includes("function getAppBaseUrl()"));
-  assert.ok(source.includes('new URL("projects/_index.json", appBase).toString()'));
-  assert.ok(source.includes('console.info("[projects] trying stage index=", stageIndexUrl);'));
+  assert.ok(source.includes("function getProjectIndexCandidateUrls()"));
+  assert.ok(source.includes('new URL("/projects/_index.json", origin).toString()'));
+  assert.ok(source.includes('console.info("[projects] trying stage index urls=", candidateUrls);'));
+  assert.ok(source.includes("revivedProjectIds"));
 });
 
 test("stop and scrub preserve frame position", () => {
