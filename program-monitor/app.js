@@ -232,11 +232,14 @@ async function fetchJsonNoStore(url) {
       "Cache-Control": "no-store"
     }
   });
+  if (res.status === 404) {
+    return { data: { version: 1, projects: [] }, finalUrl, notFound: true };
+  }
   if (!res.ok) {
     throw new Error(`HTTP ${res.status} ${res.statusText} @ ${finalUrl}`);
   }
   const data = await res.json();
-  return { data, finalUrl };
+  return { data, finalUrl, notFound: false };
 }
 const renderApiPort = 8793;
 const renderApiBase = isFileProtocol ? `http://${host}:${renderApiPort}` : "";
@@ -1482,13 +1485,18 @@ async function loadProjectIndexWithFallback() {
     setProjectsStatus(`Loading index: ${indexUrl}`);
     console.info("[projects] loading stage index=", indexUrl);
     try {
-      const { data, finalUrl } = await fetchJsonNoStore(indexUrl);
-      const staticProjects = normalizeProjectIndexPayload(data);
-      if (!Array.isArray(data?.projects)) {
+      const { data, finalUrl, notFound } = await fetchJsonNoStore(indexUrl);
+      if (!Array.isArray(data) && !Array.isArray(data?.projects)) {
         throw new Error(`Index schema invalid @ ${finalUrl}`);
       }
-      console.info("[projects] stage index loaded; count=", staticProjects.length, "url=", finalUrl);
-      setProjectsStatus(`Index OK: ${finalUrl} (${staticProjects.length} projects)`);
+      const staticProjects = normalizeProjectIndexPayload(data);
+      if (notFound) {
+        console.info("[projects] stage index missing; treating as empty", finalUrl);
+        setProjectsStatus(`Index missing (404): ${finalUrl} (using local projects)`);
+      } else {
+        console.info("[projects] stage index loaded; count=", staticProjects.length, "url=", finalUrl);
+        setProjectsStatus(`Index OK: ${finalUrl} (${staticProjects.length} projects)`);
+      }
       const { merged, revivedProjectIds } = mergeProjectEntries(staticProjects, localProjects, deletedProjectMap);
       if (revivedProjectIds.length) {
         revivedProjectIds.forEach((projectId) => {

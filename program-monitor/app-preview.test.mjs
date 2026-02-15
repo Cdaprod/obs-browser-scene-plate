@@ -82,12 +82,22 @@ test("project list storage supports migration and canonical index diagnostics", 
   assert.ok(source.includes("function resolveProjectIndexUrl()"));
   assert.ok(source.includes('new URL("projects/_index.json", baseUrl).toString()'));
   assert.ok(source.includes('setProjectsStatus(`Loading index: ${indexUrl}`)'));
+  assert.ok(source.includes("if (res.status === 404)"));
+  assert.ok(source.includes('setProjectsStatus(`Index missing (404): ${finalUrl} (using local projects)`);'));
   assert.ok(source.includes('setProjectsStatus(`Index OK: ${finalUrl} (${staticProjects.length} projects)`);'));
   assert.ok(source.includes("revivedProjectIds"));
 });
 
 test("projects panel includes index status row", () => {
   assert.ok(html.includes('id="projectsStatus"'));
+});
+
+
+test("default projects index seed exists", () => {
+  const indexPath = path.resolve("program-monitor", "projects", "_index.json");
+  const raw = fs.readFileSync(indexPath, "utf8");
+  const parsed = JSON.parse(raw);
+  assert.ok(Array.isArray(parsed));
 });
 
 test("stop and scrub preserve frame position", () => {
