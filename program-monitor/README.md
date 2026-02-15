@@ -58,6 +58,30 @@ Use **Send Timeline → OBS** to push a single compiled player URL into the reus
 
 Optionally enable **Take scene after send** to cut to the asset scene once the URL is updated.
 
+
+### Projects index/source-of-truth path
+
+Program Monitor reads the stage index from `/program-monitor/projects/_index.json` in nginx. In `docker-compose.yaml`, this folder is mounted as:
+
+```yaml
+- ${PROGRAM_MONITOR_PROJECTS_PATH:-./program-monitor/projects}:/usr/share/nginx/html/program-monitor/projects:rw
+```
+
+Set `PROGRAM_MONITOR_PROJECTS_PATH` in your shell or `.env` if your editable projects live somewhere else (for example, an SMB/shared path used by iOS Files/Textastic).
+
+Example:
+
+```sh
+PROGRAM_MONITOR_PROJECTS_PATH=/mnt/media/Video/Projects/P7-SHARED-Procedurally-Generated/ingest/originals/program-monitor/projects
+docker compose up -d --force-recreate
+```
+
+Then verify nginx is serving the same file you are editing:
+
+```sh
+curl -i "http://127.0.0.1:8789/program-monitor/projects/_index.json"
+```
+
 ## Tests
 
 Run the minimal utility tests:
