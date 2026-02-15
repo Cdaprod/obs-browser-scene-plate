@@ -72,20 +72,22 @@ test("project drafts persist locally per selected project", () => {
 });
 
 
-test("project list storage supports migration and static index fallback", () => {
+test("project list storage supports migration and canonical index diagnostics", () => {
   assert.ok(source.includes("program-monitor.projects.v1"));
   assert.ok(source.includes("program-monitor.projects.migrated.v1"));
   assert.ok(source.includes("program-monitor.projects.deleted.v1"));
   assert.ok(source.includes('localStorage.getItem("program-monitor.pr")'));
   assert.ok(source.includes("markProjectDeleted"));
   assert.ok(source.includes("function supportsProjectApi()"));
-  assert.ok(source.includes('window.location.port !== "4173"'));
-  assert.ok(source.includes('if (!supportsProjectApi()) {'));
-  assert.ok(source.includes("function getAppBaseUrl()"));
-  assert.ok(source.includes("function getProjectIndexCandidateUrls()"));
-  assert.ok(source.includes('new URL("/projects/_index.json", origin).toString()'));
-  assert.ok(source.includes('console.info("[projects] trying stage index urls=", candidateUrls);'));
+  assert.ok(source.includes("function resolveProjectIndexUrl()"));
+  assert.ok(source.includes('new URL("projects/_index.json", baseUrl).toString()'));
+  assert.ok(source.includes('setProjectsStatus(`Loading index: ${indexUrl}`)'));
+  assert.ok(source.includes('setProjectsStatus(`Index OK: ${finalUrl} (${staticProjects.length} projects)`);'));
   assert.ok(source.includes("revivedProjectIds"));
+});
+
+test("projects panel includes index status row", () => {
+  assert.ok(html.includes('id="projectsStatus"'));
 });
 
 test("stop and scrub preserve frame position", () => {
