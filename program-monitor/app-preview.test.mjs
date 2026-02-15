@@ -71,6 +71,14 @@ test("project drafts persist locally per selected project", () => {
   assert.ok(source.includes("loadProjectDraft"));
 });
 
+
+test("project list storage supports migration and static index fallback", () => {
+  assert.ok(source.includes("program-monitor.projects.v1"));
+  assert.ok(source.includes("program-monitor.projects.migrated.v1"));
+  assert.ok(source.includes('fetch("/program-monitor/projects/_index.json"'));
+  assert.ok(source.includes('localStorage.getItem("program-monitor.pr")'));
+});
+
 test("stop and scrub preserve frame position", () => {
   assert.ok(source.includes("const timelineOffset = getTimelineOffset(state.activeIndex);"));
   assert.ok(source.includes("elements.baseVideo.currentTime = baseElapsed;"));
