@@ -11,6 +11,7 @@ import {
   buildTimelineDescriptor,
   compileTimeline
 } from "./timeline/core.js";
+import { resolveMediaDurationSeconds } from "./media-duration.js";
 
 const STORAGE_KEY = "program-monitor.timeline.v1";
 
@@ -112,7 +113,8 @@ const state = {
   scrubbing: false,
   scrubWasPlaying: false,
   validationResults: [],
-  durationInfo: { duration: 0, source: "none" }
+  durationInfo: { duration: 0, source: "none" },
+  scrubberDisabled: false
 };
 
 const PROJECTS_KEY = "program-monitor.projects.v1";
@@ -182,6 +184,7 @@ let overlayVideos = [];
 let overlayAudios = [];
 let rafId = null;
 let baseEndedHandler = null;
+let baseDurationListenerCleanup = null;
 let exportPollTimer = null;
 let activeBaseKind = "video";
 let baseStartTime = 0;
@@ -793,15 +796,23 @@ function updatePreviewScrubber(currentTime) {
   if (!elements.previewScrubber) {
     return;
   }
-  const total = state.timelineDuration || 0;
-  const progress = total > 0 ? Math.min(Math.max(currentTime / total, 0), 1) : 0;
+  const mediaClock = isMediaDurationClock();
+  const mediaDuration = Number(state.durationInfo?.duration);
+  const hasBoundedMediaDuration = mediaClock && Number.isFinite(mediaDuration) && mediaDuration > 0;
+  const clockDuration = hasBoundedMediaDuration ? mediaDuration : (state.timelineDuration || 0);
+  const clockTime = hasBoundedMediaDuration
+    ? Math.max(0, elements.baseVideo.currentTime || 0)
+    : Math.max(0, currentTime || 0);
+  const progress = clockDuration > 0 ? Math.min(Math.max(clockTime / clockDuration, 0), 1) : 0;
   if (elements.previewScrubberProgress) {
     elements.previewScrubberProgress.style.width = `${progress * 100}%`;
   }
   if (elements.previewScrubberPlayhead) {
     elements.previewScrubberPlayhead.style.left = `${progress * 100}%`;
   }
-  state.currentTime = currentTime;
+  state.currentTime = hasBoundedMediaDuration
+    ? getTimelineOffset(state.activeIndex) + clockTime
+    : clockTime;
 }
 
 function renderPreviewScrubberSegments() {
@@ -1698,10 +1709,72 @@ function clearExportPoll() {
 }
 
 function clearBaseHandlers() {
+  clearDurationListeners();
   if (baseEndedHandler) {
     elements.baseVideo.removeEventListener("ended", baseEndedHandler);
     baseEndedHandler = null;
   }
+}
+
+function clearDurationListeners() {
+  if (typeof baseDurationListenerCleanup === "function") {
+    baseDurationListenerCleanup();
+  }
+  baseDurationListenerCleanup = null;
+}
+
+function setPreviewScrubberDisabled(disabled) {
+  state.scrubberDisabled = Boolean(disabled);
+  if (!elements.previewScrubber) {
+    return;
+  }
+  elements.previewScrubber.setAttribute("aria-disabled", state.scrubberDisabled ? "true" : "false");
+  elements.previewScrubber.classList.toggle("is-disabled", state.scrubberDisabled);
+}
+
+function isMediaDurationClock() {
+  return activeBaseKind !== "page"
+    && activeBaseKind !== "image"
+    && state.durationInfo?.source === "base";
+}
+
+function updateMediaDurationFromVideo(videoEl = elements.baseVideo) {
+  const resolved = resolveMediaDurationSeconds(videoEl);
+  if (resolved.state === "ready") {
+    state.durationInfo = { duration: resolved.seconds, source: "base" };
+    elements.statDur.textContent = resolved.seconds.toFixed(2);
+    setPreviewScrubberDisabled(false);
+    updateTimelineMetrics();
+    return true;
+  }
+
+  state.durationInfo = { duration: 0, source: "base" };
+  elements.statDur.textContent = "loading…";
+  setPreviewScrubberDisabled(true);
+  return false;
+}
+
+function bindBaseDurationListeners() {
+  clearDurationListeners();
+  if (activeBaseKind === "page" || activeBaseKind === "image") {
+    return;
+  }
+  const syncDuration = () => {
+    const ready = updateMediaDurationFromVideo(elements.baseVideo);
+    if (ready) {
+      setMessage("");
+    } else {
+      setMessage("loading duration…");
+    }
+    updateStatusDisplay();
+  };
+
+  elements.baseVideo.addEventListener("loadedmetadata", syncDuration);
+  elements.baseVideo.addEventListener("durationchange", syncDuration);
+  baseDurationListenerCleanup = () => {
+    elements.baseVideo.removeEventListener("loadedmetadata", syncDuration);
+    elements.baseVideo.removeEventListener("durationchange", syncDuration);
+  };
 }
 
 function resolveDurationInfo({ baseKind, baseUrl, overrideSeconds, baseDuration, durationHintSeconds }) {
@@ -1730,35 +1803,16 @@ function resolveDurationInfo({ baseKind, baseUrl, overrideSeconds, baseDuration,
   if (override) {
     return { duration: override, source: "override" };
   }
-  if (base) {
-    return { duration: base, source: "base" };
+  if (baseKind !== "page" && baseKind !== "image") {
+    if (base) {
+      return { duration: base, source: "base" };
+    }
+    return { duration: 0, source: "base" };
   }
   if (hint) {
     return { duration: hint, source: "hint" };
   }
   return { duration: 0, source: "none" };
-}
-
-function loadVideoMeta(videoEl, url) {
-  return new Promise((resolve, reject) => {
-    const onLoaded = () => {
-      cleanup();
-      resolve(videoEl.duration || 0);
-    };
-    const onErr = () => {
-      cleanup();
-      reject(new Error(`Failed to load video metadata: ${url}`));
-    };
-    const cleanup = () => {
-      videoEl.removeEventListener("loadedmetadata", onLoaded);
-      videoEl.removeEventListener("error", onErr);
-    };
-
-    videoEl.addEventListener("loadedmetadata", onLoaded, { once: true });
-    videoEl.addEventListener("error", onErr, { once: true });
-    videoEl.src = url;
-    videoEl.load();
-  });
 }
 
 async function primeNode(index) {
@@ -1771,6 +1825,7 @@ async function primeNode(index) {
     elements.baseFrame.removeAttribute("src");
     elements.statDur.textContent = "0.00";
     state.durationInfo = { duration: 0, source: "none" };
+    setPreviewScrubberDisabled(false);
     updateStatusDisplay();
     return;
   }
@@ -1788,6 +1843,7 @@ async function primeNode(index) {
     elements.baseFrame.removeAttribute("src");
     elements.statDur.textContent = "0.00";
     state.durationInfo = { duration: 0, source: "none" };
+    setPreviewScrubberDisabled(false);
     updateStatusDisplay();
     return;
   }
@@ -1800,6 +1856,8 @@ async function primeNode(index) {
 
   let duration = 0;
   if (baseKind === "page" || baseKind === "image") {
+    clearDurationListeners();
+    setPreviewScrubberDisabled(false);
     if (Number.isFinite(overrideSeconds) && overrideSeconds > 0) {
       duration = overrideSeconds;
       setMessage(`Using duration override for ${baseKind === "page" ? "HTML" : "image"} source.`);
@@ -1818,11 +1876,12 @@ async function primeNode(index) {
     elements.baseVideo.playsInline = true;
     elements.baseVideo.preload = "metadata";
 
-    try {
-      duration = await loadVideoMeta(elements.baseVideo, parsed.baseUrl);
-    } catch (error) {
-      duration = 0;
-    }
+    bindBaseDurationListeners();
+    elements.baseVideo.src = parsed.baseUrl;
+    elements.baseVideo.load();
+
+    const initialMediaDuration = resolveMediaDurationSeconds(elements.baseVideo);
+    duration = initialMediaDuration.state === "ready" ? initialMediaDuration.seconds : 0;
   }
 
   const durationInfo = resolveDurationInfo({
@@ -1839,14 +1898,16 @@ async function primeNode(index) {
   if (!duration && baseKind !== "page" && baseKind !== "image") {
     if (Number.isFinite(overrideSeconds) && overrideSeconds > 0) {
       setMessage("Using duration override for streaming source.");
-    } else if (Number.isFinite(durationHintSeconds) && durationHintSeconds > 0) {
-      setMessage("Using duration hint from URL parameters.");
+      setPreviewScrubberDisabled(false);
     } else {
-      setMessage("Base duration unknown. Add a duration override to enable playback.");
+      setMessage("loading duration…");
+      setPreviewScrubberDisabled(true);
     }
+  } else {
+    setPreviewScrubberDisabled(false);
   }
 
-  elements.statDur.textContent = duration.toFixed(2);
+  elements.statDur.textContent = duration > 0 ? duration.toFixed(2) : (durationInfo.source === "base" ? "loading…" : "0.00");
   updateStatusDisplay();
   updateTimelineMetrics();
 
@@ -1983,8 +2044,8 @@ function pauseAll() {
     return;
   }
   state.playing = false;
-  state.pausedAt = Number(elements.statT?.textContent || 0) || 0;
   state.basePausedAt = getBaseElapsed();
+  state.pausedAt = getTimelineOffset(state.activeIndex) + state.basePausedAt;
   elements.baseVideo.pause();
   syncOverlayPlayback(state.basePausedAt, false);
   updatePreviewScrubber(state.pausedAt);
@@ -2761,25 +2822,49 @@ const getPreviewTimeFromClientX = (clientX) => {
   }
   const rect = elements.previewScrubber.getBoundingClientRect();
   const percent = Math.min(Math.max((clientX - rect.left) / rect.width, 0), 1);
+  if (isMediaDurationClock()) {
+    const mediaDuration = Number(state.durationInfo?.duration);
+    return Number.isFinite(mediaDuration) && mediaDuration > 0 ? percent * mediaDuration : 0;
+  }
   return percent * state.timelineDuration;
 };
 
 if (elements.previewScrubber) {
+  const applyScrub = (seconds) => {
+    if (state.scrubberDisabled) {
+      return;
+    }
+    if (isMediaDurationClock()) {
+      const safeTime = Math.max(0, seconds);
+      elements.baseVideo.currentTime = safeTime;
+      syncOverlayPlayback(safeTime, false);
+      elements.statT.textContent = safeTime.toFixed(2);
+      updatePreviewScrubber(safeTime);
+      state.basePausedAt = safeTime;
+      state.pausedAt = getTimelineOffset(state.activeIndex) + safeTime;
+      return;
+    }
+    seekToTime(seconds, { autoplay: false }).catch(() => {});
+  };
+
   elements.previewScrubber.addEventListener("pointerdown", (event) => {
+    if (state.scrubberDisabled) {
+      return;
+    }
     state.scrubbing = true;
     state.scrubWasPlaying = state.playing;
     elements.previewScrubber.setPointerCapture(event.pointerId);
     if (state.playing) {
       pauseAll();
     }
-    seekToTime(getPreviewTimeFromClientX(event.clientX), { autoplay: false }).catch(() => {});
+    applyScrub(getPreviewTimeFromClientX(event.clientX));
   });
 
   elements.previewScrubber.addEventListener("pointermove", (event) => {
-    if (!state.scrubbing) {
+    if (!state.scrubbing || state.scrubberDisabled) {
       return;
     }
-    seekToTime(getPreviewTimeFromClientX(event.clientX), { autoplay: false }).catch(() => {});
+    applyScrub(getPreviewTimeFromClientX(event.clientX));
   });
 
   const finishScrub = (event) => {
