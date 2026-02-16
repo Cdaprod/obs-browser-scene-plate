@@ -67,3 +67,18 @@ test('render init script marks capture mode for overlays', () => {
   const source = fs.readFileSync(path.resolve(__dirname, 'render.js'), 'utf8');
   assert.ok(source.includes('window.__RENDER_CAPTURE = true'));
 });
+
+
+test('overlay navigation avoids networkidle deadlocks and emits debug artifacts on goto failure', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, 'render.js'), 'utf8');
+  assert.ok(source.includes("waitUntil: 'domcontentloaded'"));
+  assert.ok(source.includes('PAGE_GOTO_TIMEOUT_MS'));
+  assert.ok(source.includes("goto_failed.png"));
+  assert.ok(source.includes("goto_failed.html"));
+});
+
+test('renderer logs failed requests for easier overlay diagnostics', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, 'render.js'), 'utf8');
+  assert.ok(source.includes("page.on('requestfailed'"));
+  assert.ok(source.includes('BROWSER_REQUESTFAILED'));
+});

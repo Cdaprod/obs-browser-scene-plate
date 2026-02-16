@@ -29,6 +29,8 @@ const DEFAULT_WARMUP_MS = 250;
 const VIRTUAL_TIME_EVENT = 'Emulation.virtualTimeBudgetExpired';
 const VIRTUAL_TIME_ADVANCE_POLICY = 'pauseIfNetworkFetchesPending';
 const REQUIRE_DETERMINISTIC_TIME = process.env.RENDER_REQUIRE_DETERMINISTIC_TIME === '1';
+const PAGE_GOTO_TIMEOUT_MS = Number(process.env.RENDER_PAGE_GOTO_TIMEOUT_MS || 120000);
+const PAGE_SETTLE_MS = Number(process.env.RENDER_PAGE_SETTLE_MS || 150);
 
 function exitWithError(message, code = 1) {
   console.error(message);
@@ -239,6 +241,11 @@ async function render() {
       console.error(`BROWSER_PAGEERROR:${error.message || error}`);
     });
 
+    page.on('requestfailed', (request) => {
+      const failure = request.failure();
+      console.error(`BROWSER_REQUESTFAILED:${request.method()} ${request.url()} ${(failure && failure.errorText) || 'unknown_error'}`);
+    });
+
     await page.addInitScript(() => {
       window.__RENDER_CAPTURE = true;
       window.__RENDER_SECONDS_EVENT = null;
@@ -250,7 +257,23 @@ async function render() {
       }, { once: true });
     });
 
-    await page.goto(URL, { waitUntil: 'networkidle' });
+    try {
+      await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: PAGE_GOTO_TIMEOUT_MS });
+      if (PAGE_SETTLE_MS > 0) {
+        await page.waitForTimeout(PAGE_SETTLE_MS);
+      }
+    } catch (error) {
+      const debugDir = path.dirname(OUT);
+      const debugShotPath = path.join(debugDir, 'goto_failed.png');
+      const debugHtmlPath = path.join(debugDir, 'goto_failed.html');
+      fs.mkdirSync(debugDir, { recursive: true });
+      await page.screenshot({ path: debugShotPath, fullPage: true }).catch(() => {});
+      const html = await page.content().catch(() => null);
+      if (html) {
+        fs.writeFileSync(debugHtmlPath, html);
+      }
+      throw error;
+    }
     try {
       await page.waitForFunction(() => window.__RENDER_READY === true, { timeout: 5000 });
     } catch (error) {

@@ -84,7 +84,7 @@ test("project list storage supports migration and canonical index diagnostics", 
   assert.ok(source.includes('setProjectsStatus(`Loading index: ${indexUrl}`)'));
   assert.ok(source.includes("if (res.status === 404)"));
   assert.ok(source.includes('setProjectsStatus(`Index missing (404): ${finalUrl} (using local projects)`);'));
-  assert.ok(source.includes('setProjectsStatus(`Index OK: ${finalUrl} (${staticProjects.length} projects)`);'));
+  assert.ok(source.includes('setProjectsStatus(`Index OK: ${finalUrl} (${staticProjects.length} projects)${tinyWarn}`);'));
   assert.ok(source.includes("revivedProjectIds"));
 });
 
@@ -166,4 +166,18 @@ test("all-nodes scrubber uses timeline model and timeline seek mapping", () => {
   assert.ok(source.includes("mapTimelineTToNode"));
   assert.ok(source.includes("isMediaDurationClock() && !isAllNodesMode()"));
   assert.ok(source.includes("style.flexGrow = String(duration)"));
+});
+
+
+test("recent exports surface queued/rendering/failed statuses", () => {
+  assert.ok(source.includes("upsertPendingExport"));
+  assert.ok(source.includes('status: "queued"'));
+  assert.ok(source.includes('status: "rendering"'));
+  assert.ok(source.includes('status: "failed"'));
+  assert.ok(source.includes('pending://'));
+});
+
+test("projects index loader warns on tiny _index.json payloads", () => {
+  assert.ok(source.includes("suspiciously small index payload"));
+  assert.ok(source.includes("tiny payload"));
 });
