@@ -14,10 +14,27 @@ const { spawn } = require('node:child_process');
 
 const DEFAULT_OVERLAY_API_VERSION = process.env.OVERLAY_API_VERSION || '1';
 
-function build_html_plate_cache_key({ url, duration, fps, width, height, overlayApiVersion = DEFAULT_OVERLAY_API_VERSION }) {
+function build_html_plate_cache_key({
+  url,
+  duration,
+  fps,
+  width,
+  height,
+  format = 'webm-alpha',
+  overlayApiVersion = DEFAULT_OVERLAY_API_VERSION
+}) {
+  const preimage = JSON.stringify({
+    url: String(url || ''),
+    duration: Number(duration),
+    fps: Number(fps),
+    width: Number(width),
+    height: Number(height),
+    format: String(format || ''),
+    overlayApiVersion: String(overlayApiVersion)
+  });
   return crypto
     .createHash('sha256')
-    .update(`${url}${duration}${fps}${width}${height}${overlayApiVersion}`)
+    .update(preimage)
     .digest('hex');
 }
 
@@ -87,7 +104,8 @@ async function render_html_plate(url, duration, fps, width, height, out_path, op
     fps: renderFps,
     width: renderWidth,
     height: renderHeight,
-    overlayApiVersion
+    overlayApiVersion,
+    format
   });
   const frameCount = Math.max(1, Math.round(duration * renderFps));
   const cacheDir = opts.cacheDir || null;

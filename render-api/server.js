@@ -1142,13 +1142,16 @@ function normalizeRenderPlanPayload(payload) {
   if (!payload || typeof payload !== 'object') {
     return null;
   }
-  if (payload.render_plan && typeof payload.render_plan === 'object') {
-    return payload.render_plan;
-  }
   if (payload.plan && typeof payload.plan === 'object') {
     return payload.plan;
   }
-  return payload;
+  if (payload.render_plan && typeof payload.render_plan === 'object') {
+    return payload.render_plan;
+  }
+  if (Array.isArray(payload.nodes)) {
+    return payload;
+  }
+  return null;
 }
 
 function resolveTimingMetadata({ job = null, fallback = {} } = {}) {
@@ -2609,7 +2612,7 @@ function startServer() {
       const height = parseOptionalNumber(body.height) ?? 1920;
       const format = body.format === 'png-sequence' ? 'png-sequence' : 'webm-alpha';
       const plateName = safeName(body.name || 'html_plate');
-      const plan = normalizeRenderPlanPayload(body.render_plan) || {
+      const plan = normalizeRenderPlanPayload(body) || {
         type: 'html_plate',
         url: targetUrl,
         fps,
@@ -2640,7 +2643,11 @@ function startServer() {
 
         plan.duration = duration;
         plan.url = plan.url || targetUrl;
+        const plateStem = path.basename(outPath).replace(/\.[^.]+$/, '');
         const manifestPath = write_manifest(plan, path.dirname(outPath), {
+          filename: `manifest.${plateStem}.json`,
+          cache_key: result.cache_key,
+          out_path: outPath,
           resolvedAssets: [{ type: 'html_overlay', url: targetUrl }],
           cacheKeys: { html_plate: result.cache_key },
           timing: {

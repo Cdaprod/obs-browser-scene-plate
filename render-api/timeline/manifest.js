@@ -135,6 +135,9 @@ function write_manifest(plan, out_dir, opts = {}) {
       ? plan.cacheKeys
       : {};
 
+  const outputPath = opts.out_path || null;
+  const cacheKey = opts.cache_key || null;
+
   const manifest = {
     version: 1,
     created_at: nowIso,
@@ -143,6 +146,8 @@ function write_manifest(plan, out_dir, opts = {}) {
     render_plan: plan,
     resolved_assets: resolvedAssets,
     cache_keys: cacheKeys,
+    cache_key: cacheKey,
+    output_path: outputPath,
     timestamps: {
       created_at: nowIso,
       generated_at_ms: Date.now()
@@ -150,7 +155,10 @@ function write_manifest(plan, out_dir, opts = {}) {
     timing: normalizeTimingMetadata({ timing: opts.timing, plan })
   };
 
-  const manifestPath = path.join(out_dir, 'manifest.json');
+  const manifestFilename = opts.filename && typeof opts.filename === 'string'
+    ? opts.filename
+    : 'manifest.json';
+  const manifestPath = path.join(out_dir, manifestFilename);
   writeJsonAtomic(manifestPath, manifest);
   return manifestPath;
 }

@@ -19,15 +19,21 @@ test('write_manifest includes plan, assets, cache keys, and timing metadata', ()
     const manifestPath = write_manifest(plan, tempDir, {
       resolvedAssets: [{ type: 'html_overlay', url: 'http://obs-plate/overlays/demo.html' }],
       cacheKeys: { html_plate: 'abc123' },
-      timing: { mode: 'frame_step', fps: 60, frame_count: 120, duration_seconds: 2 }
+      timing: { mode: 'frame_step', fps: 60, frame_count: 120, duration_seconds: 2 },
+      filename: 'manifest.custom.json',
+      cache_key: 'cache-1',
+      out_path: '/renders/plates/demo.webm'
     });
 
+    assert.equal(path.basename(manifestPath), 'manifest.custom.json');
     const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
     assert.deepEqual(manifest.render_plan, plan);
     assert.equal(manifest.resolved_assets.length, 1);
     assert.equal(manifest.cache_keys.html_plate, 'abc123');
     assert.equal(manifest.timing.mode, 'frame_step');
     assert.equal(manifest.timing.fps, 60);
+    assert.equal(manifest.cache_key, 'cache-1');
+    assert.equal(manifest.output_path, '/renders/plates/demo.webm');
     assert.equal(Array.isArray(manifest.timing.segments), true);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
@@ -64,12 +70,36 @@ test('build_html_plate_cache_key is deterministic for identical inputs', () => {
   assert.notEqual(a, c);
 });
 
-test('normalizeRenderPlanPayload only resolves payload-local plan keys', () => {
+
+test('build_html_plate_cache_key avoids tuple collisions by using structured preimage', () => {
+  const a = build_html_plate_cache_key({
+    url: 'u',
+    duration: 1,
+    fps: 23,
+    width: 45,
+    height: 6,
+    format: 'webm-alpha',
+    overlayApiVersion: '7'
+  });
+  const b = build_html_plate_cache_key({
+    url: 'u1',
+    duration: 2,
+    fps: 3,
+    width: 45,
+    height: 6,
+    format: 'webm-alpha',
+    overlayApiVersion: '7'
+  });
+  assert.notEqual(a, b);
+});
+
+test('normalizeRenderPlanPayload resolves plan from full request body safely', () => {
   assert.equal(normalizeRenderPlanPayload(null), null);
-  const payloadPlan = { plan: { id: 'p-1' } };
+  const payloadPlan = { plan: { id: 'p-1' }, url: 'http://obs-plate/overlays/demo.html' };
   assert.deepEqual(normalizeRenderPlanPayload(payloadPlan), { id: 'p-1' });
-  const payloadRenderPlan = { render_plan: { id: 'rp-1' } };
+  const payloadRenderPlan = { render_plan: { id: 'rp-1' }, url: 'http://obs-plate/overlays/demo.html' };
   assert.deepEqual(normalizeRenderPlanPayload(payloadRenderPlan), { id: 'rp-1' });
+  assert.equal(normalizeRenderPlanPayload({ url: 'http://obs-plate/overlays/demo.html' }), null);
 });
 
 test('html_plate source applies deterministic timeline setTime stepping', () => {
@@ -91,4 +121,10 @@ test('buildPlanTimingMetadata builds cumulative timing segments', () => {
   assert.equal(timing.total_duration_sec, 10);
   assert.deepEqual(timing.segments.map((segment) => segment.start_sec), [0, 2, 5]);
   assert.deepEqual(timing.segments.map((segment) => segment.end_sec), [2, 5, 10]);
+});
+
+
+test('plates endpoint normalizes render plan from full body payload', () => {
+  const source = fs.readFileSync(path.resolve(__dirname, 'server.js'), 'utf8');
+  assert.ok(source.includes('normalizeRenderPlanPayload(body)'));
 });
