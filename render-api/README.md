@@ -139,6 +139,7 @@ Encoding behavior:
 
 Project drafts and exports are stored under the workspace directory (defaults to `/renders/workspace`).
 Render capture uses a deterministic frame-stepped render clock. It first attempts CDP virtual time, and when unavailable it falls back to deterministic per-frame seek (`document.getAnimations()` + render clock hooks).
+Overlay page navigation now waits for `domcontentloaded` (not `networkidle`) to avoid long-lived network activity timeouts; failed navigations write `goto_failed.png` and `goto_failed.html` alongside render outputs for debugging.
 
 Set `RENDER_REQUIRE_DETERMINISTIC_TIME=1` to fail jobs when deterministic timing cannot be established.
 Manifest and job status payloads include timing diagnostics (`timing_mode`, `timing_degraded`, `timing_animations`, `timing_hooks`).

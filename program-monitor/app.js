@@ -240,8 +240,12 @@ async function fetchJsonNoStore(url) {
   if (!res.ok) {
     throw new Error(`HTTP ${res.status} ${res.statusText} @ ${finalUrl}`);
   }
-  const data = await res.json();
-  return { data, finalUrl, notFound: false };
+  const rawText = await res.text();
+  if (/_index\.json/i.test(finalUrl) && rawText.length < 20) {
+    console.warn(`[projects] suspiciously small index payload (${rawText.length} bytes) @ ${finalUrl}`);
+  }
+  const data = rawText ? JSON.parse(rawText) : null;
+  return { data, finalUrl, notFound: false, rawBytes: rawText.length };
 }
 const renderApiPort = 8793;
 const renderApiBase = isFileProtocol ? `http://${host}:${renderApiPort}` : "";
@@ -506,9 +510,20 @@ function setRecentMenuPolling(enabled) {
 }
 
 function updateExportHistory(entry) {
-  if (!entry || !entry.url) return;
+  if (!entry || (!entry.url && !entry.jobId)) return;
   const history = loadExportHistory();
-  const next = [entry, ...history.filter((item) => item.url !== entry.url)].slice(0, EXPORT_HISTORY_LIMIT);
+  const next = [
+    entry,
+    ...history.filter((item) => {
+      if (entry.jobId && item.jobId && item.jobId === entry.jobId) {
+        return false;
+      }
+      if (entry.url && item.url === entry.url) {
+        return false;
+      }
+      return true;
+    })
+  ].slice(0, EXPORT_HISTORY_LIMIT);
   saveExportHistory(next);
   renderExportHistory(next);
 }
@@ -1508,7 +1523,7 @@ async function loadProjectIndexWithFallback() {
     setProjectsStatus(`Loading index: ${indexUrl}`);
     console.info("[projects] loading stage index=", indexUrl);
     try {
-      const { data, finalUrl, notFound } = await fetchJsonNoStore(indexUrl);
+      const { data, finalUrl, notFound, rawBytes } = await fetchJsonNoStore(indexUrl);
       if (!Array.isArray(data) && !Array.isArray(data?.projects)) {
         throw new Error(`Index schema invalid @ ${finalUrl}`);
       }
@@ -1518,7 +1533,8 @@ async function loadProjectIndexWithFallback() {
         setProjectsStatus(`Index missing (404): ${finalUrl} (using local projects)`);
       } else {
         console.info("[projects] stage index loaded; count=", staticProjects.length, "url=", finalUrl);
-        setProjectsStatus(`Index OK: ${finalUrl} (${staticProjects.length} projects)`);
+        const tinyWarn = Number.isFinite(rawBytes) && rawBytes < 20 ? ` ⚠ tiny payload: ${rawBytes} bytes` : "";
+        setProjectsStatus(`Index OK: ${finalUrl} (${staticProjects.length} projects)${tinyWarn}`);
       }
       const { merged, revivedProjectIds } = mergeProjectEntries(staticProjects, localProjects, deletedProjectMap);
       if (revivedProjectIds.length) {
@@ -2808,7 +2824,45 @@ async function sendTimelineToObs() {
   setMessage(`OBS error: ${lastError?.message || lastError || "connection_failed"}`);
 }
 
+
+function getJobIdFromStatusUrl(statusUrl) {
+  const match = String(statusUrl || "").match(/\/api\/(?:render|exports)\/([^/?#]+)/i);
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
+function upsertPendingExport({
+  jobId,
+  projectId = "",
+  outputName = "",
+  status = "queued",
+  progress = 0,
+  statusUrl = "",
+  error = ""
+} = {}) {
+  if (!jobId) {
+    return;
+  }
+  updateExportHistory({
+    url: `pending://${jobId}`,
+    name: outputName || "export",
+    outputName: outputName || "",
+    previewUrl: "",
+    projectId,
+    jobId,
+    delivered: false,
+    deliveredDir: "",
+    deliveredHostHint: "",
+    createdAt: Date.now(),
+    sizeBytes: null,
+    status,
+    progress: Number.isFinite(progress) ? progress : 0,
+    manifestUrl: "",
+    logUrl: statusUrl || error || ""
+  });
+}
+
 async function pollJobStatus(statusUrl) {
+  const jobId = getJobIdFromStatusUrl(statusUrl);
   const res = await fetch(statusUrl);
   const data = await res.json();
   if (!res.ok || !data.ok) {
@@ -2821,22 +2875,28 @@ async function pollJobStatus(statusUrl) {
       downloadPath: data.download_url,
       filename,
       manifestUrl: data.manifest_url || "",
-      logUrl: data.log_url || ""
+      logUrl: data.log_url || "",
+      jobId
     });
     clearExportPoll();
   } else if (data.state === "error") {
     setExportStatus("Error");
+    upsertPendingExport({ jobId, status: "failed", progress: data.progress ?? 100, statusUrl, error: data.error || "render_failed" });
     clearExportPoll();
   } else if (data.state === "encoding") {
     setExportStatus("Encoding");
+    upsertPendingExport({ jobId, status: "encoding", progress: data.progress ?? 80, statusUrl });
   } else if (data.state === "rendering") {
     setExportStatus("Rendering");
+    upsertPendingExport({ jobId, status: "rendering", progress: data.progress ?? 50, statusUrl });
   } else {
     setExportStatus("Queued");
+    upsertPendingExport({ jobId, status: "queued", progress: data.progress ?? 0, statusUrl });
   }
 }
 
 async function pollExportStatus(statusUrl) {
+  const jobId = getJobIdFromStatusUrl(statusUrl);
   const res = await fetch(statusUrl);
   const data = await res.json();
   if (!res.ok || !data.ok) {
@@ -2851,7 +2911,7 @@ async function pollExportStatus(statusUrl) {
       previewUrl: data.preview_url || "",
       outputName: data.output_name || "",
       projectId: data.project_id || "",
-      jobId: data.job_id || "",
+      jobId: data.job_id || jobId,
       delivered: data.delivered,
       deliveredDir: data.delivered_dir || "",
       deliveredHostHint: data.delivered_host_hint || ""
@@ -2859,13 +2919,46 @@ async function pollExportStatus(statusUrl) {
     clearExportPoll();
   } else if (data.state === "error") {
     setExportStatus("Error");
+    upsertPendingExport({
+      jobId: data.job_id || jobId,
+      projectId: data.project_id || currentProjectId || "",
+      outputName: data.output_name || "",
+      status: "failed",
+      progress: data.progress ?? 100,
+      statusUrl,
+      error: data.error || "render_failed"
+    });
     clearExportPoll();
   } else if (data.state === "encoding") {
     setExportStatus("Encoding");
+    upsertPendingExport({
+      jobId: data.job_id || jobId,
+      projectId: data.project_id || currentProjectId || "",
+      outputName: data.output_name || "",
+      status: "encoding",
+      progress: data.progress ?? 80,
+      statusUrl
+    });
   } else if (data.state === "rendering") {
     setExportStatus("Rendering");
+    upsertPendingExport({
+      jobId: data.job_id || jobId,
+      projectId: data.project_id || currentProjectId || "",
+      outputName: data.output_name || "",
+      status: "rendering",
+      progress: data.progress ?? 50,
+      statusUrl
+    });
   } else {
     setExportStatus("Queued");
+    upsertPendingExport({
+      jobId: data.job_id || jobId,
+      projectId: data.project_id || currentProjectId || "",
+      outputName: data.output_name || "",
+      status: "queued",
+      progress: data.progress ?? 0,
+      statusUrl
+    });
   }
 }
 
@@ -2921,6 +3014,8 @@ async function exportNode() {
   }
 
   const statusUrl = apiUrl(data.status_url || '');
+  const jobId = data.job_id || getJobIdFromStatusUrl(statusUrl);
+  upsertPendingExport({ jobId, status: "queued", progress: 0, statusUrl });
   exportPollTimer = setInterval(() => {
     if (exportPollInFlight) {
       return;
@@ -3003,6 +3098,15 @@ async function exportTimeline() {
   }
 
   const statusUrl = apiUrl(data.status_url || '');
+  const jobId = data.job_id || getJobIdFromStatusUrl(statusUrl);
+  upsertPendingExport({
+    jobId,
+    projectId,
+    outputName: data.output_name || "",
+    status: "queued",
+    progress: 0,
+    statusUrl
+  });
   exportPollTimer = setInterval(() => {
     pollExportStatus(statusUrl).catch((error) => {
       console.error(error);
@@ -3287,6 +3391,12 @@ function bindUIOnce() {
         manifestUrl: item.dataset.manifestUrl || "",
         logUrl: item.dataset.logUrl || ""
       };
+      if (String(entry.url || "").startsWith("pending://")) {
+        setMessage(`Export ${entry.jobId || ""} is ${entry.status || "queued"}.`);
+        elements.recentMenu.classList.add("hidden");
+        setRecentMenuPolling(false);
+        return;
+      }
       openExportModal(entry);
       elements.recentMenu.classList.add("hidden");
       setRecentMenuPolling(false);
