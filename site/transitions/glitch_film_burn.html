@@ -1,0 +1,665 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>film_burn</title>
+  <style>
+    :root{
+      /* Core */
+      --fade-in-ms: 20;
+      --fade-out-ms: 160;
+      --bg-alpha: 0;                 /* keep 0 for transparent */
+      --vignette-alpha: 0.45;
+
+      /* Burn look */
+      --grain-alpha: 0.24;
+      --scratch-alpha: 0.20;
+      --flicker-alpha: 0.12;
+
+      /* Optional text plates (same idea as glitch) */
+      --tl-scale: 1;
+      --center-scale: 1;
+      --lower-scale: 1;
+      --center-max: 56ch;
+      --center-bg: 0.20;
+      --lower-bg: 0.10;
+    }
+
+    html, body { height: 100%; margin: 0; background: rgba(0,0,0,var(--bg-alpha)); overflow: hidden; }
+    body { position: relative; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+
+    /* Main burn canvas */
+    #c{
+      position:absolute; inset:0;
+      width:100%; height:100%;
+      opacity:0;
+      transition: opacity calc(var(--fade-in-ms) * 1ms) linear;
+      will-change: opacity, transform, filter;
+      mix-blend-mode: screen;
+    }
+
+    /* Extra dust/film layer */
+    #dust{
+      position:absolute; inset:0;
+      pointer-events:none;
+      opacity:0;
+      transition: opacity calc(var(--fade-in-ms) * 1ms) linear;
+      background:
+        radial-gradient(circle at 20% 30%, rgba(255,255,255,0.06), rgba(0,0,0,0) 45%),
+        radial-gradient(circle at 80% 70%, rgba(255,255,255,0.05), rgba(0,0,0,0) 52%),
+        radial-gradient(circle at 55% 10%, rgba(255,255,255,0.04), rgba(0,0,0,0) 48%),
+        repeating-linear-gradient( to bottom,
+          rgba(255,255,255,0.00) 0px,
+          rgba(255,255,255,0.02) 2px,
+          rgba(0,0,0,0.00) 6px
+        );
+      mix-blend-mode: overlay;
+      filter: blur(0.4px);
+    }
+
+    /* Vignette */
+    #vignette{
+      position:absolute; inset:-8%;
+      pointer-events:none;
+      opacity:0;
+      transition: opacity calc(var(--fade-in-ms) * 1ms) linear;
+      background: radial-gradient(ellipse at center,
+        rgba(0,0,0,0) 30%,
+        rgba(0,0,0,var(--vignette-alpha)) 78%,
+        rgba(0,0,0,0.92) 100%
+      );
+      mix-blend-mode: multiply;
+      filter: blur(0.6px);
+    }
+
+    /* Flicker plate (adds exposure pumping) */
+    #flicker{
+      position:absolute; inset:0;
+      pointer-events:none;
+      opacity:0;
+      transition: opacity calc(var(--fade-in-ms) * 1ms) linear;
+      background: rgba(255,255,255,0);
+      mix-blend-mode: screen;
+    }
+
+    /* Top-left glitch text */
+    #tl{
+      position:absolute;
+      left:4.2%;
+      top:6%;
+      color: rgba(255,240,210,0.92);
+      text-shadow:
+        0 0 10px rgba(255,170,90,0.25),
+        -2px 0 rgba(255,60,0,0.15),
+        2px 0 rgba(255,255,255,0.08);
+      letter-spacing: 0.06em;
+      font-size: calc(clamp(14px, 2.0vw, 30px) * var(--tl-scale));
+      opacity:0;
+      transform: translateY(-2px);
+      user-select:none;
+      pointer-events:none;
+      mix-blend-mode: screen;
+      white-space: pre-wrap;
+    }
+    #tl.hidden{ display:none; }
+
+    /* Center title */
+    #centerWrap{
+      position:absolute;
+      left:50%;
+      top:44%;
+      transform: translate(-50%, -50%);
+      width: min(var(--center-max), 92vw);
+      pointer-events:none;
+      user-select:none;
+      opacity:0;
+      mix-blend-mode: screen;
+    }
+    #centerWrap.hidden{ display:none; }
+
+    #center{
+      display:inline-block;
+      width:100%;
+      padding:0.55em 0.75em;
+      line-height:1.18;
+      text-align:center;
+
+      color: rgba(255,250,240,0.94);
+      font-size: calc(clamp(18px, 2.8vw, 46px) * var(--center-scale));
+      letter-spacing: 0.02em;
+
+      background: rgba(0,0,0,var(--center-bg));
+      border: 1px solid rgba(255,200,140,0.12);
+      box-shadow:
+        0 0 22px rgba(255,170,90,0.08),
+        0 0 52px rgba(0,0,0,0.35);
+
+      text-shadow:
+        0 0 14px rgba(255,170,90,0.18),
+        -2px 0 rgba(255,80,0,0.10),
+        2px 0 rgba(255,255,255,0.06);
+
+      word-break: break-word;
+      overflow-wrap: anywhere;
+    }
+
+    /* Lower third (warm/red) */
+    #lowerWrap{
+      position:absolute;
+      left:4.2%;
+      bottom:6.0%;
+      max-width:92vw;
+      pointer-events:none;
+      user-select:none;
+      opacity:0;
+      mix-blend-mode: screen;
+    }
+    #lowerWrap.hidden{ display:none; }
+
+    #lower{
+      display:inline-block;
+      padding:0.35em 0.55em;
+      background: rgba(0,0,0,var(--lower-bg));
+      border: 1px solid rgba(255,120,60,0.18);
+      box-shadow:
+        0 0 18px rgba(255,120,60,0.12),
+        0 0 36px rgba(0,0,0,0.45);
+
+      font-size: calc(clamp(14px, 1.9vw, 28px) * var(--lower-scale));
+      letter-spacing: 0.06em;
+
+      color: rgba(255,170,120,0.92);
+      text-shadow:
+        0 0 10px rgba(255,120,60,0.30),
+        -2px 0 rgba(255,70,0,0.16),
+        2px 0 rgba(255,255,255,0.06);
+
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 92vw;
+    }
+
+    /* State */
+    .on #c, .on #dust, .on #vignette, .on #flicker { opacity: 1; }
+    .on #tl, .on #centerWrap, .on #lowerWrap { opacity: 1; }
+
+    .off #c, .off #dust, .off #vignette, .off #flicker, .off #tl, .off #centerWrap, .off #lowerWrap{
+      opacity:0;
+      transition: opacity calc(var(--fade-out-ms) * 1ms) linear;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div id="dust"></div>
+  <div id="vignette"></div>
+  <div id="flicker"></div>
+
+  <div id="tl"></div>
+  <div id="centerWrap"><div id="center"></div></div>
+  <div id="lowerWrap"><div id="lower"></div></div>
+
+  <script>
+    /**
+     * OBS Browser Source “Film Burn / Light Leak” transition.
+     *
+     * Default URL+Parameters: film_burn.html?mode=burst&ms=1200&int=0.85&fps=60&dir=l2r&palette=warm&tl=FILM%20BURN&center=EXPOSURE%20SHIFT%20%E2%80%94%20HOLD%20STEADY&lower=TAKE%2007%20%E2%80%A2%20ROLLING
+     *
+     * Params:
+     *  mode    = "burst" | "loop"       (default burst)
+     *  ms      = burst duration         (default 1200)
+     *  int     = intensity 0..1         (default 0.85)
+     *  fps     = target fps             (default 60)
+     *  seed    = integer randomness
+     *
+     * Burn motion:
+     *  dir     = l2r | r2l | t2b | b2t | radial (default l2r)
+     *  ease    = linear | smooth | punch (default smooth)
+     *  jitter  = 0..1 (extra wobble)    (default 0.35)
+     *
+     * Look:
+     *  palette = warm | cool | toxic | mono (default warm)
+     *  grain   = 0..1 (film grain alpha)     (default 0.24)
+     *  scratch = 0..1 (scratch alpha)        (default 0.20)
+     *  vignette= 0..1 (vignette alpha)       (default 0.45)
+     *
+     * Text (same semantics as glitch.html):
+     *  tl      = top-left text (disable with tl=off|0|none|false|)
+     *  center  = center title (disable with center=off|0|none|false|)
+     *  lower   = lower third (disable with lower=off|0|none|false|)
+     *  tl_scale / center_scale / lower_scale (0.5..2.0)
+     *  center_max=56ch  center_bg=0.20  lower_bg=0.10
+     */
+
+    const qs = new URLSearchParams(location.search);
+
+    const MODE  = (qs.get("mode") || "burst").toLowerCase();
+    const MS    = clampNum(parseFloat(qs.get("ms") || "1200"), 120, 10000);
+    const INT0  = clampNum(parseFloat(qs.get("int") || "0.85"), 0, 1);
+    const FPS   = clampNum(parseFloat(qs.get("fps") || "60"), 10, 120);
+    const DIR   = (qs.get("dir") || "l2r").toLowerCase();
+    const EASE  = (qs.get("ease") || "smooth").toLowerCase();
+    const JIT0  = clampNum(parseFloat(qs.get("jitter") || "0.35"), 0, 1);
+    const PAL   = (qs.get("palette") || "warm").toLowerCase();
+
+    const GRAIN  = clampNum(parseFloat(qs.get("grain") || getCSSNum("--grain-alpha", 0.24)), 0, 1);
+    const SCR    = clampNum(parseFloat(qs.get("scratch") || getCSSNum("--scratch-alpha", 0.20)), 0, 1);
+    const VIG    = clampNum(parseFloat(qs.get("vignette") || getCSSNum("--vignette-alpha", 0.45)), 0, 1);
+
+    const SEED0 = (qs.get("seed") ? parseInt(qs.get("seed"), 10) : (Date.now() & 0x7fffffff)) >>> 0;
+
+    // Apply tunables -> CSS
+    setCSSNum("--grain-alpha", String(GRAIN), 0, 1);
+    setCSSNum("--scratch-alpha", String(SCR), 0, 1);
+    setCSSNum("--vignette-alpha", String(VIG), 0, 1);
+
+    setCSSNum("--tl-scale",       qs.get("tl_scale"),       0.5, 2.0);
+    setCSSNum("--center-scale",   qs.get("center_scale"),   0.5, 2.0);
+    setCSSNum("--lower-scale",    qs.get("lower_scale"),    0.5, 2.0);
+    setCSSText("--center-max",    qs.get("center_max"));
+    setCSSNum("--center-bg",      qs.get("center_bg"),      0.0, 0.85);
+    setCSSNum("--lower-bg",       qs.get("lower_bg"),       0.0, 0.85);
+
+    // Text elements
+    const TL_EL = document.getElementById("tl");
+    const CENTER_WRAP = document.getElementById("centerWrap");
+    const CENTER_EL = document.getElementById("center");
+    const LOWER_WRAP = document.getElementById("lowerWrap");
+    const LOWER_EL = document.getElementById("lower");
+
+    // Defaults (so plain preview shows full stack)
+    const tlDefault = "FILM BURN";
+    const centerDefault = "EXPOSURE SHIFT — HOLD STEADY";
+    const lowerDefault = "TAKE 07 • ROLLING";
+
+    const tlRaw = qs.get("tl");
+    const TL_DISABLED = isDisabledText(tlRaw);
+    const TL = TL_DISABLED ? "" : pickText(qs, ["tl"], tlDefault, 96);
+    if (TL.trim().length === 0) TL_EL.classList.add("hidden");
+    else { TL_EL.textContent = TL; TL_EL.classList.remove("hidden"); }
+
+    const centerRaw = qs.get("center");
+    const CENTER_DISABLED = isDisabledText(centerRaw);
+    const CENTER = CENTER_DISABLED ? "" : pickText(qs, ["center"], centerDefault, 180);
+    if (CENTER.trim().length === 0) CENTER_WRAP.classList.add("hidden");
+    else { CENTER_EL.textContent = CENTER; CENTER_WRAP.classList.remove("hidden"); }
+
+    const lowerRaw = qs.get("lower");
+    const LOWER_DISABLED = isDisabledText(lowerRaw);
+    const LOWER = LOWER_DISABLED ? "" : pickText(qs, ["lower"], lowerDefault, 96);
+    if (LOWER.trim().length === 0) LOWER_WRAP.classList.add("hidden");
+    else { LOWER_EL.textContent = LOWER; LOWER_WRAP.classList.remove("hidden"); }
+
+    // Canvas
+    const canvas = document.getElementById("c");
+    const ctx = canvas.getContext("2d", { alpha: true, desynchronized: true });
+
+    const flicker = document.getElementById("flicker");
+
+    // RNG (xorshift32)
+    let seed = SEED0;
+    function rnd(){
+      seed ^= seed << 13; seed >>>= 0;
+      seed ^= seed >> 17; seed >>>= 0;
+      seed ^= seed << 5;  seed >>>= 0;
+      return (seed >>> 0) / 4294967296;
+    }
+    function rndi(a,b){ return (a + Math.floor(rnd()*(b-a+1)))|0; }
+
+    // Fit
+    function fit(){
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      canvas.width = Math.floor(window.innerWidth * dpr);
+      canvas.height = Math.floor(window.innerHeight * dpr);
+      canvas.style.width = "100%";
+      canvas.style.height = "100%";
+      ctx.setTransform(dpr,0,0,dpr,0,0);
+    }
+    window.addEventListener("resize", fit, { passive:true });
+    fit();
+
+    // Intensity shaping
+    const I = clampNum(INT0, 0, 1);
+    const J = clampNum(JIT0 * (0.35 + 0.65 * I), 0, 1);
+
+    // Frame limiter
+    const frameInterval = 1000 / FPS;
+    let lastFrame = 0;
+    let start = performance.now();
+    let ending = false;
+
+    // Palettes (film burn / light leak vibes)
+    function paletteStops(name){
+      // returns array of {t, r,g,b,a}
+      // We draw multiple soft blobs with these colors.
+      if (name === "cool") {
+        return [
+          {t:0.0, c:[120,180,255,0.00]},
+          {t:0.4, c:[80,140,255,0.55]},
+          {t:0.7, c:[255,255,255,0.35]},
+          {t:1.0, c:[255,255,255,0.00]},
+        ];
+      }
+      if (name === "toxic") {
+        return [
+          {t:0.0, c:[160,255,140,0.00]},
+          {t:0.35,c:[120,255,160,0.62]},
+          {t:0.7, c:[255,255,255,0.35]},
+          {t:1.0, c:[255,255,255,0.00]},
+        ];
+      }
+      if (name === "mono") {
+        return [
+          {t:0.0, c:[255,255,255,0.00]},
+          {t:0.45,c:[255,255,255,0.55]},
+          {t:0.75,c:[255,255,255,0.30]},
+          {t:1.0, c:[255,255,255,0.00]},
+        ];
+      }
+      // warm default
+      return [
+        {t:0.0, c:[255,120,40,0.00]},
+        {t:0.35,c:[255,160,60,0.62]},
+        {t:0.62,c:[255,60,20,0.38]},
+        {t:0.82,c:[255,255,210,0.40]},
+        {t:1.0, c:[255,255,255,0.00]},
+      ];
+    }
+
+    function easeT(t){
+      t = clampNum(t, 0, 1);
+      if (EASE === "linear") return t;
+      if (EASE === "punch") {
+        // quick in/out with a hard mid peak
+        const a = t < 0.5 ? (t/0.5) : ((1-t)/0.5);
+        return Math.pow(a, 0.55);
+      }
+      // smooth default
+      return t*t*(3-2*t);
+    }
+
+    function dirPos(t, w, h){
+      // returns {x,y} center point of burn front
+      const tt = easeT(t);
+      if (DIR === "r2l") return { x: (1-tt)*w, y: h*0.5 };
+      if (DIR === "t2b") return { x: w*0.5, y: tt*h };
+      if (DIR === "b2t") return { x: w*0.5, y: (1-tt)*h };
+      if (DIR === "radial") {
+        // expand from a semi-random corner-ish origin
+        const ox = w*(0.2 + 0.6*origin.u);
+        const oy = h*(0.2 + 0.6*origin.v);
+        return { x: ox, y: oy };
+      }
+      // l2r default
+      return { x: tt*w, y: h*0.5 };
+    }
+
+    // pick stable origin for radial / subtle drift
+    const origin = { u: rnd(), v: rnd() };
+
+    // Draw film burn: multiple blobs + hot edge + smoke falloff + grain/scratches
+    let lastNoiseT = 0;
+    let noiseImage = null;
+
+    function ensureNoise(w, h){
+      if (!noiseImage || noiseImage.w !== w || noiseImage.h !== h) {
+        noiseImage = { w, h, img: ctx.createImageData(w, h) };
+      }
+    }
+
+    function updateGrain(w, h, t){
+      ensureNoise(w, h);
+      if (t - lastNoiseT < 42) return;
+      lastNoiseT = t;
+
+      const img = noiseImage.img;
+      const data = img.data;
+      const alpha = clampNum(GRAIN * (0.35 + 0.65*I), 0, 1);
+
+      // 2x2 blocks for speed
+      const step = 2;
+      for (let y=0; y<h; y+=step){
+        for (let x=0; x<w; x+=step){
+          const v = (rnd()*255)|0;
+          const a = (rnd()*255*alpha)|0;
+          for (let yy=0; yy<step; yy++){
+            for (let xx=0; xx<step; xx++){
+              const i = ((y+yy)*w + (x+xx))*4;
+              data[i+0]=v; data[i+1]=v; data[i+2]=v; data[i+3]=a;
+            }
+          }
+        }
+      }
+    }
+
+    function drawScratches(w, h){
+      const a = clampNum(SCR * (0.25 + 0.75*I), 0, 1);
+      if (a <= 0.001) return;
+
+      ctx.save();
+      ctx.globalCompositeOperation = "screen";
+      ctx.globalAlpha = a;
+
+      const lines = rndi(1, 4 + Math.floor(6*I));
+      for (let i=0; i<lines; i++){
+        const x = rnd()*w;
+        const len = h*(0.35 + 0.65*rnd());
+        const y0 = rnd()*(h-len);
+        const lw = 1 + Math.floor(2*rnd());
+        ctx.fillStyle = `rgba(255,255,255,${0.10 + 0.22*rnd()})`;
+        ctx.fillRect(x, y0, lw, len);
+
+        // occasional diagonal hairline
+        if (rnd() < 0.35) {
+          ctx.strokeStyle = `rgba(255,255,255,${0.06 + 0.16*rnd()})`;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(x, y0 + rnd()*len);
+          ctx.lineTo(x + (rnd()<0.5?-1:1)*(10+50*rnd()), y0 + rnd()*len);
+          ctx.stroke();
+        }
+      }
+      ctx.restore();
+    }
+
+    function drawBurn(t, w, h){
+      const tt = clampNum(t, 0, 1);
+      const e = easeT(tt);
+
+      // coverage expands with intensity; for burst, we want it to "wipe" nicely
+      const baseR = Math.max(w,h) * (0.35 + 1.35*e);
+      const edgeW = baseR * (0.08 + 0.12*I);
+
+      // wobble
+      const wobx = (rnd()*2-1) * (18 + 90*J);
+      const woby = (rnd()*2-1) * (12 + 70*J);
+
+      const pos = dirPos(tt, w, h);
+      const cx = pos.x + wobx;
+      const cy = pos.y + woby;
+
+      // For non-radial dirs, move center along the axis as well
+      // l2r/r2l/t2b/b2t already handled. For radial, cx/cy fixed (origin).
+
+      // Build gradient
+      const g = ctx.createRadialGradient(cx, cy, Math.max(0, baseR - edgeW), cx, cy, baseR);
+      const stops = paletteStops(PAL);
+      for (const s of stops) {
+        const [r,gc,b,a] = s.c;
+        const aa = a * (0.55 + 0.75*I);
+        g.addColorStop(clampNum(s.t,0,1), `rgba(${r},${gc},${b},${aa})`);
+      }
+
+      ctx.save();
+      ctx.globalCompositeOperation = "screen";
+      ctx.fillStyle = g;
+      ctx.fillRect(0,0,w,h);
+
+      // Hot edge ring / "burn line"
+      ctx.globalAlpha = 0.75 * (0.35 + 0.65*I);
+      ctx.strokeStyle = `rgba(255,255,230,${0.15 + 0.25*I})`;
+      ctx.lineWidth = Math.max(2, Math.floor(4 + 10*I));
+      ctx.beginPath();
+      ctx.arc(cx, cy, baseR - edgeW*0.35, 0, Math.PI*2);
+      ctx.stroke();
+
+      // Smoky falloff overlay (multiply-ish by drawing darker haze in screen mode w low alpha)
+      ctx.globalAlpha = 0.22 * (0.35 + 0.65*I);
+      const haze = ctx.createRadialGradient(cx, cy, baseR*0.2, cx, cy, baseR*1.05);
+      haze.addColorStop(0, `rgba(0,0,0,0)`);
+      haze.addColorStop(0.65, `rgba(30,12,6,${0.18 + 0.18*I})`);
+      haze.addColorStop(1, `rgba(0,0,0,${0.22 + 0.25*I})`);
+      ctx.fillStyle = haze;
+      ctx.fillRect(0,0,w,h);
+
+      ctx.restore();
+    }
+
+    function applyGrain(w, h){
+      if (!noiseImage) return;
+      ctx.save();
+      ctx.globalCompositeOperation = "overlay";
+      ctx.globalAlpha = 0.55; // grain already encoded in alpha channel
+      ctx.putImageData(noiseImage.img, 0, 0);
+      ctx.restore();
+    }
+
+    function doFlicker(){
+      const base = clampNum(getCSSNum("--flicker-alpha", 0.12), 0, 1);
+      const a = base * (0.25 + 0.75*I) * (rnd() < 0.55 ? (0.2 + 0.8*rnd()) : 0.0);
+      flicker.style.background = `rgba(255,255,255,${a.toFixed(4)})`;
+    }
+
+    function textJitter(){
+      // Subtle film gate weave
+      const gate = (0.3 + 0.7*J) * (rnd() < 0.70 ? 1 : 0.35);
+      const dx = Math.round((rnd()*2-1) * (2 + 9*gate));
+      const dy = Math.round((rnd()*2-1) * (1 + 7*gate));
+
+      canvas.style.transform = `translate(${dx}px, ${dy}px)`;
+
+      if (!TL_EL.classList.contains("hidden")) {
+        TL_EL.style.transform = `translate(${rndi(-2,2)}px, ${rndi(-1,2)}px)`;
+        TL_EL.style.opacity = String(lerp(0.55, 1.0, rnd()) * (0.55 + 0.45*I));
+      }
+      if (!CENTER_WRAP.classList.contains("hidden")) {
+        CENTER_WRAP.style.transform = `translate(-50%, -50%) translate(${rndi(-2,2)}px, ${rndi(-2,2)}px)`;
+        CENTER_WRAP.style.opacity = String(lerp(0.60, 1.0, rnd()) * (0.55 + 0.45*I));
+      }
+      if (!LOWER_WRAP.classList.contains("hidden")) {
+        LOWER_WRAP.style.transform = `translate(${rndi(-2,2)}px, ${rndi(-1,1)}px)`;
+        LOWER_WRAP.style.opacity = String(lerp(0.55, 1.0, rnd()) * (0.55 + 0.45*I));
+      }
+    }
+
+    function setOn(){
+      document.body.classList.add("on");
+      document.body.classList.remove("off");
+      requestAnimationFrame(() => (canvas.style.opacity = "1"));
+    }
+
+    function setOff(){
+      document.body.classList.add("off");
+      document.body.classList.remove("on");
+      ending = true;
+    }
+
+    function loop(now){
+      if (now - lastFrame < frameInterval && !ending){
+        requestAnimationFrame(loop);
+        return;
+      }
+      lastFrame = now;
+
+      const w = canvas.width;
+      const h = canvas.height;
+
+      // tNormalized controls burn progress
+      const elapsed = now - start;
+      const tNorm = MODE === "burst"
+        ? clampNum(elapsed / MS, 0, 1)
+        : ((elapsed % MS) / MS);
+
+      // Clear
+      ctx.clearRect(0,0,w,h);
+
+      // Burn itself
+      drawBurn(tNorm, w, h);
+
+      // Grain/scratches
+      updateGrain(w, h, now);
+      applyGrain(w, h);
+      drawScratches(w, h);
+
+      // Exposure flicker + gate weave
+      doFlicker();
+      textJitter();
+
+      // Auto-end burst
+      if (MODE === "burst" && !ending && elapsed >= MS) {
+        setOff();
+        setTimeout(() => { canvas.style.opacity = "0"; }, getCSSInt("--fade-out-ms", 160) + 10);
+      }
+
+      if (!ending || MODE === "loop") requestAnimationFrame(loop);
+    }
+
+    // Start
+    setOn();
+    requestAnimationFrame(loop);
+
+    // Click to retrigger
+    window.addEventListener("pointerdown", () => {
+      seed = (Date.now() & 0x7fffffff) >>> 0;
+      start = performance.now();
+      ending = false;
+      document.body.classList.remove("off");
+      document.body.classList.add("on");
+      canvas.style.opacity = "1";
+      requestAnimationFrame(loop);
+    });
+
+    // ---------------- Helpers ----------------
+    function lerp(a,b,t){ return a + (b-a)*t; }
+    function clampNum(x,a,b){ return Math.max(a, Math.min(b, x)); }
+
+    function pickText(qs, keys, fallback, maxLen){
+      for (const k of keys){
+        const v = qs.get(k);
+        if (v !== null) return String(v).slice(0, maxLen);
+      }
+      return String(fallback).slice(0, maxLen);
+    }
+
+    function isDisabledText(raw){
+      if (raw === null || raw === undefined) return false; // absent => use defaults
+      const s = String(raw).trim().toLowerCase();
+      return s === "" || s === "0" || s === "off" || s === "false" || s === "none";
+    }
+
+    function setCSSNum(varName, raw, min, max){
+      if (raw === null || raw === undefined || raw === "") return;
+      const v = clampNum(parseFloat(raw), min, max);
+      document.documentElement.style.setProperty(varName, String(v));
+    }
+
+    function setCSSText(varName, raw){
+      if (raw === null || raw === undefined || raw === "") return;
+      const v = String(raw).slice(0, 16);
+      document.documentElement.style.setProperty(varName, v);
+    }
+
+    function getCSSInt(varName, fallback){
+      const v = parseInt(getComputedStyle(document.documentElement).getPropertyValue(varName), 10);
+      return Number.isFinite(v) ? v : fallback;
+    }
+
+    function getCSSNum(varName, fallback){
+      const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue(varName));
+      return Number.isFinite(v) ? v : fallback;
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,586 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>glitch</title>
+  <style>
+    :root{
+      /* Default behavior (can be overridden via query params) */
+      --fade-in-ms: 20;
+      --fade-out-ms: 120;
+      --bg-alpha: 0;         /* keep 0 for transparent */
+      --scanline-alpha: 0.18;
+      --vignette-alpha: 0.55;
+      --crt-warp: 0.012;     /* subtle barrel warp */
+
+      /* Text tuning */
+      --tl-scale: 1;         /* top-left scale */
+      --center-scale: 1;     /* center title scale */
+      --lower-scale: 1;      /* lowerthird scale */
+      --center-max: 56ch;    /* wrapping width */
+      --center-bg: 0.22;     /* center plate alpha */
+      --lower-bg: 0.10;      /* lower plate alpha */
+    }
+
+    html, body { height: 100%; margin: 0; background: rgba(0,0,0,var(--bg-alpha)); overflow: hidden; }
+    body { position: relative; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+
+    /* Canvas renders the glitch overlay (alpha-based, so it can sit on top of your scene) */
+    #c {
+      position: absolute; inset: 0;
+      width: 100%; height: 100%;
+      opacity: 0;
+      transition: opacity calc(var(--fade-in-ms) * 1ms) linear;
+      will-change: opacity, transform, filter;
+    }
+
+    /* Scanlines layer */
+    #scanlines {
+      position: absolute; inset: 0;
+      pointer-events: none;
+      background:
+        repeating-linear-gradient(
+          to bottom,
+          rgba(255,255,255,var(--scanline-alpha)) 0px,
+          rgba(255,255,255,0) 2px,
+          rgba(0,0,0,0) 4px
+        );
+      mix-blend-mode: overlay;
+      opacity: 0;
+      transition: opacity calc(var(--fade-in-ms) * 1ms) linear;
+    }
+
+    /* CRT vignette + slight chroma vibe */
+    #vignette {
+      position: absolute; inset: -10%;
+      pointer-events: none;
+      background: radial-gradient(
+        ellipse at center,
+        rgba(0,0,0,0) 30%,
+        rgba(0,0,0,var(--vignette-alpha)) 75%,
+        rgba(0,0,0,0.95) 100%
+      );
+      opacity: 0;
+      transition: opacity calc(var(--fade-in-ms) * 1ms) linear;
+      mix-blend-mode: multiply;
+      filter: blur(0.6px);
+    }
+
+    /* Top-left glitch text */
+    #tl {
+      position: absolute;
+      left: 4.2%;
+      top: 6%;
+      color: rgba(220,255,220,0.92);
+      text-shadow:
+        0 0 6px rgba(150,255,170,0.45),
+        -2px 0 rgba(255,0,0,0.25),
+        2px 0 rgba(0,180,255,0.25);
+      letter-spacing: 0.06em;
+      font-size: calc(clamp(14px, 2.0vw, 30px) * var(--tl-scale));
+      opacity: 0;
+      transform: translateY(-2px);
+      user-select: none;
+      pointer-events: none;
+      mix-blend-mode: screen;
+      white-space: pre-wrap;
+    }
+    #tl.hidden { display: none; }
+
+    /* Center “analogue horror” title (wraps sentence) */
+    #centerWrap {
+      position: absolute;
+      left: 50%;
+      top: 44%;
+      transform: translate(-50%, -50%);
+      width: min(var(--center-max), 92vw);
+      pointer-events: none;
+      user-select: none;
+      opacity: 0;
+      mix-blend-mode: screen;
+    }
+    #centerWrap.hidden { display: none; }
+
+    #center {
+      display: inline-block;
+      width: 100%;
+      padding: 0.55em 0.75em;
+      line-height: 1.18;
+      text-align: center;
+
+      color: rgba(255,255,255,0.94);
+      font-size: calc(clamp(18px, 2.8vw, 46px) * var(--center-scale));
+      letter-spacing: 0.02em;
+
+      background: rgba(0,0,0,var(--center-bg));
+      border: 1px solid rgba(255,255,255,0.12);
+      box-shadow:
+        0 0 18px rgba(255,255,255,0.06),
+        0 0 42px rgba(0,0,0,0.35);
+
+      text-shadow:
+        0 0 10px rgba(255,255,255,0.16),
+        -2px 0 rgba(255,0,0,0.12),
+        2px 0 rgba(0,180,255,0.12);
+
+      word-break: break-word;
+      overflow-wrap: anywhere;
+    }
+
+    /* Bottom-left lower third (single line, glitchy red) */
+    #lowerWrap {
+      position: absolute;
+      left: 4.2%;
+      bottom: 6.0%;
+      max-width: 92vw;
+      pointer-events: none;
+      user-select: none;
+      opacity: 0;
+      mix-blend-mode: screen;
+    }
+    #lowerWrap.hidden { display: none; }
+
+    #lower {
+      display: inline-block;
+      padding: 0.35em 0.55em;
+      background: rgba(0,0,0,var(--lower-bg));
+      border: 1px solid rgba(255,80,80,0.16);
+      box-shadow:
+        0 0 16px rgba(255,60,60,0.10),
+        0 0 30px rgba(0,0,0,0.45);
+
+      font-size: calc(clamp(14px, 1.9vw, 28px) * var(--lower-scale));
+      letter-spacing: 0.06em;
+
+      color: rgba(255,95,95,0.92);
+      text-shadow:
+        0 0 8px rgba(255,70,70,0.35),
+        -2px 0 rgba(255,0,0,0.22),
+        2px 0 rgba(0,180,255,0.10);
+
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 92vw;
+    }
+
+    /* “Signal lost” block */
+    #block {
+      position: absolute;
+      left: 0; right: 0;
+      top: 0; bottom: 0;
+      opacity: 0;
+      pointer-events: none;
+      background: rgba(0,0,0,0.0);
+    }
+
+    /* When active, everything ramps in quickly */
+    .on #c, .on #scanlines, .on #vignette { opacity: 1; }
+    .on #tl, .on #centerWrap, .on #lowerWrap { opacity: 1; }
+
+    /* When ending, fade out */
+    .off #c, .off #scanlines, .off #vignette, .off #tl, .off #centerWrap, .off #lowerWrap {
+      opacity: 0;
+      transition: opacity calc(var(--fade-out-ms) * 1ms) linear;
+    }
+
+    /* Subtle CRT warp */
+    .warp #c {
+      transform: perspective(800px) translateZ(0) scale(1.02);
+      filter: contrast(1.06) saturate(1.08);
+    }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div id="scanlines"></div>
+  <div id="vignette"></div>
+  <div id="block"></div>
+
+  <!-- Top-left -->
+  <div id="tl"></div>
+
+  <!-- Center title -->
+  <div id="centerWrap"><div id="center"></div></div>
+
+  <!-- Lower third -->
+  <div id="lowerWrap"><div id="lower"></div></div>
+
+  <script>
+    /**
+     * OBS Browser Source “ARG Glitch” overlay.
+     *
+     * Default URL+Parameters: glitch.html?mode=burst&ms=1200&int=0.85&fps=60&theme=lost&tl=SIGNAL%20LOST&center=STANDBY%20%E2%80%94%20SIGNAL%20UNSTABLE&lower=FEED%3A%20CAM-01%20%E2%80%A2%20REC
+     *
+     * Params:
+     *  mode   = "burst" | "loop"   (default burst)
+     *  ms     = duration for burst (default 1200)
+     *  int    = intensity 0..1     (default 0.85)
+     *  fps    = target fps         (default 60)
+     *  theme  = "lost" | "hijack" | "corrupt" (default lost)
+     *  seed   = integer for repeatable randomness
+     *
+     * Text params:
+     *  tl     = top-left text (alias: msg)
+     *  center = center floating title (wraps)
+     *  lower  = bottom-left lower third (single line, red glitch vibe)
+     *
+     * Hide controls:
+     *  center=off | center=0 | center=none | center=false | center=
+     *  lower=off  | lower=0  | lower=none  | lower=false  | lower=
+     *  tl=off     | tl=0     | tl=none     | tl=false     | tl=
+     *
+     * Optional tuning:
+     *  tl_scale=1.0         (0.5..2.0)
+     *  center_scale=1.0     (0.5..2.0)
+     *  lower_scale=1.0      (0.5..2.0)
+     *  center_max=56ch      (any CSS length, e.g. 44ch, 520px)
+     *  center_bg=0.22       (0..0.85)
+     *  lower_bg=0.10        (0..0.85)
+     */
+
+    const qs = new URLSearchParams(location.search);
+
+    const MODE  = (qs.get("mode") || "burst").toLowerCase();
+    const MS    = clampNum(parseFloat(qs.get("ms") || "1200"), 120, 8000);
+    const INT   = clampNum(parseFloat(qs.get("int") || "0.85"), 0, 1);
+    const FPS   = clampNum(parseFloat(qs.get("fps") || "60"), 10, 120);
+    const THEME = (qs.get("theme") || "lost").toLowerCase();
+    const SEED0 = (qs.get("seed") ? parseInt(qs.get("seed"), 10) : (Date.now() & 0x7fffffff)) >>> 0;
+
+    // Style knobs from URL -> CSS variables
+    setCSSNum("--tl-scale",       qs.get("tl_scale"),       0.5, 2.0);
+    setCSSNum("--center-scale",   qs.get("center_scale"),   0.5, 2.0);
+    setCSSNum("--lower-scale",    qs.get("lower_scale"),    0.5, 2.0);
+    setCSSText("--center-max",    qs.get("center_max"));    // accepts "56ch", "520px", etc
+    setCSSNum("--center-bg",      qs.get("center_bg"),      0.0, 0.85);
+    setCSSNum("--lower-bg",       qs.get("lower_bg"),       0.0, 0.85);
+
+    // Elements
+    const TL_EL = document.getElementById("tl");
+    const CENTER_WRAP = document.getElementById("centerWrap");
+    const CENTER_EL = document.getElementById("center");
+    const LOWER_WRAP = document.getElementById("lowerWrap");
+    const LOWER_EL = document.getElementById("lower");
+
+    // Theme-driven defaults (so "plain preview" shows full stack)
+    const tlDefault =
+      THEME === "hijack"  ? "UNAUTHORIZED BROADCAST" :
+      THEME === "corrupt" ? "MEMORY CORRUPTION" :
+                            "SIGNAL LOST";
+
+    const centerDefault =
+      THEME === "hijack"  ? "THIS CHANNEL IS NOT AUTHORIZED" :
+      THEME === "corrupt" ? "DO NOT LOOK AWAY FROM THE SCREEN" :
+                            "STANDBY — SIGNAL UNSTABLE";
+
+    const lowerDefault =
+      THEME === "hijack"  ? "BROADCAST: INTERCEPTED" :
+      THEME === "corrupt" ? "ARCHIVE: /MEM/FRAGMENTS" :
+                            "FEED: CAM-01 • REC";
+
+    // Top-left text: tl= (alias msg=). Allow explicit disable.
+    const tlRaw = firstPresent(qs, ["tl", "msg"]);
+    const TL_DISABLED = isDisabledText(tlRaw);
+    const TL = TL_DISABLED ? "" : pickText(qs, ["tl", "msg"], tlDefault, 96);
+    if (TL.trim().length === 0) {
+      TL_EL.classList.add("hidden");
+    } else {
+      TL_EL.textContent = TL;
+      TL_EL.classList.remove("hidden");
+    }
+
+    // Center title: center=. Default shows in preview. Allow explicit disable.
+    const centerRaw = qs.get("center");
+    const CENTER_DISABLED = isDisabledText(centerRaw);
+    const CENTER = CENTER_DISABLED ? "" : pickText(qs, ["center"], centerDefault, 180);
+    if (CENTER.trim().length === 0) {
+      CENTER_WRAP.classList.add("hidden");
+    } else {
+      CENTER_EL.textContent = CENTER;
+      CENTER_WRAP.classList.remove("hidden");
+    }
+
+    // Lower third: lower=. Default shows in preview. Allow explicit disable.
+    const lowerRaw = qs.get("lower");
+    const LOWER_DISABLED = isDisabledText(lowerRaw);
+    const LOWER = LOWER_DISABLED ? "" : pickText(qs, ["lower"], lowerDefault, 96);
+    if (LOWER.trim().length === 0) {
+      LOWER_WRAP.classList.add("hidden");
+    } else {
+      LOWER_EL.textContent = LOWER;
+      LOWER_WRAP.classList.remove("hidden");
+    }
+
+    const canvas = document.getElementById("c");
+    const ctx = canvas.getContext("2d", { alpha: true, desynchronized: true });
+    const block = document.getElementById("block");
+
+    // RNG (xorshift32) for deterministic chaos
+    let seed = SEED0;
+    function rnd() {
+      seed ^= seed << 13; seed >>>= 0;
+      seed ^= seed >> 17; seed >>>= 0;
+      seed ^= seed << 5;  seed >>>= 0;
+      return (seed >>> 0) / 4294967296;
+    }
+    function rndi(a, b) { return (a + Math.floor(rnd() * (b - a + 1))) | 0; }
+
+    // Resize
+    function fit() {
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      canvas.width  = Math.floor(window.innerWidth * dpr);
+      canvas.height = Math.floor(window.innerHeight * dpr);
+      canvas.style.width = "100%";
+      canvas.style.height = "100%";
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    window.addEventListener("resize", fit, { passive: true });
+    fit();
+
+    // Visual knobs derived from intensity + theme
+    const themeMul =
+      THEME === "hijack"  ? 1.05 :
+      THEME === "corrupt" ? 1.15 : 1.0;
+
+    const I = clampNum(INT * themeMul, 0, 1);
+    const sliceChance   = lerp(0.12, 0.42, I);  // frequency of horizontal tear slices
+    const flashChance   = lerp(0.05, 0.18, I);  // white flashes
+    const blockChance   = lerp(0.02, 0.08, I);  // full-frame “signal drop”
+    const chromaShiftPx = lerp(1, 6, I);
+    const jitterPx      = lerp(1, 12, I);
+    const noiseAlpha    = lerp(0.18, 0.75, I);
+
+    function lerp(a,b,t){ return a + (b-a)*t; }
+
+    // Prebuild noise row for speed
+    let lastNoiseT = 0;
+    function drawNoise(w, h, t) {
+      // Update noise at ~24fps-ish even if rendering faster
+      if (t - lastNoiseT < 42) return;
+      lastNoiseT = t;
+
+      const img = ctx.createImageData(w, h);
+      const data = img.data;
+
+      // Coarse noise (fast) — step pixels in 2x2 blocks
+      const step = 2;
+      for (let y = 0; y < h; y += step) {
+        for (let x = 0; x < w; x += step) {
+          const v = (rnd() * 255) | 0;
+          const a = (rnd() * 255 * noiseAlpha) | 0;
+          for (let yy = 0; yy < step; yy++) {
+            for (let xx = 0; xx < step; xx++) {
+              const i = ((y + yy) * w + (x + xx)) * 4;
+              data[i+0] = v;
+              data[i+1] = v;
+              data[i+2] = v;
+              data[i+3] = a;
+            }
+          }
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+    }
+
+    function chromaGhost(w, h) {
+      // Cheap chroma split: draw shifted copies with low alpha
+      ctx.globalCompositeOperation = "screen";
+      ctx.globalAlpha = 0.32 * I;
+
+      ctx.drawImage(canvas, -chromaShiftPx, 0, w, h);
+      ctx.drawImage(canvas,  chromaShiftPx, 0, w, h);
+
+      ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = "source-over";
+    }
+
+    function tearSlices(w, h) {
+      const slices = rndi(2, 8);
+      for (let s = 0; s < slices; s++) {
+        if (rnd() > sliceChance) continue;
+
+        const y = rndi(0, h-1);
+        const sliceH = rndi(6, Math.floor(lerp(18, 70, I)));
+        const dx = rndi(-Math.floor(jitterPx), Math.floor(jitterPx));
+
+        // Copy a band and re-draw it offset
+        ctx.globalAlpha = lerp(0.55, 0.95, rnd());
+        ctx.drawImage(canvas,
+          0, y, w, sliceH,
+          dx, y + rndi(-2, 2), w, sliceH
+        );
+
+        // Add a thin bright line sometimes
+        if (rnd() < 0.35 * I) {
+          ctx.fillStyle = `rgba(255,255,255,${lerp(0.05, 0.22, I)})`;
+          ctx.fillRect(0, y + rndi(0, 2), w, 1);
+        }
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    function flash(w, h) {
+      if (rnd() < flashChance) {
+        ctx.fillStyle = `rgba(255,255,255,${lerp(0.04, 0.16, I)})`;
+        ctx.fillRect(0, 0, w, h);
+      }
+    }
+
+    function signalDrop() {
+      // “Signal lost” block: rapid opacity spikes
+      if (rnd() < blockChance) {
+        block.style.opacity = String(lerp(0.25, 0.85, rnd()));
+        block.style.background = rnd() < 0.5 ? "rgba(0,0,0,0.85)" : "rgba(255,255,255,0.10)";
+        setTimeout(() => { block.style.opacity = "0"; }, rndi(40, 140));
+      }
+    }
+
+    function textFlicker() {
+      // Top-left flicker + micro-jitter
+      if (!TL_EL.classList.contains("hidden")) {
+        const o = (rnd() < 0.35) ? lerp(0.25, 0.95, rnd()) : 1;
+        TL_EL.style.opacity = String(o * lerp(0.4, 1.0, I));
+        TL_EL.style.transform = `translate(${rndi(-2,2)}px, ${rndi(-1,2)}px)`;
+        TL_EL.style.letterSpacing = `${lerp(0.03, 0.12, rnd())}em`;
+      }
+
+      // Center: keep anchored to the center transform, then add tiny jitter
+      if (!CENTER_WRAP.classList.contains("hidden")) {
+        const o2 = (rnd() < 0.30) ? lerp(0.35, 0.95, rnd()) : 1;
+        CENTER_WRAP.style.opacity = String(o2 * lerp(0.45, 1.0, I));
+        CENTER_WRAP.style.transform = `translate(-50%, -50%) translate(${rndi(-2,2)}px, ${rndi(-2,2)}px)`;
+        CENTER_EL.style.letterSpacing = `${lerp(0.01, 0.05, rnd())}em`;
+      }
+
+      // Lower: subtle jump; keep readable
+      if (!LOWER_WRAP.classList.contains("hidden")) {
+        const o3 = (rnd() < 0.42) ? lerp(0.25, 0.95, rnd()) : 1;
+        LOWER_WRAP.style.opacity = String(o3 * lerp(0.45, 1.0, I));
+        LOWER_WRAP.style.transform = `translate(${rndi(-2,2)}px, ${rndi(-1,1)}px)`;
+        LOWER_EL.style.letterSpacing = `${lerp(0.04, 0.10, rnd())}em`;
+      }
+    }
+
+    function cssJitter() {
+      // Tiny viewport jitter to sell the “unstable camera / hacked feed”
+      const x = rndi(-Math.floor(jitterPx), Math.floor(jitterPx));
+      const y = rndi(-Math.floor(jitterPx/2), Math.floor(jitterPx/2));
+      canvas.style.transform = `translate(${x}px, ${y}px)`;
+    }
+
+    // Simple frame limiter
+    const frameInterval = 1000 / FPS;
+    let lastFrame = 0;
+    let start = performance.now();
+    let ending = false;
+
+    function setOn() {
+      document.body.classList.add("on", "warp");
+      document.body.classList.remove("off");
+      requestAnimationFrame(() => (canvas.style.opacity = "1"));
+    }
+
+    function setOff() {
+      document.body.classList.add("off");
+      document.body.classList.remove("on");
+      ending = true;
+    }
+
+    function loop(t) {
+      if (t - lastFrame < frameInterval && !ending) {
+        requestAnimationFrame(loop);
+        return;
+      }
+      lastFrame = t;
+
+      const w = canvas.width;
+      const h = canvas.height;
+
+      // Clear to transparent each frame, then draw noise
+      ctx.clearRect(0, 0, w, h);
+
+      drawNoise(w, h, t);
+      tearSlices(w, h);
+      chromaGhost(w, h);
+      flash(w, h);
+
+      signalDrop();
+      textFlicker();
+      cssJitter();
+
+      // Auto-end if burst
+      if (MODE === "burst") {
+        const elapsed = t - start;
+        if (!ending && elapsed >= MS) {
+          setOff();
+          setTimeout(() => {
+            canvas.style.opacity = "0";
+          }, getCSSInt("--fade-out-ms", 120) + 10);
+        }
+      }
+
+      if (!ending || MODE === "loop") requestAnimationFrame(loop);
+    }
+
+    // Kick it off
+    setOn();
+    requestAnimationFrame(loop);
+
+    // QOL: click/tap re-triggers in normal browser/preview
+    window.addEventListener("pointerdown", () => {
+      seed = (Date.now() & 0x7fffffff) >>> 0;
+      start = performance.now();
+      ending = false;
+      document.body.classList.remove("off");
+      document.body.classList.add("on");
+      canvas.style.opacity = "1";
+      requestAnimationFrame(loop);
+    });
+
+    // ---------------- Helpers ----------------
+
+    function clampNum(x, a, b){ return Math.max(a, Math.min(b, x)); }
+
+    function pickText(qs, keys, fallback, maxLen) {
+      for (const k of keys) {
+        const v = qs.get(k);
+        if (v !== null) return String(v).slice(0, maxLen);
+      }
+      return String(fallback).slice(0, maxLen);
+    }
+
+    function firstPresent(qs, keys) {
+      for (const k of keys) {
+        const v = qs.get(k);
+        if (v !== null) return v;
+      }
+      return null;
+    }
+
+    function isDisabledText(raw) {
+      if (raw === null || raw === undefined) return false; // absent -> NOT disabled (use defaults)
+      const s = String(raw).trim().toLowerCase();
+      return s === "" || s === "0" || s === "off" || s === "false" || s === "none";
+    }
+
+    function setCSSNum(varName, raw, min, max) {
+      if (raw === null || raw === undefined || raw === "") return;
+      const v = clampNum(parseFloat(raw), min, max);
+      document.documentElement.style.setProperty(varName, String(v));
+    }
+
+    function setCSSText(varName, raw) {
+      if (raw === null || raw === undefined || raw === "") return;
+      const v = String(raw).slice(0, 16); // allow units like "56ch", "520px"
+      document.documentElement.style.setProperty(varName, v);
+    }
+
+    function getCSSInt(varName, fallback) {
+      const v = parseInt(getComputedStyle(document.documentElement).getPropertyValue(varName), 10);
+      return Number.isFinite(v) ? v : fallback;
+    }
+  </script>
+</body>
+</html>

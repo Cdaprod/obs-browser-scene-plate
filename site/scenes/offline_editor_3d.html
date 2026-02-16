@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Editor3D</title>
+
+<style>
+body {
+  margin:0;
+  overflow:hidden;
+  background:transparent;
+}
+
+#controls {
+  position:fixed;
+  top:10px;
+  left:10px;
+  z-index:10;
+  background:rgba(0,0,0,.35);
+  padding:10px;
+  border-radius:10px;
+  color:white;
+  font-family:monospace;
+}
+
+#controls input { color:white; }
+</style>
+
+<!-- THIS loads THREE globally -->
+<script src="https://unpkg.com/three@0.149.0/build/three.min.js"></script>
+
+</head>
+<body>
+
+<div id="controls">
+<input type="file" id="file">
+</div>
+
+<script>
+if (!window.THREE) {
+  alert("Three.js failed to load. Check network or CDN.");
+}
+
+/* ========================
+   THREE SETUP
+======================== */
+
+const scene = new THREE.Scene();
+
+const camera = new THREE.PerspectiveCamera(
+  60,
+  window.innerWidth/window.innerHeight,
+  0.1,
+  100
+);
+
+camera.position.z = 3;
+
+const renderer = new THREE.WebGLRenderer({
+  alpha:true,
+  antialias:true
+});
+
+renderer.setSize(window.innerWidth,window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+/* ========================
+   CANVAS TEXTURE
+======================== */
+
+const canvas = document.createElement("canvas");
+const ctx = canvas.getContext("2d");
+
+const texture = new THREE.CanvasTexture(canvas);
+
+const plane = new THREE.Mesh(
+  new THREE.PlaneGeometry(1,1),
+  new THREE.MeshBasicMaterial({
+    map:texture,
+    transparent:true
+  })
+);
+
+scene.add(plane);
+
+/* ========================
+   CAMERA CONTROL
+======================== */
+
+let mouseDown=false;
+let lastX=0;
+let lastY=0;
+
+renderer.domElement.addEventListener("mousedown",e=>{
+  mouseDown=true;
+  lastX=e.clientX;
+  lastY=e.clientY;
+});
+
+window.addEventListener("mouseup",()=>mouseDown=false);
+
+window.addEventListener("mousemove",e=>{
+  if(!mouseDown) return;
+
+  camera.rotation.y -= (e.clientX-lastX)*0.005;
+  camera.rotation.x -= (e.clientY-lastY)*0.005;
+
+  lastX=e.clientX;
+  lastY=e.clientY;
+});
+
+renderer.domElement.addEventListener("wheel",e=>{
+  camera.position.z += e.deltaY*0.002;
+});
+
+/* ========================
+   FILE LOADING
+======================== */
+
+document.getElementById("file")
+.addEventListener("change",async e=>{
+  const f=e.target.files[0];
+  if(!f) return;
+
+  const buf=await f.arrayBuffer();
+  const u8=new Uint8Array(buf);
+
+  let text;
+
+  try {
+    text=new TextDecoder().decode(u8);
+  } catch {
+    text=[...u8]
+      .slice(0,2048)
+      .map(x=>x.toString(16).padStart(2,"0"))
+      .join(" ");
+  }
+
+  renderText(text);
+});
+
+/* ========================
+   TEXT RENDER
+======================== */
+
+function renderText(text){
+
+  const lines=text.replace(/\r/g,"").split("\n");
+
+  const fontSize=20;
+  const lineHeight=28;
+
+  ctx.font=fontSize+"px monospace";
+
+  let maxWidth=0;
+
+  lines.forEach(l=>{
+    maxWidth=Math.max(maxWidth,ctx.measureText(l).width);
+  });
+
+  const gutter=60;
+
+  canvas.width=maxWidth+gutter+40;
+  canvas.height=lines.length*lineHeight+40;
+
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  ctx.font=fontSize+"px monospace";
+  ctx.textBaseline="top";
+
+  lines.forEach((line,i)=>{
+
+    const y=20+i*lineHeight;
+
+    ctx.fillStyle="rgba(255,255,255,.5)";
+    ctx.fillText(i+1,10,y);
+
+    ctx.fillStyle="rgba(255,255,255,.25)";
+    ctx.fillText("|",50,y);
+
+    ctx.fillStyle="white";
+    ctx.fillText(line,70,y);
+  });
+
+  texture.needsUpdate=true;
+
+  const aspect=canvas.width/canvas.height;
+  plane.scale.set(aspect*1.5,1.5,1);
+}
+
+/* ========================
+   LOOP
+======================== */
+
+function animate(){
+  requestAnimationFrame(animate);
+  renderer.render(scene,camera);
+}
+
+animate();
+
+/* ========================
+   RESIZE
+======================== */
+
+window.addEventListener("resize",()=>{
+  camera.aspect=window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth,window.innerHeight);
+});
+</script>
+
+</body>
+</html>
