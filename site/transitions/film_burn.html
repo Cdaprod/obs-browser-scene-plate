@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>film_burn_transition</title>
+  <style>
+    :root{
+      --fade-in-ms: 10;
+      --fade-out-ms: 180;
+      --bg-alpha: 0;          /* keep 0 for transparent overlay */
+      --vignette-alpha: 0.45; /* subtle lens edge */
+    }
+
+    html, body {
+      height: 100%;
+      margin: 0;
+      background: rgba(0,0,0,var(--bg-alpha));
+      overflow: hidden;
+    }
+
+    body { position: relative; }
+
+    /* Main burn overlay */
+    #c{
+      position:absolute; inset:0;
+      width:100%; height:100%;
+      opacity:0;
+      transition: opacity calc(var(--fade-in-ms) * 1ms) linear;
+      will-change: opacity, transform, filter;
+      pointer-events:none;
+    }
+
+    /* Gentle vignette to sell “film gate” */
+    #vignette{
+      position:absolute; inset:-10%;
+      opacity:0;
+      transition: opacity calc(var(--fade-in-ms) * 1ms) linear;
+      pointer-events:none;
+      background: radial-gradient(ellipse at center,
+        rgba(0,0,0,0) 28%,
+        rgba(0,0,0,var(--vignette-alpha)) 78%,
+        rgba(0,0,0,0.90) 100%
+      );
+      mix-blend-mode: multiply;
+      filter: blur(0.6px);
+    }
+
+    /* Exposure pump (very light) */
+    #flash{
+      position:absolute; inset:0;
+      opacity:0;
+      transition: opacity calc(var(--fade-in-ms) * 1ms) linear;
+      pointer-events:none;
+      background: rgba(255,255,255,0);
+      mix-blend-mode: screen;
+    }
+
+    .on #c, .on #vignette, .on #flash { opacity: 1; }
+    .off #c, .off #vignette, .off #flash {
+      opacity: 0;
+      transition: opacity calc(var(--fade-out-ms) * 1ms) linear;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div id="vignette"></div>
+  <div id="flash"></div>
+
+  <script>
+    /**
+     * Cinematic Film Burn Transition (overlay).
+     * - No text, no glitch typography.
+     * - Designed to sit OVER your scene as a transition plate.
+     *
+     * Default URL+Parameters: film_burn_transition.html?mode=burst&ms=900&fps=60&int=0.9&dir=l2r&palette=warm&flash=0.65&grain=0.55&dust=0.35&soft=0.55
+     *
+     * Params:
+     *  mode    = burst | loop     (default burst)
+     *  ms      = duration (burst) / period (loop) (default 900)
+     *  fps     = target fps       (default 60)
+     *  int     = intensity 0..1   (default 0.9)
+     *  seed    = integer for repeatability
+     *
+     * Motion:
+     *  dir     = l2r | r2l | t2b | b2t | radial (default l2r)
+     *  soft    = 0..1 (edge softness / smoke) (default 0.55)
+     *
+     * Look:
+     *  palette = warm | cool | toxic | mono (default warm)
+     *  flash   = 0..1 (white exposure pop) (default 0.65)
+     *  grain   = 0..1 (film grain strength) (default 0.55)
+     *  dust    = 0..1 (dust/specks strength) (default 0.35)
+     *  vignette= 0..1 (CSS vignette alpha) (default 0.45)
+     */
+
+    const qs = new URLSearchParams(location.search);
+
+    const MODE  = (qs.get("mode") || "burst").toLowerCase();
+    const MS    = clamp(parseFloat(qs.get("ms") || "900"), 180, 12000);
+    const FPS   = clamp(parseFloat(qs.get("fps") || "60"), 10, 120);
+    const INT   = clamp(parseFloat(qs.get("int") || "0.9"), 0, 1);
+    const DIR   = (qs.get("dir") || "l2r").toLowerCase();
+    const PAL   = (qs.get("palette") || "warm").toLowerCase();
+    const SOFT  = clamp(parseFloat(qs.get("soft") || "0.55"), 0, 1);
+    const FLASH = clamp(parseFloat(qs.get("flash") || "0.65"), 0, 1);
+    const GRAIN = clamp(parseFloat(qs.get("grain") || "0.55"), 0, 1);
+    const DUST  = clamp(parseFloat(qs.get("dust") || "0.35"), 0, 1);
+    const VIG   = clamp(parseFloat(qs.get("vignette") || "0.45"), 0, 1);
+
+    document.documentElement.style.setProperty("--vignette-alpha", String(VIG));
+
+    const SEED0 = (qs.get("seed") ? parseInt(qs.get("seed"), 10) : (Date.now() & 0x7fffffff)) >>> 0;
+
+    const canvas = document.getElementById("c");
+    const ctx = canvas.getContext("2d", { alpha: true, desynchronized: true });
+    const flashEl = document.getElementById("flash");
+
+    // RNG (xorshift32) deterministic
+    let seed = SEED0;
+    function rnd(){
+      seed ^= seed << 13; seed >>>= 0;
+      seed ^= seed >> 17; seed >>>= 0;
+      seed ^= seed << 5;  seed >>>= 0;
+      return (seed >>> 0) / 4294967296;
+    }
+
+    // Fit
+    function fit(){
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      canvas.width  = Math.floor(window.innerWidth * dpr);
+      canvas.height = Math.floor(window.innerHeight * dpr);
+      canvas.style.width = "100%";
+      canvas.style.height = "100%";
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    window.addEventListener("resize", fit, { passive:true });
+    fit();
+
+    // Frame limiter
+    const frameInterval = 1000 / FPS;
+    let lastFrame = 0;
+    let start = performance.now();
+    let ending = false;
+
+    // --------- Procedural noise field (fast value-noise) ----------
+    // We keep a low-res noise grid and bilinear sample it for organic edges.
+    const noise = {
+      gw: 0, gh: 0,
+      grid: null,
+      // grid scale relative to screen (smaller => chunkier burns)
+      cell: 52
+    };
+
+    function resetNoise(){
+      const w = Math.max(1, Math.floor(window.innerWidth / noise.cell));
+      const h = Math.max(1, Math.floor(window.innerHeight / noise.cell));
+      noise.gw = w + 3;
+      noise.gh = h + 3;
+      noise.grid = new Float32Array(noise.gw * noise.gh);
+      for (let i=0; i<noise.grid.length; i++) noise.grid[i] = rnd();
+    }
+
+    resetNoise();
+    window.addEventListener("resize", resetNoise, { passive:true });
+
+    function nget(ix, iy){
+      ix = (ix % noise.gw + noise.gw) % noise.gw;
+      iy = (iy % noise.gh + noise.gh) % noise.gh;
+      return noise.grid[iy * noise.gw + ix];
+    }
+
+    function smoothstep(t){ return t*t*(3-2*t); }
+
+    function sampleNoise(x, y){
+      // x,y in screen pixels -> grid coords
+      const gx = x / noise.cell;
+      const gy = y / noise.cell;
+
+      const ix = Math.floor(gx);
+      const iy = Math.floor(gy);
+
+      const fx = gx - ix;
+      const fy = gy - iy;
+
+      const u = smoothstep(fx);
+      const v = smoothstep(fy);
+
+      const a = nget(ix,   iy);
+      const b = nget(ix+1, iy);
+      const c = nget(ix,   iy+1);
+      const d = nget(ix+1, iy+1);
+
+      const ab = a + (b-a)*u;
+      const cd = c + (d-c)*u;
+      return ab + (cd-ab)*v; // 0..1
+    }
+
+    // Palette
+    function paletteStops(name){
+      if (name === "cool")  return { core:[120,190,255], hot:[255,255,255], ember:[120,190,255] };
+      if (name === "toxic") return { core:[120,255,170], hot:[255,255,255], ember:[120,255,170] };
+      if (name === "mono")  return { core:[255,255,255], hot:[255,255,255], ember:[255,255,255] };
+      // warm default
+      return { core:[255,165,70], hot:[255,250,230], ember:[255,85,35] };
+    }
+
+    // Motion mapping
+    function progressToPoint(t, w, h){
+      // t 0..1
+      if (DIR === "r2l") return { x: (1-t)*w, y: 0.5*h };
+      if (DIR === "t2b") return { x: 0.5*w, y: t*h };
+      if (DIR === "b2t") return { x: 0.5*w, y: (1-t)*h };
+      if (DIR === "radial") {
+        // fixed origin (stable per seed) so it feels cinematic
+        return { x: w*(0.18 + 0.64*origin.u), y: h*(0.18 + 0.64*origin.v) };
+      }
+      // l2r default
+      return { x: t*w, y: 0.5*h };
+    }
+
+    const origin = { u: rnd(), v: rnd() };
+
+    // Burn rendering:
+    // We compute a mask value per pixel: M = distance-based ramp + noise perturbation.
+    // Then convert to alpha with a soft edge. We draw:
+    //   1) smoky body (soft)
+    //   2) hot edge glow ring
+    //   3) ember core highlights
+    //   4) grain + dust
+    let img = null;
+    function ensureImage(w, h){
+      if (!img || img.w !== w || img.h !== h){
+        img = { w, h, data: ctx.createImageData(w, h) };
+      }
+    }
+
+    function drawBurn(tNorm){
+      const W = canvas.width;
+      const H = canvas.height;
+      ensureImage(W, H);
+
+      const out = img.data.data;
+
+      // Convert to device pixels already; we are writing in canvas pixel coords.
+      const w = W, h = H;
+
+      const pal = paletteStops(PAL);
+
+      // Burn “front” location
+      const p = progressToPoint(tNorm, w, h);
+
+      // Scale: how wide the burn covers
+      const maxR = Math.hypot(w, h);
+      const base = lerp(0.10, 1.15, tNorm);            // expands over time
+      const radius = maxR * (0.25 + 0.55*base);        // overall influence radius
+
+      // Edge softness
+      const softness = lerp(0.06, 0.16, SOFT) * (0.7 + 0.8*INT);
+      const edgeWidth = radius * (0.08 + 0.10*INT) * (0.8 + 0.8*SOFT);
+
+      // Noise strength (organic crawl)
+      const nAmp = radius * (0.06 + 0.16*INT);
+
+      // Gate weave / subtle drift
+      const driftX = (rnd()*2-1) * (6 + 18*SOFT);
+      const driftY = (rnd()*2-1) * (4 + 14*SOFT);
+
+      // White flash timing: peak around middle of burn
+      const flashT = Math.exp(-Math.pow((tNorm - 0.55) / 0.18, 2));
+      const flashA = FLASH * (0.10 + 0.90*flashT) * (0.35 + 0.65*INT);
+
+      // Exposure pump layer (CSS div) — helps OBS look “filmic”
+      flashEl.style.background = `rgba(255,255,255,${flashA.toFixed(4)})`;
+
+      // Fill pixels
+      // Performance: step in 2px blocks for speed (still looks good in motion).
+      const step = 2;
+      for (let y=0; y<h; y+=step){
+        for (let x=0; x<w; x+=step){
+          // distance field
+          const dx = (x - p.x) + driftX;
+          const dy = (y - p.y) + driftY;
+          const d = Math.hypot(dx, dy);
+
+          // directional bias for non-radial wipes (turn distance into a “wipe plane”)
+          let plane = 0;
+          if (DIR === "l2r") plane = (x / w);
+          else if (DIR === "r2l") plane = 1 - (x / w);
+          else if (DIR === "t2b") plane = (y / h);
+          else if (DIR === "b2t") plane = 1 - (y / h);
+          else plane = (d / maxR);
+
+          // The wipe threshold moves across screen with tNorm
+          const thresh = tNorm;
+
+          // Organic perturbation
+          const n = sampleNoise(x + 50*tNorm, y + 35*tNorm); // animated sample
+          const wobble = (n - 0.5) * (0.12 + 0.55*INT);
+
+          // Core mask: how “burnt” this pixel is
+          // Burn occurs when plane < thresh (with noise wobble)
+          let m = (thresh - (plane + wobble));
+
+          // shape and soften
+          // m > 0 => inside burnt region. We convert to alpha.
+          const body = smooth01(m / (softness + 1e-6));                 // 0..1 smoky body
+          const edge = Math.exp(-Math.pow((m - 0.03) / (softness*0.55 + 1e-6), 2)); // glow around edge
+
+          // Alpha levels
+          const bodyA = body * (0.22 + 0.62*INT) * (0.65 + 0.35*SOFT);
+          const edgeA = edge * (0.18 + 0.55*INT);
+
+          // Color blend: smoky body uses core/ember; edge uses hot
+          let r = 0, g = 0, b = 0, a = 0;
+
+          // smoky body (darker warm)
+          if (bodyA > 0.001){
+            const emberMix = clamp01(0.35 + 0.55*body);
+            r += pal.ember[0] * emberMix;
+            g += pal.ember[1] * emberMix;
+            b += pal.ember[2] * emberMix;
+            a += bodyA;
+          }
+
+          // hot edge glow
+          if (edgeA > 0.001){
+            r += pal.hot[0] * (0.55 + 0.45*edgeA);
+            g += pal.hot[1] * (0.55 + 0.45*edgeA);
+            b += pal.hot[2] * (0.55 + 0.45*edgeA);
+            a += edgeA;
+          }
+
+          // normalize color by contributions
+          if (a > 0.0001){
+            r = r / ( (bodyA>0?1:0) + (edgeA>0?1:0) );
+            g = g / ( (bodyA>0?1:0) + (edgeA>0?1:0) );
+            b = b / ( (bodyA>0?1:0) + (edgeA>0?1:0) );
+          }
+
+          // Grain + dust specks (applied only where burn is visible)
+          if (a > 0.001){
+            const gr = (rnd()*2-1) * (16 + 46*GRAIN) * (0.35 + 0.65*INT);
+            r = clamp255(r + gr);
+            g = clamp255(g + gr);
+            b = clamp255(b + gr);
+
+            if (rnd() < (0.0009 + 0.007*DUST) * (0.5 + 0.5*INT)) {
+              // bright dust pop
+              const pop = 120 + 120*rnd();
+              r = clamp255(r + pop);
+              g = clamp255(g + pop);
+              b = clamp255(b + pop);
+              a = clamp01(a + 0.25 + 0.55*rnd());
+            }
+          }
+
+          // Final alpha clamp; scale to feel “overlay”
+          a = clamp01(a);
+
+          // Write 2x2 block
+          for (let yy=0; yy<step; yy++){
+            for (let xx=0; xx<step; xx++){
+              const i = ((y+yy)*w + (x+xx))*4;
+              out[i+0] = r|0;
+              out[i+1] = g|0;
+              out[i+2] = b|0;
+              out[i+3] = (a * 255)|0;
+            }
+          }
+        }
+      }
+
+      ctx.putImageData(img.data, 0, 0);
+
+      // Add a soft “leak bloom” pass (fast) by drawing the canvas onto itself slightly blurred via shadow trick
+      ctx.save();
+      ctx.globalCompositeOperation = "screen";
+      ctx.globalAlpha = 0.22 + 0.38*INT;
+      ctx.filter = `blur(${Math.max(1, 2 + 6*SOFT)}px)`;
+      ctx.drawImage(canvas, 0, 0);
+      ctx.restore();
+    }
+
+    function smooth01(x){ return x <= 0 ? 0 : x >= 1 ? 1 : (x*x*(3-2*x)); }
+    function clamp(x,a,b){ return Math.max(a, Math.min(b, x)); }
+    function clamp01(x){ return x < 0 ? 0 : x > 1 ? 1 : x; }
+    function clamp255(x){ return x < 0 ? 0 : x > 255 ? 255 : x; }
+    function lerp(a,b,t){ return a + (b-a)*t; }
+
+    function setOn(){
+      document.body.classList.add("on");
+      document.body.classList.remove("off");
+      requestAnimationFrame(() => (canvas.style.opacity = "1"));
+    }
+
+    function setOff(){
+      document.body.classList.add("off");
+      document.body.classList.remove("on");
+      ending = true;
+    }
+
+    function loop(now){
+      if (now - lastFrame < frameInterval && !ending){
+        requestAnimationFrame(loop);
+        return;
+      }
+      lastFrame = now;
+
+      const elapsed = now - start;
+
+      const tNorm = (MODE === "burst")
+        ? clamp01(elapsed / MS)
+        : ((elapsed % MS) / MS);
+
+      // Clear to transparent
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Draw the burn overlay for this time
+      // Important: cinematic feel comes from a single decisive sweep + exposure pop
+      drawBurn(tNorm);
+
+      // End burst -> fade out -> leave fully transparent
+      if (MODE === "burst" && !ending && elapsed >= MS) {
+        setOff();
+        setTimeout(() => {
+          canvas.style.opacity = "0";
+          flashEl.style.background = "rgba(255,255,255,0)";
+        }, getCSSInt("--fade-out-ms", 180) + 10);
+      }
+
+      if (!ending || MODE === "loop") requestAnimationFrame(loop);
+    }
+
+    function getCSSInt(varName, fallback){
+      const v = parseInt(getComputedStyle(document.documentElement).getPropertyValue(varName), 10);
+      return Number.isFinite(v) ? v : fallback;
+    }
+
+    // Start
+    setOn();
+    requestAnimationFrame(loop);
+
+    // Click/tap retrigger (useful in browser previews)
+    window.addEventListener("pointerdown", () => {
+      seed = (Date.now() & 0x7fffffff) >>> 0;
+      start = performance.now();
+      ending = false;
+      document.body.classList.remove("off");
+      document.body.classList.add("on");
+      canvas.style.opacity = "1";
+      requestAnimationFrame(loop);
+    });
+  </script>
+</body>
+</html>

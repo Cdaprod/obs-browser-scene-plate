@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Editor3D</title>
+  <style>
+    html, body { margin:0; padding:0; height:100%; overflow:hidden; background: transparent; }
+    #ui {
+      position: fixed; left: 12px; top: 12px; z-index: 10;
+      display: flex; gap: 8px; align-items: center;
+      font: 13px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      background: rgba(0,0,0,.35);
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 10px;
+      padding: 10px 12px;
+      backdrop-filter: blur(6px);
+      color: #fff;
+    }
+    #ui input[type="text"] { width: 320px; }
+    #ui button, #ui input {
+      font: inherit;
+      color: #fff;
+      background: rgba(255,255,255,.08);
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 8px;
+      padding: 6px 10px;
+      outline: none;
+    }
+    #ui button:hover { background: rgba(255,255,255,.12); cursor: pointer; }
+    #hint {
+      position: fixed; right: 12px; top: 12px; z-index: 10;
+      font: 12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      color: rgba(255,255,255,.75);
+      background: rgba(0,0,0,.25);
+      border: 1px solid rgba(255,255,255,.10);
+      border-radius: 10px;
+      padding: 10px 12px;
+      max-width: 360px;
+    }
+    canvas { display:block; }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <input id="file" type="file" accept=".txt,.md,.js,.ts,.tsx,.py,.json,.html,.css,.yml,.yaml,.go,.rs" />
+    <button id="loadLocal">Load file</button>
+
+    <input id="url" type="text" placeholder="Optional: /api/file?path=..." />
+    <button id="loadUrl">Fetch</button>
+
+    <button id="bigger">A+</button>
+    <button id="smaller">A-</button>
+  </div>
+
+  <div id="hint">
+    <div><b>Camera</b> (manual)</div>
+    <div>• Drag: orbit</div>
+    <div>• Right-drag / 2-finger: pan</div>
+    <div>• Wheel / pinch: zoom</div>
+    <div style="margin-top:8px; opacity:.85;">
+      Tip: You can later add PointerLockControls for FPS/WASD mode.  [oai_citation:2‡Three.js](https://threejs.org/examples/misc_controls_pointerlock.html?utm_source=chatgpt.com)
+    </div>
+  </div>
+
+  <script type="module">
+    import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
+    import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js";
+
+    // ----------------------------
+    // Editor texture renderer
+    // ----------------------------
+    const cfg = {
+      fontPx: 18,
+      lineHeight: 26,
+      tabSize: 2,                 // convert \t to spaces
+      padX: 18,
+      padY: 18,
+      gutterPadR: 14,
+      gutterMinWidth: 56,         // baseline for "1 |"
+      maxLines: 2000,             // safety
+      maxCols: 300,               // safety
+      bgAlpha: 0.0,               // keep transparent
+      textColor: "rgba(245,245,245,0.95)",
+      gutterColor: "rgba(245,245,245,0.38)",
+      pipeColor: "rgba(245,245,245,0.28)",
+      gutterBg: "rgba(0,0,0,0.10)",       // subtle gutter haze (still no "panel")
+      selectionGlow: "rgba(120,170,255,0.08)"
+    };
+
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+
+    function normalizeText(raw) {
+      // normalize newlines, prevent insane files from melting the page
+      let t = raw.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+      let lines = t.split("\n").slice(0, cfg.maxLines);
+      lines = lines.map(l => l.replace(/\t/g, " ".repeat(cfg.tabSize)).slice(0, cfg.maxCols));
+      return lines;
+    }
+
+    function measure(lines) {
+      ctx.font = `${cfg.fontPx}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace`;
+      const digits = String(lines.length).length;
+      const gutterW = Math.max(cfg.gutterMinWidth, ctx.measureText("9".repeat(digits) + "  |").width + cfg.gutterPadR);
+      let maxW = 0;
+      for (const l of lines) maxW = Math.max(maxW, ctx.measureText(l).width);
+      const w = Math.ceil(cfg.padX + gutterW + maxW + cfg.padX);
+      const h = Math.ceil(cfg.padY + lines.length * cfg.lineHeight + cfg.padY);
+      return { w, h, gutterW };
+    }
+
+    function renderEditorTexture(lines) {
+      const { w, h, gutterW } = measure(lines);
+
+      canvas.width = Math.ceil(w * dpr);
+      canvas.height = Math.ceil(h * dpr);
+      canvas.style.width = `${w}px`;
+      canvas.style.height = `${h}px`;
+
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+
+      // transparent "no panel" background
+      if (cfg.bgAlpha > 0) {
+        ctx.fillStyle = `rgba(0,0,0,${cfg.bgAlpha})`;
+        ctx.fillRect(0, 0, w, h);
+      }
+
+      // subtle gutter haze (optional)
+      ctx.fillStyle = cfg.gutterBg;
+      ctx.fillRect(cfg.padX, cfg.padY - 6, gutterW, h - cfg.padY + 6);
+
+      // text settings
+      ctx.font = `${cfg.fontPx}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace`;
+      ctx.textBaseline = "top";
+
+      for (let i = 0; i < lines.length; i++) {
+        const y = cfg.padY + i * cfg.lineHeight;
+
+        // gutter number
+        ctx.fillStyle = cfg.gutterColor;
+        const ln = String(i + 1);
+        ctx.fillText(ln, cfg.padX + 2, y);
+
+        // pipe
+        ctx.fillStyle = cfg.pipeColor;
+        ctx.fillText("|", cfg.padX + gutterW - cfg.gutterPadR, y);
+
+        // code
+        ctx.fillStyle = cfg.textColor;
+        ctx.fillText(lines[i], cfg.padX + gutterW + 8, y);
+      }
+
+      return { w, h };
+    }
+
+    // ----------------------------
+    // Three scene
+    // ----------------------------
+    const scene = new THREE.Scene();
+
+    const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.01, 100);
+    camera.position.set(0, 0, 2.8);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.06;
+    controls.enablePan = true;       // manual pan/zoom/rotate  [oai_citation:3‡Three.js](https://threejs.org/docs/?utm_source=chatgpt.com)
+    controls.enableZoom = true;
+    controls.enableRotate = true;
+
+    // Soft light so it feels “real” even though it's a basic textured plane
+    const light = new THREE.DirectionalLight(0xffffff, 0.8);
+    light.position.set(1, 2, 2);
+    scene.add(light);
+
+    const ambient = new THREE.AmbientLight(0xffffff, 0.35);
+    scene.add(ambient);
+
+    // texture + plane
+    const texture = new THREE.CanvasTexture(canvas); // canvas-as-texture  [oai_citation:4‡Three.js](https://threejs.org/docs/pages/CanvasTexture.html?utm_source=chatgpt.com)
+    texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+
+    const material = new THREE.MeshStandardMaterial({
+      map: texture,
+      transparent: true,
+      roughness: 0.55,
+      metalness: 0.05,
+      emissive: new THREE.Color(0xffffff),
+      emissiveIntensity: 0.35,
+    });
+
+    const geo = new THREE.PlaneGeometry(1, 1);
+    const plane = new THREE.Mesh(geo, material);
+    scene.add(plane);
+
+    function setText(raw) {
+      const lines = normalizeText(raw);
+      const { w, h } = renderEditorTexture(lines);
+      texture.needsUpdate = true;
+
+      // scale plane to match texture aspect
+      const aspect = w / h;
+      const height = 1.4;          // "screen height" in world units
+      const width = height * aspect;
+      plane.scale.set(width, height, 1);
+
+      // keep it centered
+      plane.position.set(0, 0, 0);
+
+      // aim camera at it nicely
+      controls.target.set(0, 0, 0);
+      controls.update();
+    }
+
+    // default starter text
+    setText([
+      "function hello(name) {",
+      "  const msg = `hello, ${name}`;",
+      "  console.log(msg);",
+      "}",
+      "",
+      "hello('Cdaprod');"
+    ].join("\\n"));
+
+    // ----------------------------
+    // Input: local file (works anywhere)
+    // ----------------------------
+    const fileInput = document.getElementById("file");
+    document.getElementById("loadLocal").addEventListener("click", async () => {
+      const f = fileInput.files?.[0];
+      if (!f) return;
+      const text = await f.text();
+      setText(text);
+    });
+
+    // ----------------------------
+    // Input: fetch from your own server (same-origin)
+    // ----------------------------
+    document.getElementById("loadUrl").addEventListener("click", async () => {
+      const u = document.getElementById("url").value.trim();
+      if (!u) return;
+      const res = await fetch(u, { cache: "no-store" });
+      if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
+      const text = await res.text();
+      setText(text);
+    });
+
+    // font size controls
+    document.getElementById("bigger").addEventListener("click", () => {
+      cfg.fontPx = Math.min(cfg.fontPx + 2, 40);
+      cfg.lineHeight = Math.round(cfg.fontPx * 1.45);
+      setText(lastText);
+    });
+    document.getElementById("smaller").addEventListener("click", () => {
+      cfg.fontPx = Math.max(cfg.fontPx - 2, 10);
+      cfg.lineHeight = Math.round(cfg.fontPx * 1.45);
+      setText(lastText);
+    });
+
+    // Keep last text so size change can re-render
+    let lastText = "";
+    const _setText = setText;
+    setText = (raw) => { lastText = raw; _setText(raw); };
+    setText(lastText || "");
+
+    // resize
+    window.addEventListener("resize", () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // render loop
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+  </script>
+</body>
+</html>

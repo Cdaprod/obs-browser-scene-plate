@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { margin:0; overflow:hidden; }
+
+    #editor {
+      position:absolute;
+      left:-9999px;
+      width:800px;
+      height:400px;
+      background:transparent;
+      font-family: monospace;
+      color:#eee;
+    }
+
+    .line {
+      display:flex;
+    }
+
+    .num {
+      width:40px;
+      opacity:0.4;
+      text-align:right;
+      margin-right:10px;
+    }
+  </style>
+</head>
+
+<body>
+<div id="editor"></div>
+
+<script type="module">
+import * as THREE from
+'https://cdn.jsdelivr.net/npm/three@0.160/build/three.module.js';
+
+const editor = document.getElementById('editor');
+
+const code = `
+const camera = new THREE.PerspectiveCamera();
+scene.add(camera);
+
+renderer.render(scene, camera);
+`;
+
+code.split('\n').forEach((line,i)=>{
+  const el = document.createElement('div');
+  el.className='line';
+  el.innerHTML =
+    `<span class="num">${i+1}</span>
+     <span>${line}</span>`;
+  editor.appendChild(el);
+});
+
+// Canvas capture
+const canvas = document.createElement('canvas');
+canvas.width = 800;
+canvas.height = 400;
+const ctx = canvas.getContext('2d');
+
+ctx.fillStyle="rgba(0,0,0,0)";
+ctx.fillRect(0,0,800,400);
+
+ctx.font="16px monospace";
+ctx.fillStyle="#eee";
+
+let y=20;
+editor.querySelectorAll('.line').forEach(line=>{
+  ctx.fillText(line.innerText,10,y);
+  y+=20;
+});
+
+const texture = new THREE.CanvasTexture(canvas);
+
+// THREE scene
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(
+  60, window.innerWidth/window.innerHeight,0.1,100
+);
+camera.position.z = 3;
+
+const renderer = new THREE.WebGLRenderer({alpha:true});
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const plane = new THREE.Mesh(
+  new THREE.PlaneGeometry(4,2),
+  new THREE.MeshBasicMaterial({
+    map:texture,
+    transparent:true
+  })
+);
+
+scene.add(plane);
+
+function animate(){
+  requestAnimationFrame(animate);
+
+  plane.rotation.y += 0.002;
+  plane.rotation.x += 0.001;
+
+  renderer.render(scene,camera);
+}
+
+animate();
+</script>
+</body>
+</html>
