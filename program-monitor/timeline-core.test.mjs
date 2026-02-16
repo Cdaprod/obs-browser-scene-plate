@@ -43,3 +43,23 @@ test("compileTimeline is deterministic for identical input", async () => {
   assert.equal(first.nodes[0].base.kind, "page");
   assert.equal(first.nodes[0].duration, 1.2);
 });
+
+test("all-nodes timeline model maps timeline and node-local time consistently", async () => {
+  const core = await loadTimelineCore();
+  const timeline = core.buildAllNodesTimelineModel([
+    { id: "n1", duration: 2 },
+    { id: "n2", duration: 3 },
+    { id: "n3", duration: 5 }
+  ]);
+
+  assert.equal(timeline.ready, true);
+  assert.equal(timeline.total, 10);
+  assert.deepEqual(timeline.starts, [0, 2, 5]);
+
+  const t = core.mapNodeToTimelineT(timeline, 1, 1.5);
+  assert.equal(t, 3.5);
+
+  const mapped = core.mapTimelineTToNode(timeline, 7);
+  assert.equal(mapped.nodeIndex, 2);
+  assert.equal(mapped.nodeLocalT, 2);
+});

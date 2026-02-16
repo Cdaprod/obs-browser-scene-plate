@@ -26,7 +26,7 @@ const {
   safeReadJson,
   safeWriteJsonAtomic
 } = require('./render-utils');
-const { write_manifest } = require('./timeline/manifest');
+const { write_manifest, buildPlanTimingMetadata } = require('./timeline/manifest');
 const { render_html_plate } = require('./render/html_plate');
 
 const PORT = Number(process.env.PORT || 8791);
@@ -2603,12 +2603,25 @@ function startServer() {
         return json(res, 400, { ok: false, error: 'missing_or_invalid_url' });
       }
 
-      const duration = parseOptionalNumber(body.duration) ?? parseOptionalNumber(body.seconds);
+      const requestedDuration = parseOptionalNumber(body.duration) ?? parseOptionalNumber(body.seconds);
       const fps = parseOptionalNumber(body.fps) ?? 60;
       const width = parseOptionalNumber(body.width) ?? 1080;
       const height = parseOptionalNumber(body.height) ?? 1920;
       const format = body.format === 'png-sequence' ? 'png-sequence' : 'webm-alpha';
       const plateName = safeName(body.name || 'html_plate');
+      const plan = normalizeRenderPlanPayload(body.render_plan) || {
+        type: 'html_plate',
+        url: targetUrl,
+        fps,
+        width,
+        height,
+        format,
+        nodes: []
+      };
+      const planTiming = buildPlanTimingMetadata(plan);
+      const duration = Number.isFinite(requestedDuration) && requestedDuration > 0
+        ? requestedDuration
+        : (planTiming.ready ? planTiming.total_duration_sec : Number.NaN);
       if (!Number.isFinite(duration) || duration <= 0) {
         return json(res, 400, { ok: false, error: 'missing_or_invalid_duration' });
       }
@@ -2625,15 +2638,8 @@ function startServer() {
           cacheDir: path.join(RENDERS_DIR, '.cache', 'html-plates')
         });
 
-        const plan = normalizeRenderPlanPayload(body.render_plan) || {
-          type: 'html_plate',
-          url: targetUrl,
-          duration,
-          fps,
-          width,
-          height,
-          format
-        };
+        plan.duration = duration;
+        plan.url = plan.url || targetUrl;
         const manifestPath = write_manifest(plan, path.dirname(outPath), {
           resolvedAssets: [{ type: 'html_overlay', url: targetUrl }],
           cacheKeys: { html_plate: result.cache_key },
@@ -2645,7 +2651,9 @@ function startServer() {
             duration_seconds: duration,
             duration_ms: Math.round(duration * 1000),
             start_time_seconds: 0,
-            end_time_seconds: duration
+            end_time_seconds: duration,
+            total_duration_sec: planTiming.ready ? planTiming.total_duration_sec : duration,
+            segments: planTiming.ready ? planTiming.segments : []
           }
         });
 

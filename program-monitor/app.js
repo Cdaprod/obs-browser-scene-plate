@@ -9,7 +9,9 @@ import {
   getDurationHintSeconds,
   encodeTimelinePayload,
   buildTimelineDescriptor,
-  compileTimeline
+  compileTimeline,
+  buildAllNodesTimelineModel,
+  mapTimelineTToNode
 } from "./timeline/core.js";
 import { resolveMediaDurationSeconds } from "./media-duration.js";
 
@@ -826,6 +828,20 @@ function getNodeDurationEstimate(node) {
   return DEFAULT_NODE_DURATION_SECONDS;
 }
 
+
+function isAllNodesMode() {
+  const selectedIndex = getSelectedIndex();
+  return selectedIndex === null;
+}
+
+function getAllNodesTimelineModel() {
+  const nodes = state.nodes.map((node, index) => ({
+    id: node?.id || `node-${index + 1}`,
+    duration: getNodeDuration(index)
+  }));
+  return buildAllNodesTimelineModel(nodes);
+}
+
 function getNodeDuration(index) {
   if (!state.nodes[index]) {
     return DEFAULT_NODE_DURATION_SECONDS;
@@ -843,10 +859,13 @@ function updatePreviewScrubber(currentTime) {
   if (!elements.previewScrubber) {
     return;
   }
-  const mediaClock = isMediaDurationClock();
+  const mediaClock = isMediaDurationClock() && !isAllNodesMode();
   const mediaDuration = Number(state.durationInfo?.duration);
   const hasBoundedMediaDuration = mediaClock && Number.isFinite(mediaDuration) && mediaDuration > 0;
-  const clockDuration = hasBoundedMediaDuration ? mediaDuration : (state.timelineDuration || 0);
+  const timeline = getAllNodesTimelineModel();
+  const clockDuration = hasBoundedMediaDuration
+    ? mediaDuration
+    : (timeline.ready ? timeline.total : (state.timelineDuration || 0));
   const clockTime = hasBoundedMediaDuration
     ? Math.max(0, elements.baseVideo.currentTime || 0)
     : Math.max(0, currentTime || 0);
@@ -859,7 +878,7 @@ function updatePreviewScrubber(currentTime) {
   }
   state.currentTime = hasBoundedMediaDuration
     ? getTimelineOffset(state.activeIndex) + clockTime
-    : clockTime;
+    : Math.max(0, clockTime);
 }
 
 function renderPreviewScrubberSegments() {
@@ -867,14 +886,18 @@ function renderPreviewScrubberSegments() {
     return;
   }
   elements.previewScrubberSegments.innerHTML = "";
-  if (!state.timelineDuration) {
+  const timeline = getAllNodesTimelineModel();
+  if (!timeline.ready) {
+    elements.previewScrubberSegments.classList.add("is-disabled");
     return;
   }
-  state.nodes.forEach((_, index) => {
-    const duration = getNodeDuration(index);
+  elements.previewScrubberSegments.classList.remove("is-disabled");
+  timeline.nodeDurations.forEach((duration, index) => {
     const segment = document.createElement("div");
     segment.className = "previewScrubberSegment";
-    segment.style.flex = `${duration} 0 0`;
+    segment.style.flexGrow = String(duration);
+    segment.style.flexShrink = "0";
+    segment.style.flexBasis = "0";
     segment.textContent = String(index + 1);
     elements.previewScrubberSegments.appendChild(segment);
   });
@@ -2339,19 +2362,10 @@ function pauseAll() {
 
 async function seekToTime(targetTime, { autoplay = false } = {}) {
   const clamped = Math.max(0, Math.min(targetTime, state.timelineDuration));
-  let elapsed = 0;
-  let targetIndex = 0;
-  let offset = 0;
-
-  for (let i = 0; i < state.nodes.length; i += 1) {
-    const duration = getNodeDuration(i);
-    if (clamped <= elapsed + duration) {
-      targetIndex = i;
-      offset = clamped - elapsed;
-      break;
-    }
-    elapsed += duration;
-  }
+  const timeline = getAllNodesTimelineModel();
+  const mapped = mapTimelineTToNode(timeline, clamped);
+  const targetIndex = mapped.nodeIndex;
+  const offset = mapped.nodeLocalT;
 
   state.stopRequested = false;
   state.playing = false;
@@ -3107,7 +3121,7 @@ const getPreviewTimeFromClientX = (clientX) => {
   }
   const rect = elements.previewScrubber.getBoundingClientRect();
   const percent = Math.min(Math.max((clientX - rect.left) / rect.width, 0), 1);
-  if (isMediaDurationClock()) {
+  if (isMediaDurationClock() && !isAllNodesMode()) {
     const mediaDuration = Number(state.durationInfo?.duration);
     return Number.isFinite(mediaDuration) && mediaDuration > 0 ? percent * mediaDuration : 0;
   }
@@ -3119,7 +3133,7 @@ if (elements.previewScrubber) {
     if (state.scrubberDisabled) {
       return;
     }
-    if (isMediaDurationClock()) {
+    if (isMediaDurationClock() && !isAllNodesMode()) {
       const safeTime = Math.max(0, seconds);
       elements.baseVideo.currentTime = safeTime;
       syncOverlayPlayback(safeTime, false);

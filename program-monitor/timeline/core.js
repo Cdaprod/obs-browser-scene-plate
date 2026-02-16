@@ -285,6 +285,91 @@ export function buildTimelineDescriptor(timeline) {
   };
 }
 
+
+export function buildAllNodesTimelineModel(nodes) {
+  const safeNodes = Array.isArray(nodes) ? nodes : [];
+  const nodeDurations = safeNodes.map((node) => {
+    const override = Number(node && node.durationOverride);
+    if (Number.isFinite(override) && override > 0) {
+      return override;
+    }
+
+    const duration = Number(
+      node && (
+        node.duration
+        ?? node.resolved_duration_sec
+        ?? node.duration_seconds
+      )
+    );
+    if (Number.isFinite(duration) && duration > 0) {
+      return duration;
+    }
+    return Number.NaN;
+  });
+
+  if (!nodeDurations.length || nodeDurations.some((duration) => !Number.isFinite(duration) || duration <= 0)) {
+    return {
+      ready: false,
+      nodeDurations,
+      starts: [],
+      total: Number.NaN,
+      segments: []
+    };
+  }
+
+  const starts = [];
+  const segments = [];
+  let acc = 0;
+  for (let index = 0; index < nodeDurations.length; index += 1) {
+    const duration = nodeDurations[index];
+    const start = acc;
+    const end = start + duration;
+    starts.push(start);
+    segments.push({
+      index,
+      start_sec: start,
+      dur_sec: duration,
+      end_sec: end,
+      node_id: safeNodes[index] && safeNodes[index].id ? safeNodes[index].id : `node-${index + 1}`
+    });
+    acc = end;
+  }
+
+  return {
+    ready: true,
+    nodeDurations,
+    starts,
+    total: acc,
+    segments
+  };
+}
+
+export function mapTimelineTToNode(timeline, t) {
+  if (!timeline || !timeline.ready || !Array.isArray(timeline.starts) || !timeline.starts.length) {
+    return { nodeIndex: 0, nodeLocalT: 0 };
+  }
+
+  const total = Number.isFinite(timeline.total) ? timeline.total : 0;
+  const clamped = Math.max(0, Math.min(Number.isFinite(t) ? t : 0, total));
+  let nodeIndex = timeline.starts.length - 1;
+  while (nodeIndex > 0 && timeline.starts[nodeIndex] > clamped) {
+    nodeIndex -= 1;
+  }
+
+  const nodeLocalT = Math.max(0, clamped - timeline.starts[nodeIndex]);
+  return { nodeIndex, nodeLocalT };
+}
+
+export function mapNodeToTimelineT(timeline, nodeIndex, nodeLocalT) {
+  if (!timeline || !timeline.ready || !Array.isArray(timeline.starts) || !timeline.starts.length) {
+    return 0;
+  }
+  const index = Math.max(0, Math.min(Number(nodeIndex) || 0, timeline.starts.length - 1));
+  const local = Math.max(0, Number.isFinite(nodeLocalT) ? nodeLocalT : 0);
+  const total = Number.isFinite(timeline.total) ? timeline.total : 0;
+  return Math.min(total, timeline.starts[index] + local);
+}
+
 function resolveNodeDurationSeconds(node, descriptor) {
   const overrideSeconds = Number(node?.durationOverride);
   if (Number.isFinite(overrideSeconds) && overrideSeconds > 0) {
@@ -331,6 +416,11 @@ export function compileTimeline({ timeline, fps, width, height }) {
     };
   });
 
+  const timing = buildAllNodesTimelineModel(nodes.map((node) => ({
+    id: node.id,
+    duration: node.duration
+  })));
+
   return {
     version: descriptor.version,
     fps: safeFps,
@@ -340,6 +430,7 @@ export function compileTimeline({ timeline, fps, width, height }) {
     metadata: {
       source: "program-monitor.timeline.core"
     },
+    timing,
     nodes
   };
 }

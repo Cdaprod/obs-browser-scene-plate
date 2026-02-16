@@ -21,18 +21,92 @@ function writeJsonAtomic(filePath, data) {
   fs.renameSync(tmpPath, filePath);
 }
 
+
+function resolveNodeDurationSeconds(node) {
+  const candidate = Number(
+    node && (
+      node.duration
+      ?? node.duration_seconds
+      ?? node.resolved_duration_sec
+      ?? node.dur_sec
+    )
+  );
+  if (Number.isFinite(candidate) && candidate > 0) {
+    return candidate;
+  }
+  const override = Number(node && (node.durationOverride ?? node.duration_override_sec));
+  if (Number.isFinite(override) && override > 0) {
+    return override;
+  }
+  return Number.NaN;
+}
+
+function buildPlanTimingMetadata(plan) {
+  const safePlan = plan && typeof plan === 'object' ? plan : {};
+  const nodes = Array.isArray(safePlan.nodes) ? safePlan.nodes : [];
+  if (!nodes.length) {
+    return {
+      ready: false,
+      reason: 'missing_nodes',
+      segments: [],
+      total_duration_sec: Number.NaN
+    };
+  }
+
+  const segments = [];
+  let acc = 0;
+  for (let index = 0; index < nodes.length; index += 1) {
+    const node = nodes[index];
+    const duration = resolveNodeDurationSeconds(node);
+    if (!Number.isFinite(duration) || duration <= 0) {
+      return {
+        ready: false,
+        reason: 'unknown_node_duration',
+        segments: [],
+        total_duration_sec: Number.NaN
+      };
+    }
+    const startSec = acc;
+    const endSec = startSec + duration;
+    segments.push({
+      node_id: node && node.id ? node.id : `node-${index + 1}`,
+      index,
+      start_sec: startSec,
+      dur_sec: duration,
+      end_sec: endSec
+    });
+    acc = endSec;
+  }
+
+  return {
+    ready: true,
+    reason: null,
+    segments,
+    total_duration_sec: acc
+  };
+}
+
 function normalizeTimingMetadata({ timing = null, plan = null } = {}) {
   const timingFromPlan = plan && typeof plan === 'object' ? plan.timing : null;
   const source = timing && typeof timing === 'object' ? timing : timingFromPlan;
+  const planTiming = buildPlanTimingMetadata(plan);
   return {
     mode: source && source.mode ? source.mode : null,
     degraded: source && Object.prototype.hasOwnProperty.call(source, 'degraded') ? Boolean(source.degraded) : null,
     fps: source && Number.isFinite(source.fps) ? source.fps : null,
     frame_count: source && Number.isFinite(source.frame_count) ? source.frame_count : null,
-    duration_seconds: source && Number.isFinite(source.duration_seconds) ? source.duration_seconds : null,
+    duration_seconds: source && Number.isFinite(source.duration_seconds)
+      ? source.duration_seconds
+      : (planTiming.ready ? planTiming.total_duration_sec : null),
     duration_ms: source && Number.isFinite(source.duration_ms) ? source.duration_ms : null,
     start_time_seconds: source && Number.isFinite(source.start_time_seconds) ? source.start_time_seconds : 0,
-    end_time_seconds: source && Number.isFinite(source.end_time_seconds) ? source.end_time_seconds : null
+    end_time_seconds: source && Number.isFinite(source.end_time_seconds)
+      ? source.end_time_seconds
+      : (planTiming.ready ? planTiming.total_duration_sec : null),
+    ready: planTiming.ready,
+    reason: planTiming.reason,
+    total_duration_sec: planTiming.total_duration_sec,
+    segments: planTiming.segments
   };
 }
 
@@ -84,5 +158,6 @@ function write_manifest(plan, out_dir, opts = {}) {
 module.exports = {
   write_manifest,
   normalizeTimingMetadata,
+  buildPlanTimingMetadata,
   hashObject
 };

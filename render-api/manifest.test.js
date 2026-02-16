@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { write_manifest } = require('./timeline/manifest');
+const { write_manifest, buildPlanTimingMetadata } = require('./timeline/manifest');
 const { build_html_plate_cache_key } = require('./render/html_plate');
 const { normalizeRenderPlanPayload } = require('./server');
 
@@ -28,6 +28,7 @@ test('write_manifest includes plan, assets, cache keys, and timing metadata', ()
     assert.equal(manifest.cache_keys.html_plate, 'abc123');
     assert.equal(manifest.timing.mode, 'frame_step');
     assert.equal(manifest.timing.fps, 60);
+    assert.equal(Array.isArray(manifest.timing.segments), true);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
@@ -75,4 +76,19 @@ test('html_plate source applies deterministic timeline setTime stepping', () => 
   const source = fs.readFileSync(path.resolve(__dirname, 'render/html_plate.js'), 'utf8');
   assert.ok(source.includes('const t = frameIndex / fps;'));
   assert.ok(source.includes('window.__TIMELINE__.setTime(tSeconds)'));
+});
+
+
+test('buildPlanTimingMetadata builds cumulative timing segments', () => {
+  const timing = buildPlanTimingMetadata({
+    nodes: [
+      { id: 'n1', duration: 2 },
+      { id: 'n2', duration: 3 },
+      { id: 'n3', duration: 5 }
+    ]
+  });
+  assert.equal(timing.ready, true);
+  assert.equal(timing.total_duration_sec, 10);
+  assert.deepEqual(timing.segments.map((segment) => segment.start_sec), [0, 2, 5]);
+  assert.deepEqual(timing.segments.map((segment) => segment.end_sec), [2, 5, 10]);
 });

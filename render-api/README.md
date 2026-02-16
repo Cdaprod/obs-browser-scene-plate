@@ -142,6 +142,7 @@ Render capture uses a deterministic frame-stepped render clock. It first attempt
 
 Set `RENDER_REQUIRE_DETERMINISTIC_TIME=1` to fail jobs when deterministic timing cannot be established.
 Manifest and job status payloads include timing diagnostics (`timing_mode`, `timing_degraded`, `timing_animations`, `timing_hooks`).
+Manifest timing now also carries normalized segment metadata (`timing.segments[]` with `start_sec`/`dur_sec`/`end_sec`) and `timing.total_duration_sec` when node durations are available from the RenderPlan.
 
 Program Monitor exports default `padSeconds` to `0` so UI-measured node durations are rendered as-is unless an explicit pad is provided.
 
