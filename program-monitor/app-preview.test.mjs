@@ -159,3 +159,11 @@ test("preview media duration path handles loading/live and listener cleanup", ()
   assert.ok(source.includes('function clearDurationListeners()'));
   assert.ok(source.includes('function clearBaseHandlers()'));
 });
+
+
+test("all-nodes scrubber uses timeline model and timeline seek mapping", () => {
+  assert.ok(source.includes("buildAllNodesTimelineModel"));
+  assert.ok(source.includes("mapTimelineTToNode"));
+  assert.ok(source.includes("isMediaDurationClock() && !isAllNodesMode()"));
+  assert.ok(source.includes("style.flexGrow = String(duration)"));
+});

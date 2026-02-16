@@ -115,6 +115,13 @@ Run the preview playback wiring tests:
 node --test program-monitor/app-preview.test.mjs
 ```
 
+Run the timeline core determinism + all-nodes mapping tests:
+
+```sh
+node --test program-monitor/timeline-core.test.mjs
+```
+
+
 Optional render-api tests (from repo root):
 
 ```sh
