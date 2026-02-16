@@ -77,6 +77,14 @@ curl -X PUT http://localhost:8791/api/projects/demo/timeline \
   -d '{"version":1,"nodes":[{"text":"http://nginx/plate-default.html"}],"activeIndex":0}'
 ```
 
+Deterministic HTML plate render (manifest + cache-aware plate output):
+
+```shell
+curl -X POST http://localhost:8791/api/plates/render \
+  -H "Content-Type: application/json" \
+  -d '{"url":"http://nginx/overlays/scene_overlay_stack_v1.html","duration":4,"fps":60,"width":1080,"height":1920}'
+```
+
 Project exports:
 
 ```shell
@@ -176,5 +184,5 @@ curl -X POST http://localhost:8791/api/debug/renders/touch \
 ## Tests
 
 ```shell
-node --test render-api/server.test.js render-api/render.test.js
+node --test render-api/server.test.js render-api/render.test.js render-api/manifest.test.js
 ```

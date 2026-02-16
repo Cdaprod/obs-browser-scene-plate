@@ -26,6 +26,8 @@ const {
   safeReadJson,
   safeWriteJsonAtomic
 } = require('./render-utils');
+const { write_manifest } = require('./timeline/manifest');
+const { render_html_plate } = require('./render/html_plate');
 
 const PORT = Number(process.env.PORT || 8791);
 const RENDERS_DIR = process.env.RENDERS_DIR || '/renders';
@@ -1135,6 +1137,19 @@ function parseRenderTimingLine(line = '') {
  * All timing metadata must be passed explicitly via job/result payload objects.
  * Fallback resolution must use explicit objects, never identifier fallbacks.
  */
+
+function normalizeRenderPlanPayload(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+  if (payload.render_plan && typeof payload.render_plan === 'object') {
+    return payload.render_plan;
+  }
+  if (payload.plan && typeof payload.plan === 'object') {
+    return payload.plan;
+  }
+  return payload;
+}
 
 function resolveTimingMetadata({ job = null, fallback = {} } = {}) {
   const fromJob = job || {};
@@ -2566,6 +2581,88 @@ function startServer() {
       return json(res, 202, { ok: true, job_id: jobId, status_url: `/api/render/${jobId}` });
     }
 
+    if (req.method === 'POST' && parsed.pathname === '/api/plates/render') {
+      /**
+       * Render an HTML overlay plate deterministically.
+       *
+       * Example:
+       *   curl -X POST http://localhost:8791/api/plates/render \
+       *     -H "Content-Type: application/json" \
+       *     -d '{"url":"http://obs-plate/overlays/demo.html","duration":4,"fps":60,"width":1080,"height":1920}'
+       */
+      let body;
+      try {
+        body = await parseBody(req);
+      } catch (err) {
+        const status = err.message === 'payload_too_large' ? 413 : 400;
+        return json(res, status, { ok: false, error: 'bad_json' });
+      }
+
+      const targetUrl = normalizeRenderUrl(body.url);
+      if (!targetUrl) {
+        return json(res, 400, { ok: false, error: 'missing_or_invalid_url' });
+      }
+
+      const duration = parseOptionalNumber(body.duration) ?? parseOptionalNumber(body.seconds);
+      const fps = parseOptionalNumber(body.fps) ?? 60;
+      const width = parseOptionalNumber(body.width) ?? 1080;
+      const height = parseOptionalNumber(body.height) ?? 1920;
+      const format = body.format === 'png-sequence' ? 'png-sequence' : 'webm-alpha';
+      const plateName = safeName(body.name || 'html_plate');
+      if (!Number.isFinite(duration) || duration <= 0) {
+        return json(res, 400, { ok: false, error: 'missing_or_invalid_duration' });
+      }
+
+      const overlayApiVersion = String(body.overlay_api_version || process.env.OVERLAY_API_VERSION || '1');
+      const ext = format === 'png-sequence' ? 'frames' : 'webm';
+      const outFilename = `${plateName}_${Math.round(duration * 1000)}ms_${width}x${height}_${fps}fps.${ext}`;
+      const outPath = path.join(RENDERS_DIR, 'plates', outFilename);
+
+      try {
+        const result = await render_html_plate(targetUrl, duration, fps, width, height, outPath, {
+          format,
+          overlayApiVersion,
+          cacheDir: path.join(RENDERS_DIR, '.cache', 'html-plates')
+        });
+
+        const plan = normalizeRenderPlanPayload(body.render_plan) || {
+          type: 'html_plate',
+          url: targetUrl,
+          duration,
+          fps,
+          width,
+          height,
+          format
+        };
+        const manifestPath = write_manifest(plan, path.dirname(outPath), {
+          resolvedAssets: [{ type: 'html_overlay', url: targetUrl }],
+          cacheKeys: { html_plate: result.cache_key },
+          timing: {
+            mode: 'frame_step',
+            degraded: false,
+            fps,
+            frame_count: result.frame_count,
+            duration_seconds: duration,
+            duration_ms: Math.round(duration * 1000),
+            start_time_seconds: 0,
+            end_time_seconds: duration
+          }
+        });
+
+        return json(res, 200, {
+          ok: true,
+          state: result.cached ? 'ready_cached' : 'ready',
+          plate_path: `/renders/plates/${outFilename}`,
+          manifest_path: manifestPath,
+          cache_key: result.cache_key,
+          cached: result.cached
+        });
+      } catch (error) {
+        console.error(error);
+        return json(res, 500, { ok: false, error: error.message || 'plate_render_failed' });
+      }
+    }
+
     if (req.method !== 'POST' || parsed.pathname !== '/api/render') {
       return json(res, 404, { ok: false, error: 'not_found' });
     }
@@ -2702,6 +2799,7 @@ module.exports = {
   buildDebugFramePath,
   buildProgramMonitorHtml,
   parseRenderTimingLine,
+  normalizeRenderPlanPayload,
   resolveTimingMetadata,
   startServer
 };
