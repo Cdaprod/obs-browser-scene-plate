@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Timeline API Demo Overlay</title>
+  <style>
+    :root { --tl-t: 0; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      background: transparent;
+      overflow: hidden;
+      font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      color: white;
+    }
+    .stage {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      background: radial-gradient(circle at center, rgba(0, 20, 40, 0.35), rgba(0, 0, 0, 0));
+    }
+    .orb {
+      width: 140px;
+      height: 140px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 30% 30%, rgba(220, 245, 255, 0.95), rgba(80, 150, 255, 0.65), rgba(40, 90, 180, 0.5));
+      box-shadow: 0 0 50px rgba(100, 190, 255, 0.45);
+      transform: translateX(calc((var(--tl-t) * 120px) - 240px));
+      transition: transform 100ms linear;
+    }
+    .hud {
+      position: absolute;
+      left: 16px;
+      bottom: 16px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.45);
+      backdrop-filter: blur(4px);
+      font-size: 14px;
+      letter-spacing: 0.02em;
+    }
+    .hint {
+      opacity: 0.8;
+      font-size: 12px;
+      margin-top: 4px;
+    }
+  </style>
+  <script src="/overlays/_timeline_api.js"></script>
+</head>
+<body>
+  <main class="stage" aria-label="Timeline API visual demo">
+    <div class="orb" aria-hidden="true"></div>
+    <aside class="hud">
+      <div id="timeReadout">t = 0.00s</div>
+      <div class="hint">Call <code>__TIMELINE__.setTime(1.23)</code> in console.</div>
+    </aside>
+  </main>
+
+  <script>
+    const readout = document.getElementById("timeReadout");
+
+    function updateReadout(seconds) {
+      readout.textContent = `t = ${seconds.toFixed(2)}s`;
+    }
+
+    function getTimelineController() {
+      if (window.__TIMELINE__ && typeof window.__TIMELINE__.getTime === "function") {
+        return window.__TIMELINE__;
+      }
+      return {
+        setTime() {},
+        getTime() { return 0; }
+      };
+    }
+
+    updateReadout(getTimelineController().getTime());
+
+    window.addEventListener("timeline:time", (event) => {
+      const t = Number(event.detail?.t);
+      updateReadout(Number.isFinite(t) ? t : 0);
+    });
+  </script>
+</body>
+</html>
+
+<!--
+ * Default URL (full params):
+ *  http://<HOST_IP>:8789/overlays/examples/timeline_demo.html
+ * Params:
+ *  none
+ -->

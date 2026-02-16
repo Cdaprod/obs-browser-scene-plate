@@ -31,6 +31,17 @@ standardization checklist below.
    * List ranges and defaults after the default URL block.
    * If a parameter toggles a feature, specify the accepted values (e.g. `0|1`).
 
+6. **Use the optional timeline API only when needed**
+   * Overlays that need deterministic timeline control can include:
+     ```html
+     <script src="/overlays/_timeline_api.js"></script>
+     ```
+   * The API is additive and opt-in:
+     - `window.__TIMELINE__.setTime(seconds)`
+     - `window.__TIMELINE__.getTime()`
+     - `window.setTimelineTime(seconds)` (backward-compatible alias)
+   * `setTime` updates the CSS variable `--tl-t` and dispatches `timeline:time` on `window`.
+
 ## Usage & Tests
 
 * Serve the site and open `http://<HOST_IP>:8789/` to verify the URL builder output.
