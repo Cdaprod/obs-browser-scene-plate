@@ -90,6 +90,17 @@ Then verify nginx is serving the same file you are editing:
 curl -i "http://127.0.0.1:8789/program-monitor/projects/_index.json"
 ```
 
+
+### OTIO export helper (artifact generation)
+
+Convert a compiled RenderPlan JSON into an `.otio` timeline file:
+
+```sh
+node -e "const fs=require('node:fs'); const { exportToOtio }=require('./program-monitor/timeline/otio_export'); const plan=JSON.parse(fs.readFileSync('./render-plan.json','utf8')); console.log(exportToOtio(plan,{ outputPath:'./timeline.otio', name:'Program Monitor Export' }));"
+```
+
+The exporter only consumes fields on the provided RenderPlan object (`nodes`, layer roles, durations, and metadata), with Track 0 reserved for bases and additional tracks for overlays.
+
 ## Tests
 
 Run the minimal utility tests:
@@ -122,6 +133,11 @@ Run the timeline core determinism + all-nodes mapping tests:
 node --test program-monitor/timeline-core.test.mjs
 ```
 
+Run the OTIO RenderPlan exporter tests:
+
+```sh
+node --test program-monitor/timeline/otio_export.test.mjs
+```
 
 Optional render-api tests (from repo root):
 
