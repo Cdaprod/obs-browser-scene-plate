@@ -28,20 +28,23 @@ function asRate(renderPlan) {
 }
 
 function resolveNodeDuration(node) {
-  const duration = Number(
-    node && (
-      node.duration
-      ?? node.duration_seconds
-      ?? node.resolved_duration_sec
-      ?? node.dur_sec
-      ?? node.durationOverride
-      ?? node.duration_override_sec
-    )
-  );
-  if (!Number.isFinite(duration)) {
-    return 0;
+  const candidates = [
+    node && node.duration,
+    node && node.duration_seconds,
+    node && node.resolved_duration_sec,
+    node && node.dur_sec,
+    node && node.durationOverride,
+    node && node.duration_override_sec
+  ];
+
+  for (const candidate of candidates) {
+    const duration = Number(candidate);
+    if (Number.isFinite(duration) && duration > 0) {
+      return duration;
+    }
   }
-  return Math.max(0, duration);
+
+  return 0;
 }
 
 function safeNodeId(node, index) {

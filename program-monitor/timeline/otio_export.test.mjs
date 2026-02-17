@@ -121,3 +121,26 @@ test('zero and negative duration nodes are skipped cleanly', () => {
   assert.equal(otio.tracks.children[0].children.length, 1);
   assert.equal(otio.tracks.children[0].children[0].name, 'Base n3');
 });
+
+
+test('duration resolver falls through invalid early fields to later positive durations', () => {
+  const renderPlan = {
+    fps: 30,
+    nodes: [
+      {
+        id: 'n1',
+        duration: '',
+        duration_seconds: 0,
+        resolved_duration_sec: '2.5',
+        layers: [
+          { role: 'base', url: 'https://example.com/base.mp4', metadata: { originalUrl: 'https://example.com/base.mp4' } }
+        ]
+      }
+    ]
+  };
+
+  const otio = buildOtioTimeline(renderPlan);
+  const clip = otio.tracks.children[0].children[0];
+  assert.equal(clip.OTIO_SCHEMA, 'Clip.1');
+  assert.equal(clip.source_range.duration.value, 75);
+});
