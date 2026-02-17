@@ -28,7 +28,7 @@ function asRate(renderPlan) {
 }
 
 function resolveNodeDuration(node) {
-  return asPositiveNumber(
+  const duration = Number(
     node && (
       node.duration
       ?? node.duration_seconds
@@ -36,9 +36,12 @@ function resolveNodeDuration(node) {
       ?? node.dur_sec
       ?? node.durationOverride
       ?? node.duration_override_sec
-    ),
-    0
+    )
   );
+  if (!Number.isFinite(duration)) {
+    return 0;
+  }
+  return Math.max(0, duration);
 }
 
 function safeNodeId(node, index) {
@@ -77,24 +80,29 @@ function resolveOriginalUrl(layer) {
 
 function resolveBakedPath(layer) {
   const metadata = layer && typeof layer.metadata === 'object' ? layer.metadata : {};
-  return metadata.bakedPlatePath
-    || metadata.baked_plate_path
+  return metadata.platePath
+    || layer.platePath
     || metadata.bakedPath
-    || metadata.baked_path
-    || metadata.renderedPath
-    || metadata.rendered_path
-    || metadata.platePath
+    || layer.bakedPath
     || metadata.plate_path
+    || layer.plate_path
+    || metadata.bakedPlatePath
+    || metadata.baked_plate_path
+    || metadata.baked_path
+    || layer.baked_plate_path
     || '';
 }
 
 function resolveTargetUrl(layer) {
   const baked = resolveBakedPath(layer);
   if (baked) {
-    return String(baked);
+    return { type: 'plate', value: String(baked) };
   }
   const originalUrl = resolveOriginalUrl(layer);
-  return originalUrl ? String(originalUrl) : '';
+  if (!originalUrl) {
+    return { type: 'none', value: '' };
+  }
+  return { type: 'url', value: String(originalUrl) };
 }
 
 function rationalTime(value, rate) {
@@ -126,18 +134,18 @@ function buildGap(durationSeconds, rate) {
 
 function buildClip({ name, durationSeconds, rate, layer = {}, nodeId, nodeIndex, role, trackIndex }) {
   const originalUrl = resolveOriginalUrl(layer);
-  const targetUrl = resolveTargetUrl(layer);
+  const targetSource = resolveTargetUrl(layer);
 
   return {
     OTIO_SCHEMA: 'Clip.1',
     name,
     media_reference: {
       OTIO_SCHEMA: 'ExternalReference.1',
-      target_url: targetUrl,
+      target_url: targetSource.value,
       available_range: null,
       metadata: {
         originalUrl,
-        preferred_source: targetUrl
+        source: targetSource
       }
     },
     source_range: timeRange(durationSeconds, rate),
@@ -148,7 +156,8 @@ function buildClip({ name, durationSeconds, rate, layer = {}, nodeId, nodeIndex,
       nodeId,
       nodeIndex,
       trackIndex,
-      originalUrl
+      originalUrl,
+      source: targetSource
     }
   };
 }
@@ -179,7 +188,10 @@ function buildOtioTimeline(renderPlan, { name } = {}) {
   }, 0);
 
   const baseChildren = compiledNodes.map((item) => {
-    if (!item.base || !resolveTargetUrl(item.base)) {
+    if (!item.base || item.duration <= 0 || !resolveTargetUrl(item.base).value) {
+      if (item.duration <= 0) {
+        return null;
+      }
       return buildGap(item.duration, rate);
     }
     return buildClip({
@@ -192,12 +204,12 @@ function buildOtioTimeline(renderPlan, { name } = {}) {
       role: 'base',
       trackIndex: 0
     });
-  });
+  }).filter(Boolean);
 
   const tracks = [
     {
       OTIO_SCHEMA: 'Track.1',
-      name: 'Track 0 - Base',
+      name: 'Base',
       kind: 'Video',
       children: baseChildren,
       effects: [],
@@ -209,7 +221,10 @@ function buildOtioTimeline(renderPlan, { name } = {}) {
   for (let overlayTrackIndex = 0; overlayTrackIndex < overlayTrackCount; overlayTrackIndex += 1) {
     const children = compiledNodes.map((item) => {
       const layer = item.overlays[overlayTrackIndex] || null;
-      if (!layer || !resolveTargetUrl(layer)) {
+      if (item.duration <= 0) {
+        return null;
+      }
+      if (!layer || !resolveTargetUrl(layer).value) {
         return buildGap(item.duration, rate);
       }
       return buildClip({
@@ -222,11 +237,11 @@ function buildOtioTimeline(renderPlan, { name } = {}) {
         role: 'overlay',
         trackIndex: overlayTrackIndex + 1
       });
-    });
+    }).filter(Boolean);
 
     tracks.push({
       OTIO_SCHEMA: 'Track.1',
-      name: `Track ${overlayTrackIndex + 1} - Overlay ${overlayTrackIndex + 1}`,
+      name: `Overlay ${overlayTrackIndex + 1}`,
       kind: 'Video',
       children,
       effects: [],

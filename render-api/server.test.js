@@ -40,7 +40,9 @@ const {
   buildDebugFramePath,
   buildProgramMonitorHtml,
   parseRenderTimingLine,
-  resolveTimingMetadata
+  resolveTimingMetadata,
+  resolveOtioOutputPath,
+  handleOtioExportRequest
 } = require('./server');
 
 test('safeName sanitizes unsafe characters and trims length', () => {
@@ -593,4 +595,48 @@ test('export callback timing fields remain ReferenceError-safe across timing sou
       timing_hooks: null
     });
   });
+});
+
+
+test('resolveOtioOutputPath uses workspace project _exports convention', () => {
+  const out = resolveOtioOutputPath({
+    projectId: 'demo project',
+    name: 'My Timeline',
+    projectsDir: '/tmp/workspace/projects'
+  });
+  assert.equal(out, path.join('/tmp/workspace/projects', 'demo_project', '_exports', 'My_Timeline.otio'));
+});
+
+test('handleOtioExportRequest writes an OTIO file from request payload only', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'otio-endpoint-'));
+  try {
+    const result = handleOtioExportRequest({
+      project_id: 'demo',
+      name: 'timeline',
+      render_plan: {
+        fps: 24,
+        nodes: [
+          {
+            id: 'n1',
+            duration: 1,
+            layers: [
+              {
+                role: 'base',
+                url: 'https://example.com/base.mp4',
+                metadata: { originalUrl: 'https://example.com/base.mp4', platePath: '/renders/plate.mov' }
+              }
+            ]
+          }
+        ]
+      }
+    }, { projectsDir: tempDir });
+
+    assert.equal(result.ok, true);
+    assert.ok(result.output_path.endsWith(path.join('demo', '_exports', 'timeline.otio')));
+    const otio = JSON.parse(fs.readFileSync(result.output_path, 'utf8'));
+    assert.equal(otio.OTIO_SCHEMA, 'Timeline.1');
+    assert.equal(otio.tracks.children[0].children[0].media_reference.target_url, '/renders/plate.mov');
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
 });
