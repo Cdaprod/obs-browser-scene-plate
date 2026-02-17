@@ -28,6 +28,7 @@ const {
 } = require('./render-utils');
 const { write_manifest, buildPlanTimingMetadata } = require('./timeline/manifest');
 const { render_html_plate } = require('./render/html_plate');
+const { exportToOtio } = require('../program-monitor/timeline/otio_export');
 
 const PORT = Number(process.env.PORT || 8791);
 const RENDERS_DIR = process.env.RENDERS_DIR || '/renders';
@@ -408,6 +409,58 @@ function json(res, code, obj) {
 
 function safeName(name) {
   return String(name || 'export').replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 120);
+}
+
+
+/**
+ * Resolve output path for OTIO exports.
+ *
+ * Usage:
+ *   const out = resolveOtioOutputPath({ projectId: 'demo', name: 'timeline' });
+ */
+function resolveOtioOutputPath({ projectId, name, outputPath, projectsDir = PROJECTS_DIR } = {}) {
+  if (outputPath && typeof outputPath === 'string') {
+    return path.resolve(outputPath);
+  }
+  if (!projectId) {
+    throw new Error('missing_project_id_for_default_path');
+  }
+  const safeProjectId = safeName(projectId);
+  const safeBaseName = safeName(name || 'timeline') || 'timeline';
+  const filename = safeBaseName.toLowerCase().endsWith('.otio')
+    ? safeBaseName
+    : `${safeBaseName}.otio`;
+  return path.join(projectsDir, safeProjectId, '_exports', filename);
+}
+
+/**
+ * Build OTIO export response from request payload.
+ *
+ * Example:
+ *   handleOtioExportRequest({ render_plan: { nodes: [] }, project_id: 'demo' });
+ */
+function handleOtioExportRequest(body, { projectsDir = PROJECTS_DIR } = {}) {
+  const renderPlan = normalizeRenderPlanPayload(body);
+  if (!renderPlan || !Array.isArray(renderPlan.nodes)) {
+    throw new Error('missing_render_plan_nodes');
+  }
+
+  const outputPath = resolveOtioOutputPath({
+    projectId: body?.project_id,
+    name: body?.name,
+    outputPath: body?.output_path,
+    projectsDir
+  });
+
+  const writtenPath = exportToOtio(renderPlan, {
+    outputPath,
+    name: body?.name
+  });
+
+  return {
+    ok: true,
+    output_path: writtenPath
+  };
 }
 
 /**
@@ -1866,6 +1919,36 @@ function startServer() {
       }
     }
 
+
+    if (req.method === 'POST' && parsed.pathname === '/api/exports/otio') {
+      /**
+       * Export a RenderPlan payload to OTIO.
+       *
+       * Example:
+       *   curl -X POST http://localhost:8791/api/exports/otio \
+       *     -H "Content-Type: application/json" \
+       *     -d '{"project_id":"demo","name":"timeline","render_plan":{"nodes":[{"id":"n1","duration":1,"layers":[{"role":"base","url":"http://obs-plate/plate-default.html"}]}]}}'
+       */
+      let body;
+      try {
+        body = await parseBody(req);
+      } catch (err) {
+        const status = err.message === 'payload_too_large' ? 413 : 400;
+        return json(res, status, { ok: false, error: 'bad_json' });
+      }
+
+      try {
+        const payload = handleOtioExportRequest(body);
+        return json(res, 200, payload);
+      } catch (error) {
+        if (error.message === 'missing_project_id_for_default_path' || error.message === 'missing_render_plan_nodes') {
+          return json(res, 400, { ok: false, error: error.message });
+        }
+        console.error(error);
+        return json(res, 500, { ok: false, error: 'otio_export_failed' });
+      }
+    }
+
     const projectStateMatch = parsed.pathname.match(/^\/api\/projects\/([^/]+)$/);
     if (projectStateMatch) {
       const projectId = decodeURIComponent(projectStateMatch[1] || '');
@@ -2816,5 +2899,7 @@ module.exports = {
   parseRenderTimingLine,
   normalizeRenderPlanPayload,
   resolveTimingMetadata,
+  resolveOtioOutputPath,
+  handleOtioExportRequest,
   startServer
 };

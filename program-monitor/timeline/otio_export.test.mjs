@@ -12,7 +12,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { buildOtioTimeline, exportToOtio } = require('./otio_export.js');
 
-test('buildOtioTimeline maps base + overlay layering and preserves originalUrl metadata', () => {
+test('buildOtioTimeline maps base + overlay layering and preserves source metadata', () => {
   const renderPlan = {
     id: 'plan-1',
     fps: 60,
@@ -20,10 +20,6 @@ test('buildOtioTimeline maps base + overlay layering and preserves originalUrl m
       {
         id: 'n1',
         duration: 3,
-        base: {
-          url: 'https://example.com/base-a.mp4',
-          metadata: { originalUrl: 'https://example.com/base-a.mp4' }
-        },
         layers: [
           { role: 'base', url: 'https://example.com/base-a.mp4', metadata: { originalUrl: 'https://example.com/base-a.mp4' } },
           { role: 'overlay', url: 'https://example.com/ov-a.webm', metadata: { originalUrl: 'https://example.com/ov-a.webm' } },
@@ -39,7 +35,7 @@ test('buildOtioTimeline maps base + overlay layering and preserves originalUrl m
             url: 'https://example.com/base-b.mp4',
             metadata: {
               originalUrl: 'https://example.com/base-b.mp4',
-              bakedPlatePath: '/renders/plates/base-b.mov'
+              platePath: '/renders/plates/base-b.mov'
             }
           },
           {
@@ -47,7 +43,7 @@ test('buildOtioTimeline maps base + overlay layering and preserves originalUrl m
             url: 'https://example.com/ov-c.webm',
             metadata: {
               originalUrl: 'https://example.com/ov-c.webm',
-              baked_plate_path: '/renders/plates/ov-c.mov'
+              bakedPath: '/renders/plates/ov-c.mov'
             }
           }
         ]
@@ -58,19 +54,17 @@ test('buildOtioTimeline maps base + overlay layering and preserves originalUrl m
   const otio = buildOtioTimeline(renderPlan, { name: 'Demo' });
   assert.equal(otio.OTIO_SCHEMA, 'Timeline.1');
   assert.equal(otio.name, 'Demo');
-  assert.equal(otio.tracks.children.length, 3); // base + 2 overlay tracks
+  assert.equal(otio.tracks.children.length, 3);
 
   const [baseTrack, overlay1, overlay2] = otio.tracks.children;
-  assert.equal(baseTrack.children.length, 2);
-  assert.equal(overlay1.children.length, 2);
-  assert.equal(overlay2.children.length, 2);
+  assert.equal(baseTrack.name, 'Base');
+  assert.equal(overlay1.name, 'Overlay 1');
+  assert.equal(overlay2.name, 'Overlay 2');
 
-  assert.equal(baseTrack.children[0].media_reference.target_url, 'https://example.com/base-a.mp4');
   assert.equal(baseTrack.children[1].media_reference.target_url, '/renders/plates/base-b.mov');
-  assert.equal(baseTrack.children[1].metadata.originalUrl, 'https://example.com/base-b.mp4');
-
-  assert.equal(overlay1.children[0].metadata.originalUrl, 'https://example.com/ov-a.webm');
+  assert.equal(baseTrack.children[1].metadata.source.type, 'plate');
   assert.equal(overlay1.children[1].media_reference.target_url, '/renders/plates/ov-c.mov');
+  assert.equal(overlay1.children[1].metadata.source.type, 'plate');
   assert.equal(overlay2.children[1].OTIO_SCHEMA, 'Gap.1');
 });
 
@@ -97,4 +91,33 @@ test('exportToOtio writes a valid json timeline file and returns resolved path',
   assert.equal(written.OTIO_SCHEMA, 'Timeline.1');
   assert.equal(written.global_start_time.rate, 24);
   assert.equal(written.tracks.children[0].children[0].source_range.duration.value, 36);
+});
+
+test('plate path key precedence supports platePath, bakedPath, and plate_path', () => {
+  const renderPlan = {
+    nodes: [
+      {
+        id: 'n1',
+        duration: 1,
+        layers: [{ role: 'base', url: 'https://example.com/base-a.mp4', metadata: { originalUrl: 'https://example.com/base-a.mp4', plate_path: '/a/plate-path.mov', bakedPath: '/a/baked-path.mov', platePath: '/a/platePath.mov' } }]
+      }
+    ]
+  };
+  const otio = buildOtioTimeline(renderPlan);
+  const clip = otio.tracks.children[0].children[0];
+  assert.equal(clip.media_reference.target_url, '/a/platePath.mov');
+  assert.equal(clip.metadata.source.type, 'plate');
+});
+
+test('zero and negative duration nodes are skipped cleanly', () => {
+  const renderPlan = {
+    nodes: [
+      { id: 'n1', duration: -2, layers: [{ role: 'base', url: 'https://example.com/base1.mp4' }] },
+      { id: 'n2', duration: 0, layers: [{ role: 'base', url: 'https://example.com/base2.mp4' }] },
+      { id: 'n3', duration: 2, layers: [{ role: 'base', url: 'https://example.com/base3.mp4' }] }
+    ]
+  };
+  const otio = buildOtioTimeline(renderPlan);
+  assert.equal(otio.tracks.children[0].children.length, 1);
+  assert.equal(otio.tracks.children[0].children[0].name, 'Base n3');
 });

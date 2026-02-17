@@ -85,6 +85,18 @@ curl -X POST http://localhost:8791/api/plates/render \
   -d '{"url":"http://nginx/overlays/scene_overlay_stack_v1.html","duration":4,"fps":60,"width":1080,"height":1920}'
 ```
 
+
+OTIO export artifact (RenderPlan adapter only):
+
+```shell
+curl -X POST http://localhost:8791/api/exports/otio \
+  -H "Content-Type: application/json" \
+  -d '{"project_id":"demo","name":"timeline","render_plan":{"fps":30,"nodes":[{"id":"n1","duration":2,"layers":[{"role":"base","url":"http://nginx/plate-default.html"}]}]}}'
+```
+
+If `output_path` is omitted, OTIO files are written to:
+`workspace/projects/<project_id>/_exports/<name>.otio`.
+
 Project exports:
 
 ```shell
