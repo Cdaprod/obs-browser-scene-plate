@@ -84,7 +84,8 @@ test("project list storage supports migration and canonical index diagnostics", 
   assert.ok(source.includes('setProjectsStatus(`Loading index: ${indexUrl}`)'));
   assert.ok(source.includes("if (res.status === 404)"));
   assert.ok(source.includes('setProjectsStatus(`Index missing (404): ${finalUrl} (using local projects)`);'));
-  assert.ok(source.includes('setProjectsStatus(`Index OK: ${finalUrl} (${staticProjects.length} projects)${tinyWarn}`);'));
+  assert.ok(source.includes("Index empty/tiny"));
+  assert.ok(source.includes("Index empty ([]); using discovered projects list"));
   assert.ok(source.includes("revivedProjectIds"));
 });
 
@@ -177,9 +178,10 @@ test("recent exports surface queued/rendering/failed statuses", () => {
   assert.ok(source.includes('pending://'));
 });
 
-test("projects index loader warns on tiny _index.json payloads", () => {
+test("projects index loader falls back with actionable tiny/empty messaging", () => {
   assert.ok(source.includes("suspiciously small index payload"));
-  assert.ok(source.includes("tiny payload"));
+  assert.ok(source.includes("Index empty/tiny"));
+  assert.ok(source.includes("using discovered projects list"));
 });
 
 
@@ -201,4 +203,12 @@ test("assembly panel and selected-assets import wiring exist", () => {
   assert.ok(html.includes('id="assemblyBuild"'));
   assert.ok(source.includes('CDAPROD_PROGRAM_MONITOR_ASSET_SELECTION'));
   assert.ok(source.includes('applyAssembledSelection'));
+});
+
+
+test("otio export button and derive assembly wiring exist", () => {
+  assert.ok(html.includes('id="btnExportOtio"'));
+  assert.ok(html.includes('id="assemblyDerive"'));
+  assert.ok(source.includes("exportOTIOJson"));
+  assert.ok(source.includes("deriveSelectionPayloadFromCurrentNodes"));
 });

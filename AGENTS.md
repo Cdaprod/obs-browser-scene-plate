@@ -43,3 +43,6 @@
 
 - Program Monitor now supports selected-assets timeline assembly (Sequence/Multicam) from media-sync payloads via Projects panel JSON paste or postMessage (`CDAPROD_PROGRAM_MONITOR_ASSET_SELECTION`).
 - Project payloads now persist `assembly_spec` metadata and clip-derived nodes for reproducible asset-set timeline builds.
+
+- Program Monitor now surfaces an explicit `Export OTIO JSON` action and derive-from-current-project assembly helper for legacy node upgrades.
+- Projects index status messaging now prefers actionable fallback text for tiny/empty `_index.json` payloads and avoids misleading `0 projects` displays when discovered projects exist.
