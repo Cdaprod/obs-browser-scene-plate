@@ -19,6 +19,7 @@
         <button id="btnOpenStage" class="pill" type="button">Open Stage</button>
         <button id="btnSave" type="button">Save</button>
         <button id="btnExport" type="button">Export JSON</button>
+        <button id="btnExportOtio" type="button">Export OTIO JSON</button>
         <button id="btnImport" type="button">Import JSON</button>
         <button id="btnValidate" type="button">Validate</button>
         <button id="btnOpenBase" type="button">Open Base</button>
@@ -86,9 +87,10 @@
             <option value="multicam">Multicam</option>
           </select>
           <button id="assemblyBuild" type="button">Build from Selection JSON</button>
+          <button id="assemblyDerive" type="button">Build clips from current project</button>
           <div class="projectStatus" id="assemblySummary" aria-live="polite">Assembly: none</div>
         </div>
-        <textarea id="assemblyInput" class="assemblyInput" placeholder='Paste selected-assets payload JSON (asset_ids/items) from media-sync-api'></textarea>
+        <textarea id="assemblyInput" class="assemblyInput" placeholder='Paste selection JSON from media-sync explorer OR click “Build clips from current project”.'></textarea>
       </div>
     </section>
 

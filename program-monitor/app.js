@@ -17,6 +17,7 @@ import { resolveMediaDurationSeconds } from "./media-duration.js";
 import { resolveMediaEntries } from "./media-registry.js";
 import { importFromOtio } from "./timeline/otio_import.js";
 import { buildAssembledClips, clipsToImportNodes, buildAssemblySpec } from "./timeline/assembly.js";
+import { buildOtioTimeline } from "./timeline/otio_export.js";
 
 const STORAGE_KEY = "program-monitor.timeline.v1";
 
@@ -183,9 +184,11 @@ const elements = {
   projectsStatus: $("#projectsStatus"),
   projectsToggle: $("#btnProjects"),
   projectSave: $("#projectSave"),
+  exportOtio: $("#btnExportOtio"),
   assemblyMode: $("#assemblyMode"),
   assemblyInput: $("#assemblyInput"),
   assemblyBuild: $("#assemblyBuild"),
+  assemblyDerive: $("#assemblyDerive"),
   assemblySummary: $("#assemblySummary"),
   openStage: $("#btnOpenStage"),
   obsAddress: $("#obsAddress"),
@@ -1604,10 +1607,17 @@ async function loadProjectIndexWithFallback() {
         setProjectsStatus(`Index missing (404): ${finalUrl} (using local projects)`);
       } else {
         console.info("[projects] stage index loaded; count=", staticProjects.length, "url=", finalUrl);
-        const tinyWarn = Number.isFinite(rawBytes) && rawBytes < 20 ? ` ⚠ tiny payload: ${rawBytes} bytes` : "";
-        setProjectsStatus(`Index OK: ${finalUrl} (${staticProjects.length} projects)${tinyWarn}`);
+        const tinyPayload = Number.isFinite(rawBytes) && rawBytes < 20;
+        if (tinyPayload) {
+          setProjectsStatus(`Index empty/tiny @ ${finalUrl}; using discovered projects list if available.`);
+        } else {
+          setProjectsStatus(`Index OK: ${finalUrl} (${staticProjects.length} projects)`);
+        }
       }
       const { merged, revivedProjectIds } = mergeProjectEntries(staticProjects, localProjects, deletedProjectMap);
+      if (!notFound && staticProjects.length === 0 && merged.length > 0) {
+        setProjectsStatus(`Index empty ([]); using discovered projects list (${merged.length}).`);
+      }
       if (revivedProjectIds.length) {
         revivedProjectIds.forEach((projectId) => {
           delete deletedProjectMap[projectId];
@@ -1903,6 +1913,98 @@ function installAssetSelectionListener() {
       setMessage(`Selection import failed: ${error?.message || error}`);
     }
   });
+}
+
+function parseMediaSyncStreamUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw || !/^https?:\/\//i.test(raw)) {
+    return null;
+  }
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch (error) {
+    return null;
+  }
+  const match = parsed.pathname.match(/\/media\/([^/]+)\/(.+)$/i);
+  if (!match) {
+    return null;
+  }
+  return {
+    streamUrl: raw,
+    project: decodeURIComponent(match[1] || "").trim(),
+    relativePath: decodeURIComponent(match[2] || "").trim()
+  };
+}
+
+async function deriveSelectionPayloadFromCurrentNodes() {
+  const fallback_paths = {};
+  const items = [];
+  const seen = new Set();
+
+  state.nodes.forEach((node) => {
+    const parsed = parseNodeText(node?.text || "");
+    const lines = [parsed.baseUrl, ...(Array.isArray(parsed.layers) ? parsed.layers : [])].filter(Boolean);
+    lines.forEach((line) => {
+      const identity = isRegistryIdentityInput(line) ? line.replace(/^asset_id\s*:/i, "").split("|")[0].trim() : "";
+      if (identity && !seen.has(identity)) {
+        seen.add(identity);
+        items.push({ asset_id: identity.toLowerCase(), url: line.includes("|") ? line.split("|").slice(1).join("|").trim() : "" });
+        return;
+      }
+      const legacy = parseMediaSyncStreamUrl(line);
+      if (legacy && legacy.relativePath && !seen.has(legacy.relativePath)) {
+        seen.add(legacy.relativePath);
+        fallback_paths[legacy.relativePath] = `${legacy.project}/${legacy.relativePath}`;
+      }
+    });
+  });
+
+  if (!Object.keys(fallback_paths).length && !items.length) {
+    return { items: [] };
+  }
+
+  if (Object.keys(fallback_paths).length) {
+    const base = String(window.MEDIA_SYNC_REGISTRY_BASE_URL || "").trim().replace(/\/$/, "");
+    if (base) {
+      try {
+        const response = await fetch(`${base}/api/registry/resolve`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ asset_ids: [], fallback_paths })
+        });
+        if (response.ok) {
+          const data = await response.json();
+          Object.keys(fallback_paths).forEach((key) => {
+            const resolved = data?.results?.[key];
+            if (resolved?.asset_id) {
+              items.push({
+                asset_id: resolved.asset_id,
+                url: resolved?.urls?.stream || resolved?.urls?.download || "",
+                creation_time: resolved?.timestamps?.creation_time || "",
+                origin: resolved?.origin || "unknown"
+              });
+            }
+          });
+        }
+      } catch (error) {
+        console.warn("deriveSelectionPayloadFromCurrentNodes resolve failed", error);
+      }
+    }
+  }
+
+  return { items };
+}
+
+function exportOTIOJson() {
+  const compiled = compileCurrentTimelinePlan();
+  const otio = buildOtioTimeline(compiled, { name: elements.projectName?.value || "Program Monitor Timeline" });
+  const blob = new Blob([JSON.stringify(otio, null, 2)], { type: "application/json" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = "program-monitor.timeline.otio.json";
+  link.click();
+  URL.revokeObjectURL(link.href);
 }
 
 async function importJSONFile(file) {
@@ -3483,6 +3585,9 @@ function bindUIOnce() {
 
   $("#btnSave").addEventListener("click", () => saveLocal());
   $("#btnExport").addEventListener("click", () => exportJSON());
+  if (elements.exportOtio) {
+    elements.exportOtio.addEventListener("click", () => exportOTIOJson());
+  }
   $("#btnImport").addEventListener("click", () => elements.fileImport.click());
   $("#btnValidate").addEventListener("click", () => validateNodes());
   $("#btnOpenBase").addEventListener("click", () => openBaseInNewTab());
@@ -3657,6 +3762,26 @@ function bindUIOnce() {
         setMessage(`Assembled ${state.nodes.length} nodes from selected assets.`);
       } catch (error) {
         setMessage(`Assembly failed: ${error?.message || error}`);
+      }
+    });
+  }
+
+  if (elements.assemblyDerive) {
+    elements.assemblyDerive.addEventListener("click", async () => {
+      try {
+        const mode = String(elements.assemblyMode?.value || "sequence").toLowerCase();
+        const payload = await deriveSelectionPayloadFromCurrentNodes();
+        if (!Array.isArray(payload.items) || !payload.items.length) {
+          setMessage("No derivable media-sync assets found in current nodes.");
+          return;
+        }
+        applyAssembledSelection(payload, { mode, source: "derive-current-project" });
+        renderNodes();
+        await primeNode(state.activeIndex);
+        saveLocal();
+        setMessage(`Resolved ${payload.items.length} assets and rebuilt assembly.`);
+      } catch (error) {
+        setMessage(`Derive failed: ${error?.message || error}`);
       }
     });
   }

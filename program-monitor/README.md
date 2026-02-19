@@ -25,7 +25,8 @@ A browser-only **Program + Monitor** UI for stacking URL-based media nodes into 
 - **Duration hints**: inferred durations are stored in node metadata for exports and do not rewrite the original node URL text.
 - **Open Stage**: open a standalone timeline preview tab from the current nodes (uses the render-api stage cache to avoid oversized URLs).
 - **Timeline Player**: `/program-monitor/timeline_player.html?id=...` plays the full timeline headlessly (for OBS browser sources). Legacy payloads only load via explicit `?import=1&debug=1`.
-- **Export / Import JSON**: move timelines between machines.
+- **Export / Import JSON**: move Program Monitor project timelines between machines.
+- **Export OTIO JSON**: export OpenTimelineIO Timeline.1 JSON for timeline interchange.
 - **Validate**: basic checks for missing base URLs and non-http(s) entries.
 - **SHA256 registry media references**: base/layer lines can use `asset_id: sha256:<64hex>` (or bare `sha256:<64hex>`) and are resolved via media-sync-api at runtime. Optional fallback can be appended as `|https://legacy/path.mp4`.
 - **Open Base**: open the active node base URL in a new tab.
@@ -117,6 +118,7 @@ Program Monitor can now assemble timeline clips from selected assets payloads ex
 
 Ways to import:
 - Paste JSON into **Projects → Timeline assembly** and click **Build from Selection JSON**.
+- Click **Build clips from current project** to derive metadata from existing node lines (including media-sync stream URLs).
 - Send `postMessage` payload with `type: "CDAPROD_PROGRAM_MONITOR_ASSET_SELECTION"`, `version: 1`, and `payload` containing `items[]` or `asset_ids[]`.
 
 Supported assembly modes:
@@ -213,3 +215,6 @@ Optional render-api tests (from repo root):
 ```sh
 node --test render-api/server.test.js
 ```
+
+
+Projects index status now uses actionable fallback messaging when `_index.json` is tiny or empty, and reports discovered-project fallback counts instead of misleading `0 projects` labels.
