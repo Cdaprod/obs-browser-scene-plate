@@ -154,6 +154,34 @@ body.preview-collapsed .previewPanel {
 }
 
 
+
+.assemblyRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+}
+
+.assemblyRow select {
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: #06101a;
+  color: var(--text);
+  padding: 8px 10px;
+}
+
+.assemblyInput {
+  width: 100%;
+  min-height: 96px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: #06101a;
+  color: var(--text);
+  padding: 8px 10px;
+  font-family: var(--mono);
+}
+
 .projectStatus {
   width: 100%;
   font-size: 12px;

@@ -76,6 +76,20 @@
       <div class="projectRow">
         <div class="projectStatus" id="projectsStatus" aria-live="polite"></div>
       </div>
+
+      <div class="projectRow">
+        <div class="projectLabel">Timeline assembly (Media Sync selection)</div>
+        <div class="assemblyRow">
+          <label for="assemblyMode">Mode</label>
+          <select id="assemblyMode">
+            <option value="sequence">Sequence</option>
+            <option value="multicam">Multicam</option>
+          </select>
+          <button id="assemblyBuild" type="button">Build from Selection JSON</button>
+          <div class="projectStatus" id="assemblySummary" aria-live="polite">Assembly: none</div>
+        </div>
+        <textarea id="assemblyInput" class="assemblyInput" placeholder='Paste selected-assets payload JSON (asset_ids/items) from media-sync-api'></textarea>
+      </div>
     </section>
 
     <div class="layout">

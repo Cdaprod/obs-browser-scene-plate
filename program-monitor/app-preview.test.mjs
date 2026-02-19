@@ -193,3 +193,12 @@ test("import accepts OTIO timeline payloads", () => {
   assert.ok(source.includes("startsWith(\"Timeline.\")"));
   assert.ok(source.includes("Invalid timeline JSON/OTIO payload"));
 });
+
+
+test("assembly panel and selected-assets import wiring exist", () => {
+  assert.ok(html.includes('id="assemblyMode"'));
+  assert.ok(html.includes('id="assemblyInput"'));
+  assert.ok(html.includes('id="assemblyBuild"'));
+  assert.ok(source.includes('CDAPROD_PROGRAM_MONITOR_ASSET_SELECTION'));
+  assert.ok(source.includes('applyAssembledSelection'));
+});
