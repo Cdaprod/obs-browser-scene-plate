@@ -15,6 +15,7 @@ import {
 } from "./timeline/core.js";
 import { resolveMediaDurationSeconds } from "./media-duration.js";
 import { resolveMediaEntries } from "./media-registry.js";
+import { importFromOtio } from "./timeline/otio_import.js";
 
 const STORAGE_KEY = "program-monitor.timeline.v1";
 
@@ -1076,17 +1077,28 @@ function normalizeProjectTimelinePayload(payload) {
     version: Number.isFinite(candidate.version) ? candidate.version : 1,
     nodes: candidate.nodes,
     nodesStructured: Array.isArray(candidate.nodesStructured) ? candidate.nodesStructured : [],
+    clips: Array.isArray(candidate.clips) ? candidate.clips : [],
     activeIndex: Number.isFinite(candidate.activeIndex) ? candidate.activeIndex : 0
   };
 }
 
 function buildProjectPayloadFromState() {
+  const descriptor = buildTimelineDescriptor({
+    version: 1,
+    nodes: state.nodes,
+    activeIndex: state.activeIndex
+  });
+  const compiled = compileTimeline({
+    timeline: descriptor,
+    fps: DEFAULT_EXPORT_OPTIONS.fps,
+    width: DEFAULT_EXPORT_OPTIONS.width,
+    height: DEFAULT_EXPORT_OPTIONS.height
+  });
   return {
-    timeline: buildTimelineDescriptor({
-      version: 1,
-      nodes: state.nodes,
-      activeIndex: state.activeIndex
-    })
+    timeline: {
+      ...descriptor,
+      clips: Array.isArray(compiled?.clips) ? compiled.clips : []
+    }
   };
 }
 
@@ -1207,6 +1219,28 @@ async function loadProjectTimeline(projectId) {
   return normalizeProjectTimelinePayload(project?.payload);
 }
 
+async function verifyProjectSaveAfterGatewayError(projectId, projectName) {
+  if (!projectId || !supportsProjectApi()) {
+    return null;
+  }
+  try {
+    const project = await fetchProjectState(projectId);
+    if (!project) {
+      return null;
+    }
+    const savedName = String(project.name || "").trim();
+    if (savedName && savedName === String(projectName || "").trim()) {
+      return project;
+    }
+    if (!projectName) {
+      return project;
+    }
+    return null;
+  } catch (error) {
+    return null;
+  }
+}
+
 async function saveProjectState(projectId, { name = "" } = {}) {
   if (!projectId) {
     return null;
@@ -1220,16 +1254,28 @@ async function saveProjectState(projectId, { name = "" } = {}) {
   }
   const payload = buildProjectPayloadFromState();
   const projectName = String(name || (elements.projectName ? elements.projectName.value : "") || projectId).trim();
-  const data = await fetchApiJson(`/api/projects/${encodeURIComponent(projectId)}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      name: projectName,
-      payload
-    })
-  }, "Project save failed");
-  clearProjectDraft(projectId);
-  return data.project || null;
+  try {
+    const data = await fetchApiJson(`/api/projects/${encodeURIComponent(projectId)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: projectName,
+        payload
+      })
+    }, "Project save failed");
+    clearProjectDraft(projectId);
+    return data.project || null;
+  } catch (error) {
+    const message = String(error?.message || "");
+    if (/\(502\)/.test(message)) {
+      const recovered = await verifyProjectSaveAfterGatewayError(projectId, projectName);
+      if (recovered) {
+        clearProjectDraft(projectId);
+        return recovered;
+      }
+    }
+    throw error;
+  }
 }
 
 async function saveProjectTimeline(projectId) {
@@ -1793,11 +1839,7 @@ function assertExportReady() {
 }
 
 function exportJSON() {
-  const payload = {
-    version: 1,
-    nodes: state.nodes,
-    activeIndex: state.activeIndex
-  };
+  const payload = buildProjectPayloadFromState().timeline;
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   const link = document.createElement("a");
   link.href = URL.createObjectURL(blob);
@@ -1809,11 +1851,20 @@ function exportJSON() {
 async function importJSONFile(file) {
   const text = await file.text();
   const payload = JSON.parse(text);
-  if (!payload || !Array.isArray(payload.nodes) || !payload.nodes.length) {
-    throw new Error("Invalid timeline JSON");
+
+  let timeline = null;
+  if (payload && String(payload.OTIO_SCHEMA || "").startsWith("Timeline.")) {
+    timeline = importFromOtio(payload);
+  } else {
+    timeline = normalizeProjectTimelinePayload(payload);
   }
-  state.nodes = payload.nodes;
-  state.activeIndex = 0;
+
+  if (!timeline || !Array.isArray(timeline.nodes) || !timeline.nodes.length) {
+    throw new Error("Invalid timeline JSON/OTIO payload");
+  }
+
+  state.nodes = timeline.nodes;
+  state.activeIndex = Number.isFinite(timeline.activeIndex) ? timeline.activeIndex : 0;
   state.selectedIndex = null;
   state.validationResults = [];
   renderNodes();
@@ -2632,7 +2683,7 @@ function validateNodes() {
       }
 
       if (!isHttpUrl(url) && !/^asset_id\s*:/i.test(url) && !/^sha256:[a-f0-9]{64}(\||$)/i.test(url) && !/^[a-f0-9]{64}(\||$)/i.test(url)) {
-        issues.push(`Layer URL not http(s): ${url}`);
+        issues.push(`Layer URL not http(s) or sha256 identity: ${url}`);
       }
     });
 

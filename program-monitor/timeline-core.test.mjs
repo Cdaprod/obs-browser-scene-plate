@@ -63,3 +63,29 @@ test("all-nodes timeline model maps timeline and node-local time consistently", 
   assert.equal(mapped.nodeIndex, 2);
   assert.equal(mapped.nodeLocalT, 2);
 });
+
+
+test("compileTimeline emits clip refs for legacy node lines", async () => {
+  const core = await loadTimelineCore();
+  const compiled = core.compileTimeline({
+    timeline: {
+      version: 1,
+      nodes: [{
+        id: "n1",
+        text: `asset_id: sha256:${"b".repeat(64)}|https://fallback.local/base.mp4
+https://fallback.local/ov.html?dur=2
+https://fallback.local/amb.mp3`,
+        durationOverride: "4"
+      }],
+      activeIndex: 0
+    },
+    fps: 60,
+    width: 1080,
+    height: 1920
+  });
+
+  assert.equal(Array.isArray(compiled.clips), true);
+  assert.equal(compiled.clips.length, 3);
+  assert.equal(compiled.clips[0].ref.asset_id.startsWith("sha256:"), true);
+  assert.equal(compiled.clips[0].duration, 4);
+});

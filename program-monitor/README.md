@@ -120,6 +120,11 @@ node -e "const fs=require('node:fs'); const { exportToOtio }=require('./program-
 
 The exporter only consumes fields on the provided RenderPlan object (`nodes`, layer roles, durations, and metadata), with Track 0 reserved for bases and additional tracks for overlays.
 
+
+### OTIO import helper (round-trip)
+
+Program Monitor import now accepts OTIO `Timeline.1` JSON files in the same file picker used for timeline JSON. Imported clips are converted into backward-compatible node lines, preserving `cdaprod.registry.asset_id` when present.
+
 ## Tests
 
 Run the minimal utility tests:
@@ -156,6 +161,12 @@ Run the OTIO RenderPlan exporter tests:
 
 ```sh
 node --test program-monitor/timeline/otio_export.test.mjs
+```
+
+Run OTIO importer tests:
+
+```sh
+node --test program-monitor/timeline/otio_import.test.mjs
 ```
 
 Run media registry resolution tests:
