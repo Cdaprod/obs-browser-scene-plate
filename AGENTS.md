@@ -37,3 +37,6 @@
 ## Latest Implementation Notes
 - Program Monitor now supports sha256-first media references (`asset_id: sha256:<hash>` and `sha256:<hash>|<fallback>`), resolved against `MEDIA_SYNC_REGISTRY_BASE_URL` with a 500ms timeout and fallback-safe behavior.
 - OTIO exports should preserve registry identity under `metadata["cdaprod.registry"]` when available so downstream consumers can re-resolve by SHA.
+
+- Program Monitor save now verifies project persistence after transient 502 gateway responses before surfacing failure, reducing false-negative save errors.
+- Program Monitor OTIO import now supports Timeline.1 ingestion into backward-compatible nodes plus clip metadata for round-trip workflows.

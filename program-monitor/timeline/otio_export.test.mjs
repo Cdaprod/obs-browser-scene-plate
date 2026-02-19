@@ -176,3 +176,36 @@ test('buildOtioTimeline stores cdaprod registry metadata when asset identity exi
   assert.equal(clip.metadata['cdaprod.registry'].sha256, sha);
   assert.equal(clip.metadata['cdaprod.registry'].origin, 'obs');
 });
+
+
+test('buildOtioTimeline exports explicit clip/track model when clips are provided', () => {
+  const renderPlan = {
+    fps: 30,
+    clips: [
+      {
+        id: 'clip-base',
+        kind: 'video',
+        ref: { asset_id: `sha256:${'f'.repeat(64)}`, url: 'https://fallback.local/base.mp4' },
+        start: 0,
+        duration: 2,
+        in: 1,
+        track: 0,
+        metadata: { 'cdaprod.registry': { asset_id: `sha256:${'f'.repeat(64)}` } }
+      },
+      {
+        id: 'clip-overlay',
+        kind: 'overlay_html',
+        ref: { url: 'https://fallback.local/overlay.html?dur=2' },
+        start: 1,
+        duration: 1,
+        in: 0,
+        track: 10
+      }
+    ]
+  };
+
+  const otio = buildOtioTimeline(renderPlan);
+  assert.equal(otio.tracks.children.length, 2);
+  assert.equal(otio.tracks.children[0].children[0].source_range.start_time.value, 30);
+  assert.equal(otio.tracks.children[0].children[0].metadata['cdaprod.registry'].asset_id, `sha256:${'f'.repeat(64)}`);
+});

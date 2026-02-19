@@ -181,3 +181,15 @@ test("projects index loader warns on tiny _index.json payloads", () => {
   assert.ok(source.includes("suspiciously small index payload"));
   assert.ok(source.includes("tiny payload"));
 });
+
+
+test("project save recovers from transient 502 by verifying persisted project", () => {
+  assert.ok(source.includes("verifyProjectSaveAfterGatewayError"));
+  assert.ok(source.includes("const recovered = await verifyProjectSaveAfterGatewayError(projectId, projectName);"));
+});
+
+test("import accepts OTIO timeline payloads", () => {
+  assert.ok(source.includes("importFromOtio"));
+  assert.ok(source.includes("startsWith(\"Timeline.\")"));
+  assert.ok(source.includes("Invalid timeline JSON/OTIO payload"));
+});

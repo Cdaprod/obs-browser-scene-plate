@@ -208,10 +208,119 @@ function buildClip({ name, durationSeconds, rate, layer = {}, nodeId, nodeIndex,
   };
 }
 
+
+function clipRoleFromKind(kind) {
+  const normalized = String(kind || '').toLowerCase();
+  if (normalized === 'audio') {
+    return { role: 'ambient', trackName: 'Ambient', kind: 'Audio' };
+  }
+  if (normalized === 'video') {
+    return { role: 'base', trackName: 'Base', kind: 'Video' };
+  }
+  return { role: 'overlay', trackName: 'Overlay', kind: 'Video' };
+}
+
+function clipRefToLayer(clip) {
+  const ref = clip && clip.ref && typeof clip.ref === 'object' ? clip.ref : {};
+  const metadata = clip && clip.metadata && typeof clip.metadata === 'object' ? clip.metadata : {};
+  const fallbackUrl = ref.url || clip.url || '';
+  return {
+    url: fallbackUrl,
+    asset_id: ref.asset_id || clip.asset_id || '',
+    metadata
+  };
+}
+
+function buildOtioFromClips(renderPlan, { name } = {}) {
+  const rate = asRate(renderPlan);
+  const clips = Array.isArray(renderPlan && renderPlan.clips) ? renderPlan.clips : [];
+  const grouped = new Map();
+
+  clips.forEach((clip, index) => {
+    const trackIndex = Number.isFinite(Number(clip.track)) ? Number(clip.track) : 0;
+    if (!grouped.has(trackIndex)) {
+      grouped.set(trackIndex, []);
+    }
+    grouped.get(trackIndex).push({ ...clip, _index: index });
+  });
+
+  const sortedTracks = Array.from(grouped.entries()).sort((a, b) => a[0] - b[0]);
+  const tracks = sortedTracks.map(([trackIndex, trackClips]) => {
+    const sortedClips = trackClips.sort((a, b) => asPositiveNumber(a.start, 0) - asPositiveNumber(b.start, 0));
+    const firstKind = sortedClips[0] ? sortedClips[0].kind : 'overlay_html';
+    const roleInfo = clipRoleFromKind(firstKind);
+    const children = [];
+    let cursor = 0;
+
+    sortedClips.forEach((clip, clipIndex) => {
+      const start = asPositiveNumber(clip.start, 0);
+      const duration = asPositiveNumber(clip.duration, 0);
+      if (duration <= 0) {
+        return;
+      }
+      if (start > cursor) {
+        children.push(buildGap(start - cursor, rate));
+      }
+      const layer = clipRefToLayer(clip);
+      const sourceRange = {
+        OTIO_SCHEMA: 'TimeRange.1',
+        start_time: rationalTime(asPositiveNumber(clip.in, 0) * rate, rate),
+        duration: rationalTime(duration * rate, rate)
+      };
+      const built = buildClip({
+        name: String(clip.id || `${roleInfo.trackName} ${clipIndex + 1}`),
+        durationSeconds: duration,
+        rate,
+        layer,
+        nodeId: String(clip.id || `clip-${clipIndex + 1}`),
+        nodeIndex: clipIndex,
+        role: roleInfo.role,
+        trackIndex
+      });
+      built.source_range = sourceRange;
+      children.push(built);
+      cursor = start + duration;
+    });
+
+    return {
+      OTIO_SCHEMA: 'Track.1',
+      name: `${roleInfo.trackName} ${trackIndex}`,
+      kind: roleInfo.kind,
+      children,
+      effects: [],
+      markers: [],
+      metadata: { role: roleInfo.role, trackIndex }
+    };
+  });
+
+  return {
+    OTIO_SCHEMA: 'Timeline.1',
+    name: name || renderPlan.name || renderPlan.id || 'RenderPlan Timeline',
+    global_start_time: rationalTime(0, rate),
+    tracks: {
+      OTIO_SCHEMA: 'Stack.1',
+      name: 'tracks',
+      children: tracks,
+      effects: [],
+      markers: [],
+      metadata: {}
+    },
+    metadata: {
+      generated_by: 'program-monitor.timeline.otio_export',
+      source: 'render-plan'
+    }
+  };
+}
+
 function buildOtioTimeline(renderPlan, { name } = {}) {
   if (!renderPlan || typeof renderPlan !== 'object') {
     throw new Error('invalid_render_plan');
   }
+  const clips = Array.isArray(renderPlan.clips) ? renderPlan.clips : [];
+  if (clips.length) {
+    return buildOtioFromClips(renderPlan, { name });
+  }
+
   const nodes = Array.isArray(renderPlan.nodes) ? renderPlan.nodes : [];
   const rate = asRate(renderPlan);
 

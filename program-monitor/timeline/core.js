@@ -370,6 +370,54 @@ export function mapNodeToTimelineT(timeline, nodeIndex, nodeLocalT) {
   return Math.min(total, timeline.starts[index] + local);
 }
 
+
+function normalizeLayerRef(url) {
+  const raw = String(url || '').trim();
+  if (!raw) {
+    return { asset_id: '', url: '' };
+  }
+  const prefixed = raw.replace(/^asset_id\s*:/i, '').trim();
+  const [identity, fallback = ''] = prefixed.split('|').map((value) => value.trim());
+  if (/^sha256:[a-f0-9]{64}$/i.test(identity)) {
+    return { asset_id: identity.toLowerCase(), url: fallback };
+  }
+  if (/^[a-f0-9]{64}$/i.test(identity)) {
+    return { asset_id: `sha256:${identity.toLowerCase()}`, url: fallback };
+  }
+  return { asset_id: '', url: raw };
+}
+
+function buildTimelineClips(nodes) {
+  const clips = [];
+  let timelineStart = 0;
+  (Array.isArray(nodes) ? nodes : []).forEach((node, nodeIndex) => {
+    const duration = Number(node && node.duration);
+    const safeDuration = Number.isFinite(duration) && duration > 0 ? duration : DEFAULT_NODE_DURATION_SECONDS;
+    const layers = Array.isArray(node && node.layers) ? node.layers : [];
+    layers.forEach((layer) => {
+      const role = String(layer && layer.role || '').toLowerCase();
+      const kind = role === 'ambient' ? 'audio' : (role === 'base' ? 'video' : 'overlay_html');
+      const track = role === 'ambient' ? -10 : (role === 'base' ? 0 : 10);
+      const ref = normalizeLayerRef(layer && layer.url);
+      if (!ref.asset_id && !ref.url) {
+        return;
+      }
+      clips.push({
+        id: `${node.id || `node-${nodeIndex + 1}`}-${role || 'layer'}`,
+        kind,
+        ref,
+        start: timelineStart,
+        duration: safeDuration,
+        in: 0,
+        track,
+        nodeIndex
+      });
+    });
+    timelineStart += safeDuration;
+  });
+  return clips;
+}
+
 function resolveNodeDurationSeconds(node, descriptor) {
   const overrideSeconds = Number(node?.durationOverride);
   if (Number.isFinite(overrideSeconds) && overrideSeconds > 0) {
@@ -431,6 +479,7 @@ export function compileTimeline({ timeline, fps, width, height }) {
       source: "program-monitor.timeline.core"
     },
     timing,
-    nodes
+    nodes,
+    clips: buildTimelineClips(nodes)
   };
 }
