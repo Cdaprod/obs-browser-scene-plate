@@ -144,3 +144,35 @@ test('duration resolver falls through invalid early fields to later positive dur
   assert.equal(clip.OTIO_SCHEMA, 'Clip.1');
   assert.equal(clip.source_range.duration.value, 75);
 });
+
+
+test('buildOtioTimeline stores cdaprod registry metadata when asset identity exists', () => {
+  const sha = 'e'.repeat(64);
+  const renderPlan = {
+    nodes: [
+      {
+        id: 'n-registry',
+        duration: 2,
+        layers: [
+          {
+            role: 'base',
+            url: 'https://example.com/base.mp4',
+            metadata: {
+              originalUrl: 'https://example.com/base.mp4',
+              asset_id: `sha256:${sha}`,
+              canonical_name: 'P1_obs_20260117_185714_eeeeeeee.mp4',
+              origin: 'obs',
+              orientation: { rotation: 0, normalized: true }
+            }
+          }
+        ]
+      }
+    ]
+  };
+
+  const otio = buildOtioTimeline(renderPlan);
+  const clip = otio.tracks.children[0].children[0];
+  assert.equal(clip.metadata['cdaprod.registry'].asset_id, `sha256:${sha}`);
+  assert.equal(clip.metadata['cdaprod.registry'].sha256, sha);
+  assert.equal(clip.metadata['cdaprod.registry'].origin, 'obs');
+});

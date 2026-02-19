@@ -108,6 +108,43 @@ function resolveTargetUrl(layer) {
   return { type: 'url', value: String(originalUrl) };
 }
 
+
+function normalizeAssetId(value) {
+  const text = String(value || '').trim();
+  const prefixed = text.match(/^sha256:([a-f0-9]{64})$/i);
+  if (prefixed) {
+    return `sha256:${prefixed[1].toLowerCase()}`;
+  }
+  if (/^[a-f0-9]{64}$/i.test(text)) {
+    return `sha256:${text.toLowerCase()}`;
+  }
+  return '';
+}
+
+function extractRegistryMetadata(layer) {
+  const metadata = layer && typeof layer.metadata === 'object' ? layer.metadata : {};
+  const assetId = normalizeAssetId(
+    metadata.asset_id
+    || metadata.assetId
+    || layer.asset_id
+    || layer.assetId
+    || metadata.sha256
+    || layer.sha256
+  );
+  if (!assetId) {
+    return null;
+  }
+  const sha256 = assetId.replace(/^sha256:/, '');
+  return {
+    asset_id: assetId,
+    sha256,
+    fallback_relative_path: resolveBakedPath(layer) || resolveOriginalUrl(layer) || '',
+    canonical_name: metadata.canonical_name || metadata.canonicalName || '',
+    origin: metadata.origin || 'unknown',
+    orientation: metadata.orientation || null
+  };
+}
+
 function rationalTime(value, rate) {
   return {
     OTIO_SCHEMA: 'RationalTime.1',
@@ -139,6 +176,19 @@ function buildClip({ name, durationSeconds, rate, layer = {}, nodeId, nodeIndex,
   const originalUrl = resolveOriginalUrl(layer);
   const targetSource = resolveTargetUrl(layer);
 
+  const registryMetadata = extractRegistryMetadata(layer);
+  const clipMetadata = {
+    role,
+    nodeId,
+    nodeIndex,
+    trackIndex,
+    originalUrl,
+    source: targetSource
+  };
+  if (registryMetadata) {
+    clipMetadata["cdaprod.registry"] = registryMetadata;
+  }
+
   return {
     OTIO_SCHEMA: 'Clip.1',
     name,
@@ -154,14 +204,7 @@ function buildClip({ name, durationSeconds, rate, layer = {}, nodeId, nodeIndex,
     source_range: timeRange(durationSeconds, rate),
     effects: [],
     markers: [],
-    metadata: {
-      role,
-      nodeId,
-      nodeIndex,
-      trackIndex,
-      originalUrl,
-      source: targetSource
-    }
+    metadata: clipMetadata
   };
 }
 
