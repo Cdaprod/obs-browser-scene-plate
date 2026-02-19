@@ -40,3 +40,6 @@
 
 - Program Monitor save now verifies project persistence after transient 502 gateway responses before surfacing failure, reducing false-negative save errors.
 - Program Monitor OTIO import now supports Timeline.1 ingestion into backward-compatible nodes plus clip metadata for round-trip workflows.
+
+- Program Monitor now supports selected-assets timeline assembly (Sequence/Multicam) from media-sync payloads via Projects panel JSON paste or postMessage (`CDAPROD_PROGRAM_MONITOR_ASSET_SELECTION`).
+- Project payloads now persist `assembly_spec` metadata and clip-derived nodes for reproducible asset-set timeline builds.

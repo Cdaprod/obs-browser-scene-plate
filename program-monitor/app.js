@@ -16,6 +16,7 @@ import {
 import { resolveMediaDurationSeconds } from "./media-duration.js";
 import { resolveMediaEntries } from "./media-registry.js";
 import { importFromOtio } from "./timeline/otio_import.js";
+import { buildAssembledClips, clipsToImportNodes, buildAssemblySpec } from "./timeline/assembly.js";
 
 const STORAGE_KEY = "program-monitor.timeline.v1";
 
@@ -125,7 +126,8 @@ const state = {
   scrubWasPlaying: false,
   validationResults: [],
   durationInfo: { duration: 0, source: "none" },
-  scrubberDisabled: false
+  scrubberDisabled: false,
+  assemblySpec: null
 };
 
 const PROJECTS_KEY = "program-monitor.projects.v1";
@@ -181,6 +183,10 @@ const elements = {
   projectsStatus: $("#projectsStatus"),
   projectsToggle: $("#btnProjects"),
   projectSave: $("#projectSave"),
+  assemblyMode: $("#assemblyMode"),
+  assemblyInput: $("#assemblyInput"),
+  assemblyBuild: $("#assemblyBuild"),
+  assemblySummary: $("#assemblySummary"),
   openStage: $("#btnOpenStage"),
   obsAddress: $("#obsAddress"),
   obsPassword: $("#obsPassword"),
@@ -1078,6 +1084,7 @@ function normalizeProjectTimelinePayload(payload) {
     nodes: candidate.nodes,
     nodesStructured: Array.isArray(candidate.nodesStructured) ? candidate.nodesStructured : [],
     clips: Array.isArray(candidate.clips) ? candidate.clips : [],
+    assembly_spec: candidate.assembly_spec || candidate.assemblySpec || null,
     activeIndex: Number.isFinite(candidate.activeIndex) ? candidate.activeIndex : 0
   };
 }
@@ -1097,7 +1104,8 @@ function buildProjectPayloadFromState() {
   return {
     timeline: {
       ...descriptor,
-      clips: Array.isArray(compiled?.clips) ? compiled.clips : []
+      clips: Array.isArray(compiled?.clips) ? compiled.clips : [],
+      assembly_spec: state.assemblySpec || null
     }
   };
 }
@@ -1160,6 +1168,11 @@ function applyTimelineToEditor(timeline, { projectId = "", projectName = "", not
   state.activeIndex = Math.min(Math.max(normalized.activeIndex, 0), maxIndex);
   state.selectedIndex = null;
   state.validationResults = [];
+  state.assemblySpec = normalized.assembly_spec || normalized.assemblySpec || null;
+  if (elements.assemblySummary) {
+    const mode = state.assemblySpec?.mode || "none";
+    elements.assemblySummary.textContent = `Assembly: ${mode}`;
+  }
   renderNodes();
   primeNode(state.activeIndex).catch(() => {});
 
@@ -1848,6 +1861,50 @@ function exportJSON() {
   URL.revokeObjectURL(link.href);
 }
 
+
+function applyAssembledSelection(payload, { mode = "sequence", source = "manual" } = {}) {
+  const clips = buildAssembledClips(payload, { mode });
+  const nodes = clipsToImportNodes(clips);
+  if (!nodes.length) {
+    throw new Error("No valid assets found in selected payload");
+  }
+  state.nodes = nodes;
+  state.activeIndex = 0;
+  state.selectedIndex = null;
+  state.validationResults = [];
+  state.assemblySpec = {
+    ...buildAssemblySpec(payload, { mode }),
+    source
+  };
+  if (elements.assemblySummary) {
+    elements.assemblySummary.textContent = `Assembly: ${state.assemblySpec.mode} · clips: ${clips.length}`;
+  }
+}
+
+function installAssetSelectionListener() {
+  window.addEventListener("message", (ev) => {
+    const data = ev?.data;
+    if (!data || data.type !== "CDAPROD_PROGRAM_MONITOR_ASSET_SELECTION" || data.version !== 1) {
+      return;
+    }
+    try {
+      const mode = String(data.mode || elements.assemblyMode?.value || "sequence").toLowerCase();
+      applyAssembledSelection(data.payload || data, { mode, source: "postmessage" });
+      renderNodes();
+      primeNode(state.activeIndex).catch(() => {});
+      saveLocal();
+      setMessage(`Imported selected assets (${mode})`);
+      try {
+        ev.source?.postMessage({ type: "CDAPROD_PROGRAM_MONITOR_ACK", ok: true, messageId: data.messageId || "" }, ev.origin || "*");
+      } catch (error) {
+        console.warn("Failed to send selection ACK", error);
+      }
+    } catch (error) {
+      setMessage(`Selection import failed: ${error?.message || error}`);
+    }
+  });
+}
+
 async function importJSONFile(file) {
   const text = await file.text();
   const payload = JSON.parse(text);
@@ -1855,6 +1912,10 @@ async function importJSONFile(file) {
   let timeline = null;
   if (payload && String(payload.OTIO_SCHEMA || "").startsWith("Timeline.")) {
     timeline = importFromOtio(payload);
+  } else if (payload && (Array.isArray(payload.asset_ids) || Array.isArray(payload.items))) {
+    const mode = String(payload.mode || elements.assemblyMode?.value || "sequence").toLowerCase();
+    applyAssembledSelection(payload, { mode, source: "file-import" });
+    timeline = { nodes: state.nodes, activeIndex: 0 };
   } else {
     timeline = normalizeProjectTimelinePayload(payload);
   }
@@ -1867,6 +1928,13 @@ async function importJSONFile(file) {
   state.activeIndex = Number.isFinite(timeline.activeIndex) ? timeline.activeIndex : 0;
   state.selectedIndex = null;
   state.validationResults = [];
+  if (timeline?.assembly_spec || timeline?.assemblySpec) {
+    state.assemblySpec = timeline.assembly_spec || timeline.assemblySpec || null;
+  }
+  if (elements.assemblySummary) {
+    const mode = state.assemblySpec?.mode || "none";
+    elements.assemblySummary.textContent = `Assembly: ${mode}`;
+  }
   renderNodes();
   await primeNode(state.activeIndex);
   saveLocal();
@@ -3210,6 +3278,11 @@ $("#btnAdd").addEventListener("click", () => {
   state.activeIndex = state.nodes.length - 1;
   state.selectedIndex = state.activeIndex;
   state.validationResults = [];
+  state.assemblySpec = normalized.assembly_spec || normalized.assemblySpec || null;
+  if (elements.assemblySummary) {
+    const mode = state.assemblySpec?.mode || "none";
+    elements.assemblySummary.textContent = `Assembly: ${mode}`;
+  }
   renderNodes();
   primeNode(state.activeIndex).catch(() => {});
   saveLocal();
@@ -3240,6 +3313,11 @@ $("#btnDelete").addEventListener("click", () => {
   state.activeIndex = Math.max(0, state.activeIndex - 1);
   state.selectedIndex = state.nodes.length ? state.activeIndex : null;
   state.validationResults = [];
+  state.assemblySpec = normalized.assembly_spec || normalized.assemblySpec || null;
+  if (elements.assemblySummary) {
+    const mode = state.assemblySpec?.mode || "none";
+    elements.assemblySummary.textContent = `Assembly: ${mode}`;
+  }
   renderNodes();
   primeNode(state.activeIndex).catch(() => {});
   saveLocal();
@@ -3284,6 +3362,11 @@ $("#btnPrev").addEventListener("click", async () => {
   }
   state.selectedIndex = state.activeIndex;
   state.validationResults = [];
+  state.assemblySpec = normalized.assembly_spec || normalized.assemblySpec || null;
+  if (elements.assemblySummary) {
+    const mode = state.assemblySpec?.mode || "none";
+    elements.assemblySummary.textContent = `Assembly: ${mode}`;
+  }
   renderNodes();
   await primeNode(state.activeIndex);
   saveLocal();
@@ -3300,6 +3383,11 @@ $("#btnNext").addEventListener("click", async () => {
   }
   state.selectedIndex = state.activeIndex;
   state.validationResults = [];
+  state.assemblySpec = normalized.assembly_spec || normalized.assemblySpec || null;
+  if (elements.assemblySummary) {
+    const mode = state.assemblySpec?.mode || "none";
+    elements.assemblySummary.textContent = `Assembly: ${mode}`;
+  }
   renderNodes();
   await primeNode(state.activeIndex);
   saveLocal();
@@ -3552,6 +3640,27 @@ function bindUIOnce() {
     });
   }
 
+  if (elements.assemblyBuild) {
+    elements.assemblyBuild.addEventListener("click", () => {
+      try {
+        const raw = String(elements.assemblyInput?.value || "").trim();
+        if (!raw) {
+          setMessage("Paste selected assets JSON first.");
+          return;
+        }
+        const payload = JSON.parse(raw);
+        const mode = String(elements.assemblyMode?.value || "sequence").toLowerCase();
+        applyAssembledSelection(payload, { mode, source: "panel" });
+        renderNodes();
+        primeNode(state.activeIndex).catch(() => {});
+        saveLocal();
+        setMessage(`Assembled ${state.nodes.length} nodes from selected assets.`);
+      } catch (error) {
+        setMessage(`Assembly failed: ${error?.message || error}`);
+      }
+    });
+  }
+
   elements.fileImport.addEventListener("change", async () => {
     const file = elements.fileImport.files?.[0];
     if (!file) {
@@ -3573,6 +3682,8 @@ function bindUIOnce() {
       });
     });
   }
+
+  installAssetSelectionListener();
 }
 
 const obsSettingsInputs = [

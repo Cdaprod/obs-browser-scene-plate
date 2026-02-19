@@ -110,6 +110,33 @@ sha256:<64hex>|https://legacy.local/fallback.mp4
 
 When present, Program Monitor resolves these identities through `POST /api/registry/resolve` (500ms timeout, no retries) and uses `urls.stream`. If the registry is unavailable, playback falls back to the provided legacy URL/path when available.
 
+
+### Media Sync selected-assets assembly
+
+Program Monitor can now assemble timeline clips from selected assets payloads exported by media-sync-api.
+
+Ways to import:
+- Paste JSON into **Projects → Timeline assembly** and click **Build from Selection JSON**.
+- Send `postMessage` payload with `type: "CDAPROD_PROGRAM_MONITOR_ASSET_SELECTION"`, `version: 1`, and `payload` containing `items[]` or `asset_ids[]`.
+
+Supported assembly modes:
+- `sequence`: sorts by `creation_time` and appends clips end-to-end.
+- `multicam`: groups clips by `origin`, aligns by earliest `creation_time`, and places each origin on a separate track.
+
+Example payload:
+
+```json
+{
+  "mode": "multicam",
+  "items": [
+    { "asset_id": "sha256:<64hex>", "creation_time": "2026-01-01T00:00:00Z", "origin": "obs", "url": "https://fallback.local/a.mp4" },
+    { "asset_id": "sha256:<64hex>", "creation_time": "2026-01-01T00:00:02Z", "origin": "iphone", "url": "https://fallback.local/b.mp4" }
+  ]
+}
+```
+
+Assembly metadata is saved as `assembly_spec` in project timeline payloads for reproducibility.
+
 ### OTIO export helper (artifact generation)
 
 Convert a compiled RenderPlan JSON into an `.otio` timeline file:
@@ -155,6 +182,12 @@ Run the timeline core determinism + all-nodes mapping tests:
 
 ```sh
 node --test program-monitor/timeline-core.test.mjs
+```
+
+Run media selection assembly tests:
+
+```sh
+node --test program-monitor/timeline/assembly.test.mjs
 ```
 
 Run the OTIO RenderPlan exporter tests:
