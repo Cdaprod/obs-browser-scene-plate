@@ -212,3 +212,12 @@ test("otio export button and derive assembly wiring exist", () => {
   assert.ok(source.includes("exportOTIOJson"));
   assert.ok(source.includes("deriveSelectionPayloadFromCurrentNodes"));
 });
+
+
+test("projects panel includes repair index and derive status controls", () => {
+  assert.ok(html.includes('id="btnRepairIndex"'));
+  assert.ok(html.includes('id="assemblyDerived"'));
+  assert.ok(html.includes('id="assemblyRetry"'));
+  assert.ok(source.includes("/api/projects:index-repair"));
+  assert.ok(source.includes("autoDeriveLegacyClips"));
+});
