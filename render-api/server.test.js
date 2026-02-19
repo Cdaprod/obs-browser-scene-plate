@@ -31,6 +31,7 @@ const {
   readProjectState,
   readProjectIndex,
   resolveProjectByName,
+  rebuildProjectIndexFromDisk,
   saveProjectState,
   listProjectExports,
   buildRangeResponse,
@@ -639,4 +640,25 @@ test('handleOtioExportRequest writes an OTIO file from request payload only', ()
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
+});
+
+
+test('rebuildProjectIndexFromDisk discovers project.json files and rewrites index', () => {
+  const baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'projects-repair-'));
+  const projectId = 'demo-project';
+  const projectDir = path.join(baseDir, projectId);
+  fs.mkdirSync(projectDir, { recursive: true });
+  fs.writeFileSync(path.join(projectDir, 'project.json'), JSON.stringify({
+    project_id: projectId,
+    name: 'Demo Project',
+    created_at: '2026-01-01T00:00:00.000Z',
+    updated_at: '2026-01-01T00:01:00.000Z',
+    payload: { timeline: { version: 1, nodes: [] } }
+  }));
+
+  const entries = rebuildProjectIndexFromDisk({ baseDir });
+  assert.equal(entries.length, 1);
+  const index = JSON.parse(fs.readFileSync(path.join(baseDir, '_index.json'), 'utf8'));
+  assert.equal(index.projects.length, 1);
+  assert.equal(index.projects[0].project_id, projectId);
 });

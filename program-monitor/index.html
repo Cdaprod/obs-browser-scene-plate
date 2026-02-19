@@ -20,6 +20,7 @@
         <button id="btnSave" type="button">Save</button>
         <button id="btnExport" type="button">Export JSON</button>
         <button id="btnExportOtio" type="button">Export OTIO JSON</button>
+        <span class="exportNote">Project JSON = editor state · OTIO = timeline interchange (clips/tracks)</span>
         <button id="btnImport" type="button">Import JSON</button>
         <button id="btnValidate" type="button">Validate</button>
         <button id="btnOpenBase" type="button">Open Base</button>
@@ -76,6 +77,7 @@
       </div>
       <div class="projectRow">
         <div class="projectStatus" id="projectsStatus" aria-live="polite"></div>
+        <button id="btnRepairIndex" type="button">Repair Index</button>
       </div>
 
       <div class="projectRow">
@@ -89,6 +91,8 @@
           <button id="assemblyBuild" type="button">Build from Selection JSON</button>
           <button id="assemblyDerive" type="button">Build clips from current project</button>
           <div class="projectStatus" id="assemblySummary" aria-live="polite">Assembly: none</div>
+          <div class="projectStatus" id="assemblyDerived" aria-live="polite">Derived clips: 0/0 resolved</div>
+          <button id="assemblyRetry" type="button">Retry derive</button>
         </div>
         <textarea id="assemblyInput" class="assemblyInput" placeholder='Paste selection JSON from media-sync explorer OR click “Build clips from current project”.'></textarea>
       </div>

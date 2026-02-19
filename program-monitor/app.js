@@ -128,7 +128,9 @@ const state = {
   validationResults: [],
   durationInfo: { duration: 0, source: "none" },
   scrubberDisabled: false,
-  assemblySpec: null
+  assemblySpec: null,
+  derivedClips: [],
+  derivedResolved: { resolved: 0, total: 0 }
 };
 
 const PROJECTS_KEY = "program-monitor.projects.v1";
@@ -182,6 +184,7 @@ const elements = {
   projectName: $("#projectName"),
   projectList: $("#projectList"),
   projectsStatus: $("#projectsStatus"),
+  repairIndex: $("#btnRepairIndex"),
   projectsToggle: $("#btnProjects"),
   projectSave: $("#projectSave"),
   exportOtio: $("#btnExportOtio"),
@@ -190,6 +193,8 @@ const elements = {
   assemblyBuild: $("#assemblyBuild"),
   assemblyDerive: $("#assemblyDerive"),
   assemblySummary: $("#assemblySummary"),
+  assemblyDerived: $("#assemblyDerived"),
+  assemblyRetry: $("#assemblyRetry"),
   openStage: $("#btnOpenStage"),
   obsAddress: $("#obsAddress"),
   obsPassword: $("#obsPassword"),
@@ -1107,7 +1112,7 @@ function buildProjectPayloadFromState() {
   return {
     timeline: {
       ...descriptor,
-      clips: Array.isArray(compiled?.clips) ? compiled.clips : [],
+      clips: state.derivedClips.length ? state.derivedClips : (Array.isArray(compiled?.clips) ? compiled.clips : []),
       assembly_spec: state.assemblySpec || null
     }
   };
@@ -1178,6 +1183,7 @@ function applyTimelineToEditor(timeline, { projectId = "", projectName = "", not
   }
   renderNodes();
   primeNode(state.activeIndex).catch(() => {});
+  autoDeriveLegacyClips().catch(() => {});
 
   if (projectId) {
     setCurrentProjectId(projectId);
@@ -1614,9 +1620,20 @@ async function loadProjectIndexWithFallback() {
           setProjectsStatus(`Index OK: ${finalUrl} (${staticProjects.length} projects)`);
         }
       }
-      const { merged, revivedProjectIds } = mergeProjectEntries(staticProjects, localProjects, deletedProjectMap);
+      let discoveredApi = [];
+      if (!notFound && staticProjects.length === 0) {
+        try {
+          discoveredApi = await fetchProjectIndex();
+        } catch (error) {
+          discoveredApi = [];
+        }
+      }
+      const discoveredEntries = normalizeProjectIndexPayload({ projects: discoveredApi });
+      const { merged, revivedProjectIds } = mergeProjectEntries(staticProjects, [...localProjects, ...discoveredEntries], deletedProjectMap);
       if (!notFound && staticProjects.length === 0 && merged.length > 0) {
         setProjectsStatus(`Index empty ([]); using discovered projects list (${merged.length}).`);
+      } else if (!notFound) {
+        setProjectsStatus(`Index OK: ${finalUrl} (${merged.length} projects)`);
       }
       if (revivedProjectIds.length) {
         revivedProjectIds.forEach((projectId) => {
@@ -1960,8 +1977,9 @@ async function deriveSelectionPayloadFromCurrentNodes() {
     });
   });
 
+  const total = seen.size;
   if (!Object.keys(fallback_paths).length && !items.length) {
-    return { items: [] };
+    return { items: [], resolved: 0, total };
   }
 
   if (Object.keys(fallback_paths).length) {
@@ -1993,7 +2011,7 @@ async function deriveSelectionPayloadFromCurrentNodes() {
     }
   }
 
-  return { items };
+  return { items, resolved: items.length, total };
 }
 
 function exportOTIOJson() {
@@ -2005,6 +2023,40 @@ function exportOTIOJson() {
   link.download = "program-monitor.timeline.otio.json";
   link.click();
   URL.revokeObjectURL(link.href);
+}
+
+function renderDerivedStatus() {
+  if (!elements.assemblyDerived) {
+    return;
+  }
+  const resolved = Number.isFinite(state.derivedResolved?.resolved) ? state.derivedResolved.resolved : 0;
+  const total = Number.isFinite(state.derivedResolved?.total) ? state.derivedResolved.total : 0;
+  elements.assemblyDerived.textContent = `Derived clips: ${resolved}/${total} resolved`;
+}
+
+async function autoDeriveLegacyClips({ force = false } = {}) {
+  if (!force && state.derivedClips.length) {
+    renderDerivedStatus();
+    return;
+  }
+  if (!state.nodes.length) {
+    state.derivedClips = [];
+    state.derivedResolved = { resolved: 0, total: 0 };
+    renderDerivedStatus();
+    return;
+  }
+  const payload = await deriveSelectionPayloadFromCurrentNodes();
+  state.derivedResolved = { resolved: payload.resolved || 0, total: payload.total || 0 };
+  if (Array.isArray(payload.items) && payload.items.length) {
+    const mode = String(elements.assemblyMode?.value || "sequence").toLowerCase();
+    state.derivedClips = buildAssembledClips(payload, { mode });
+    if (!state.assemblySpec) {
+      state.assemblySpec = { ...buildAssemblySpec(payload, { mode }), source: "auto-derive-on-load" };
+    }
+  } else {
+    state.derivedClips = [];
+  }
+  renderDerivedStatus();
 }
 
 async function importJSONFile(file) {
@@ -2030,6 +2082,8 @@ async function importJSONFile(file) {
   state.activeIndex = Number.isFinite(timeline.activeIndex) ? timeline.activeIndex : 0;
   state.selectedIndex = null;
   state.validationResults = [];
+  state.derivedClips = [];
+  state.derivedResolved = { resolved: 0, total: 0 };
   if (timeline?.assembly_spec || timeline?.assemblySpec) {
     state.assemblySpec = timeline.assembly_spec || timeline.assemblySpec || null;
   }
@@ -2039,6 +2093,7 @@ async function importJSONFile(file) {
   }
   renderNodes();
   await primeNode(state.activeIndex);
+  await autoDeriveLegacyClips();
   saveLocal();
 }
 
@@ -2583,6 +2638,7 @@ function resetAllNodes() {
   state.currentTime = 0;
   renderNodes();
   primeNode(state.activeIndex).catch(() => {});
+  autoDeriveLegacyClips().catch(() => {});
   saveLocal();
   setMessage("Cleared all nodes.");
 }
@@ -3387,6 +3443,7 @@ $("#btnAdd").addEventListener("click", () => {
   }
   renderNodes();
   primeNode(state.activeIndex).catch(() => {});
+  autoDeriveLegacyClips().catch(() => {});
   saveLocal();
 });
 
@@ -3422,6 +3479,7 @@ $("#btnDelete").addEventListener("click", () => {
   }
   renderNodes();
   primeNode(state.activeIndex).catch(() => {});
+  autoDeriveLegacyClips().catch(() => {});
   saveLocal();
 });
 
@@ -3471,6 +3529,7 @@ $("#btnPrev").addEventListener("click", async () => {
   }
   renderNodes();
   await primeNode(state.activeIndex);
+  await autoDeriveLegacyClips();
   saveLocal();
 });
 
@@ -3492,6 +3551,7 @@ $("#btnNext").addEventListener("click", async () => {
   }
   renderNodes();
   await primeNode(state.activeIndex);
+  await autoDeriveLegacyClips();
   saveLocal();
 });
 
@@ -3587,6 +3647,17 @@ function bindUIOnce() {
   $("#btnExport").addEventListener("click", () => exportJSON());
   if (elements.exportOtio) {
     elements.exportOtio.addEventListener("click", () => exportOTIOJson());
+  }
+  if (elements.repairIndex) {
+    elements.repairIndex.addEventListener("click", async () => {
+      try {
+        const data = await fetchApiJson("/api/projects:index-repair", { method: "POST" }, "Project index repair failed");
+        setProjectsStatus(`Index repaired (${Number(data.count || 0)} projects).`);
+        await refreshProjects();
+      } catch (error) {
+        setMessage(`Repair index failed: ${error?.message || error}`);
+      }
+    });
   }
   $("#btnImport").addEventListener("click", () => elements.fileImport.click());
   $("#btnValidate").addEventListener("click", () => validateNodes());
@@ -3785,6 +3856,13 @@ function bindUIOnce() {
       }
     });
   }
+  if (elements.assemblyRetry) {
+    elements.assemblyRetry.addEventListener("click", () => {
+      autoDeriveLegacyClips({ force: true }).catch((error) => {
+        setMessage(`Retry derive failed: ${error?.message || error}`);
+      });
+    });
+  }
 
   elements.fileImport.addEventListener("change", async () => {
     const file = elements.fileImport.files?.[0];
@@ -3834,6 +3912,7 @@ try {
   bindUIOnce();
   const obsSettings = loadObsSettings();
   applyObsSettingsToInputs(obsSettings);
+  renderDerivedStatus();
   if (isFileProtocol) {
     loadLocal();
   } else {

@@ -832,6 +832,30 @@ function resolveProjectByName(name, { baseDir = PROJECTS_DIR } = {}) {
   });
 }
 
+
+function rebuildProjectIndexFromDisk({ baseDir = PROJECTS_DIR, nowIso = new Date().toISOString() } = {}) {
+  ensureDir(baseDir);
+  const entries = [];
+  const dirs = fs.readdirSync(baseDir, { withFileTypes: true }).filter((entry) => entry.isDirectory());
+  dirs.forEach((entry) => {
+    const projectId = entry.name;
+    const statePath = path.join(baseDir, projectId, 'project.json');
+    const state = readJsonSafe(statePath, null);
+    if (!state || !state.project_id || !state.name) {
+      return;
+    }
+    entries.push({
+      project_id: state.project_id,
+      name: state.name,
+      created_at: state.created_at || nowIso,
+      updated_at: state.updated_at || state.created_at || nowIso
+    });
+  });
+  entries.sort((a, b) => Date.parse(b.updated_at || 0) - Date.parse(a.updated_at || 0));
+  writeProjectIndex(entries, { baseDir });
+  return entries;
+}
+
 function deleteProjectState(projectId, { baseDir = PROJECTS_DIR } = {}) {
   const projectDir = path.join(baseDir, safeName(projectId || ''));
   if (fs.existsSync(projectDir)) {
@@ -1888,6 +1912,21 @@ function startServer() {
       return json(res, 200, { ok: true, projects });
     }
 
+    if (req.method === 'POST' && parsed.pathname === '/api/projects:index-repair') {
+      /**
+       * Rebuild Program Monitor project index from disk project.json files.
+       *
+       * Example:
+       *   curl -X POST http://localhost:8791/api/projects:index-repair
+       */
+      try {
+        const repaired = rebuildProjectIndexFromDisk();
+        return json(res, 200, { ok: true, projects: repaired, count: repaired.length });
+      } catch (error) {
+        return json(res, 500, { ok: false, error: 'project_index_repair_failed' });
+      }
+    }
+
     if (req.method === 'POST' && parsed.pathname === '/api/projects:resolve') {
       /**
        * Resolve a project id from a human name, creating if absent.
@@ -2886,6 +2925,7 @@ module.exports = {
   readProjectIndex,
   readProjectState,
   resolveProjectByName,
+  rebuildProjectIndexFromDisk,
   saveProjectState,
   normalizeProjectTimeline,
   listProjectExports,

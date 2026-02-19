@@ -46,3 +46,6 @@
 
 - Program Monitor now surfaces an explicit `Export OTIO JSON` action and derive-from-current-project assembly helper for legacy node upgrades.
 - Projects index status messaging now prefers actionable fallback text for tiny/empty `_index.json` payloads and avoids misleading `0 projects` displays when discovered projects exist.
+
+- Program Monitor now includes a `Repair Index` action that rebuilds project index state from discovered project files via render-api.
+- Legacy node-only projects now auto-attempt derive on load, reporting `Derived clips: X/Y resolved` with a retry control.
