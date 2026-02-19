@@ -14,11 +14,19 @@ import {
   mapTimelineTToNode
 } from "./timeline/core.js";
 import { resolveMediaDurationSeconds } from "./media-duration.js";
+import { resolveMediaEntries } from "./media-registry.js";
 
 const STORAGE_KEY = "program-monitor.timeline.v1";
 
 function isHttpUrl(url) {
   return /^https?:\/\//i.test(url || "");
+}
+
+function isRegistryIdentityInput(value) {
+  const input = String(value || "").trim();
+  return /^asset_id\s*:/i.test(input)
+    || /^sha256:[a-f0-9]{64}(\||$)/i.test(input)
+    || /^[a-f0-9]{64}(\||$)/i.test(input);
 }
 
 function uuid() {
@@ -252,6 +260,10 @@ const renderApiBase = isFileProtocol ? `http://${host}:${renderApiPort}` : "";
 const downloadBase = isFileProtocol ? `http://${host}:8789` : window.location.origin;
 const DEFAULT_IMAGE_DURATION_SECONDS = 5;
 const DEFAULT_EXPORT_OPTIONS = Object.freeze({ fps: 60, width: 1080, height: 1920 });
+const MEDIA_REGISTRY_CACHE_TTL_MS = 60_000;
+const mediaRegistryCache = new Map();
+const mediaDebugEnabled = new URLSearchParams(window.location.search || "").get("debug") === "1";
+
 
 function compileCurrentTimelinePlan() {
   return compileTimeline({
@@ -2148,14 +2160,26 @@ async function primeNode(index) {
     updateStatusDisplay();
     return;
   }
+
   const parsed = parseNodeText(node.text);
+  const resolvedMedia = await resolveMediaEntries([
+    { input: parsed.baseUrl },
+    ...parsed.layers.map((input) => ({ input }))
+  ], {
+    env: window,
+    cache: mediaRegistryCache,
+    cacheTtlMs: MEDIA_REGISTRY_CACHE_TTL_MS
+  });
+  const resolvedBase = resolvedMedia[0] || { input: parsed.baseUrl, finalMediaUrl: parsed.baseUrl, resolvedVia: "fallback" };
+  const resolvedLayers = resolvedMedia.slice(1);
+  const baseUrl = resolvedBase.finalMediaUrl || resolvedBase.fallbackPath || resolvedBase.input;
   const overrideSeconds = Number(node.durationOverride);
-  const baseKind = classifyUrl(parsed.baseUrl);
-  const durationHintSeconds = getDurationHintSeconds(parsed.baseUrl);
+  const baseKind = classifyUrl(baseUrl);
+  const durationHintSeconds = getDurationHintSeconds(baseUrl);
 
   setMessage("");
 
-  if (!parsed.baseUrl) {
+  if (!baseUrl) {
     setBaseKind("video");
     elements.baseVideo.removeAttribute("src");
     elements.baseImage.removeAttribute("src");
@@ -2168,9 +2192,13 @@ async function primeNode(index) {
   }
 
   if (baseKind === "page" || baseKind === "image") {
-    setBaseKind(baseKind, parsed.baseUrl);
+    setBaseKind(baseKind, baseUrl);
   } else {
-    setBaseKind("video", parsed.baseUrl);
+    setBaseKind("video", baseUrl);
+  }
+
+  if (mediaDebugEnabled) {
+    console.info("[media-registry] base", resolvedBase.assetId || baseUrl, resolvedBase.resolvedVia);
   }
 
   let duration = 0;
@@ -2196,7 +2224,7 @@ async function primeNode(index) {
     elements.baseVideo.preload = "metadata";
 
     bindBaseDurationListeners();
-    elements.baseVideo.src = parsed.baseUrl;
+    elements.baseVideo.src = baseUrl;
     elements.baseVideo.load();
 
     const initialMediaDuration = resolveMediaDurationSeconds(elements.baseVideo);
@@ -2205,7 +2233,7 @@ async function primeNode(index) {
 
   const durationInfo = resolveDurationInfo({
     baseKind,
-    baseUrl: parsed.baseUrl,
+    baseUrl,
     overrideSeconds,
     baseDuration: duration,
     durationHintSeconds
@@ -2235,8 +2263,15 @@ async function primeNode(index) {
   updateStatusDisplay();
   updateTimelineMetrics();
 
-  parsed.layers.forEach((url) => {
+  resolvedLayers.forEach((entry) => {
+    const url = entry.finalMediaUrl || entry.fallbackPath || entry.input;
+    if (!url) {
+      return;
+    }
     const kind = classifyUrl(url);
+    if (mediaDebugEnabled) {
+      console.info("[media-registry] layer", entry.assetId || url, entry.resolvedVia);
+    }
     if (kind === "audio") {
       const audio = document.createElement("audio");
       audio.src = url;
@@ -2584,8 +2619,8 @@ function validateNodes() {
 
     if (!parsed.baseUrl) {
       issues.push("Missing base URL.");
-    } else if (!isHttpUrl(parsed.baseUrl)) {
-      issues.push("Base URL should start with http(s). Reachability not checked.");
+    } else if (!isHttpUrl(parsed.baseUrl) && !isRegistryIdentityInput(parsed.baseUrl)) {
+      issues.push("Base URL should start with http(s) or provide a sha256 identity.");
     }
 
     parsed.layers.forEach((url) => {
@@ -2596,7 +2631,7 @@ function validateNodes() {
         counts.images += 1;
       }
 
-      if (!isHttpUrl(url)) {
+      if (!isHttpUrl(url) && !/^asset_id\s*:/i.test(url) && !/^sha256:[a-f0-9]{64}(\||$)/i.test(url) && !/^[a-f0-9]{64}(\||$)/i.test(url)) {
         issues.push(`Layer URL not http(s): ${url}`);
       }
     });

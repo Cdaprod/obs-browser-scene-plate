@@ -33,3 +33,7 @@
 ## Testing Expectations
 - Add minimal automated tests for logic changes when possible.
 - Tests should be idempotent and safe to run repeatedly.
+
+## Latest Implementation Notes
+- Program Monitor now supports sha256-first media references (`asset_id: sha256:<hash>` and `sha256:<hash>|<fallback>`), resolved against `MEDIA_SYNC_REGISTRY_BASE_URL` with a 500ms timeout and fallback-safe behavior.
+- OTIO exports should preserve registry identity under `metadata["cdaprod.registry"]` when available so downstream consumers can re-resolve by SHA.
