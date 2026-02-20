@@ -30,46 +30,74 @@ function normalizeAssetId(value) {
   return "";
 }
 
+function anchorTimeForItem(item) {
+  return String(item?.timeline?.anchor_time || item?.creation_time || item?.timestamps?.creation_time || "").trim();
+}
+
+function durationForItem(item) {
+  return safeDuration(
+    item?.facts?.duration_seconds
+    ?? item?.duration_seconds
+    ?? item?.duration,
+    DEFAULT_CLIP_DURATION_SECONDS
+  );
+}
+
 function normalizeItems(payload) {
   if (!payload || typeof payload !== "object") {
     return [];
   }
+
   if (Array.isArray(payload.items)) {
-    return payload.items.map((item) => ({
-      asset_id: normalizeAssetId(item?.asset_id || item?.sha256 || ""),
-      url: String(item?.url || item?.fallback_url || item?.fallback_path || "").trim(),
-      creation_time: String(item?.creation_time || item?.timestamps?.creation_time || "").trim(),
-      origin: String(item?.origin || "unknown").trim().toLowerCase() || "unknown",
-      duration: safeDuration(item?.duration, DEFAULT_CLIP_DURATION_SECONDS)
-    })).filter((item) => item.asset_id || item.url);
+    return payload.items.map((item) => {
+      const assetId = normalizeAssetId(item?.asset_id || item?.sha256 || "");
+      const fallbackPath = String(item?.fallback_path || item?.relative_path || "").trim();
+      const streamUrl = String(item?.stream_url || item?.urls?.stream || item?.url || "").trim();
+      return {
+        asset_id: assetId,
+        sha256: assetId ? assetId.replace(/^sha256:/, "") : String(item?.sha256 || "").trim().toLowerCase(),
+        url: streamUrl,
+        fallback_path: fallbackPath,
+        creation_time: String(item?.creation_time || item?.timestamps?.creation_time || "").trim(),
+        timeline: item?.timeline || null,
+        origin: String(item?.origin || "unknown").trim().toLowerCase() || "unknown",
+        facts: item?.facts || null,
+        duration: durationForItem(item)
+      };
+    }).filter((item) => item.asset_id || item.url || item.fallback_path);
   }
 
   const ids = Array.isArray(payload.asset_ids) ? payload.asset_ids : [];
   const fallback = payload.fallback_paths && typeof payload.fallback_paths === "object" ? payload.fallback_paths : {};
   const origins = payload.origins && typeof payload.origins === "object" ? payload.origins : {};
   const creationTimes = payload.creation_times && typeof payload.creation_times === "object" ? payload.creation_times : {};
+  const durations = payload.duration_seconds && typeof payload.duration_seconds === "object" ? payload.duration_seconds : {};
 
   return ids.map((id) => {
     const asset_id = normalizeAssetId(id);
     return {
       asset_id,
+      sha256: asset_id ? asset_id.replace(/^sha256:/, "") : "",
       url: String(fallback[id] || fallback[asset_id] || "").trim(),
+      fallback_path: "",
       creation_time: String(creationTimes[id] || creationTimes[asset_id] || "").trim(),
+      timeline: null,
       origin: String(origins[id] || origins[asset_id] || "unknown").trim().toLowerCase() || "unknown",
-      duration: DEFAULT_CLIP_DURATION_SECONDS
+      facts: { duration_seconds: safeDuration(durations[id] || durations[asset_id], DEFAULT_CLIP_DURATION_SECONDS) },
+      duration: safeDuration(durations[id] || durations[asset_id], DEFAULT_CLIP_DURATION_SECONDS)
     };
   }).filter((item) => item.asset_id || item.url);
 }
 
 function stableSortItems(items) {
   return [...items].sort((a, b) => {
-    const ta = asTime(a.creation_time);
-    const tb = asTime(b.creation_time);
+    const ta = asTime(anchorTimeForItem(a));
+    const tb = asTime(anchorTimeForItem(b));
     if (Number.isFinite(ta) && Number.isFinite(tb) && ta !== tb) return ta - tb;
     if (Number.isFinite(ta) && !Number.isFinite(tb)) return -1;
     if (!Number.isFinite(ta) && Number.isFinite(tb)) return 1;
-    const aa = a.asset_id || a.url;
-    const bb = b.asset_id || b.url;
+    const aa = a.asset_id || a.url || a.fallback_path;
+    const bb = b.asset_id || b.url || b.fallback_path;
     return aa.localeCompare(bb);
   });
 }
@@ -78,26 +106,38 @@ export function buildAssembledClips(payload, { mode = "sequence", defaultDuratio
   const items = normalizeItems(payload);
   if (!items.length) return [];
 
-  if (String(mode).toLowerCase() === "multicam") {
+  const normalizedMode = String(mode).toLowerCase();
+  if (normalizedMode === "multicam") {
     const sorted = stableSortItems(items);
-    const anchorMs = asTime(sorted.find((item) => Number.isFinite(asTime(item.creation_time)))?.creation_time);
+    const anchorMs = asTime(anchorTimeForItem(sorted.find((item) => Number.isFinite(asTime(anchorTimeForItem(item))))));
     const origins = Array.from(new Set(sorted.map((item) => item.origin || "unknown"))).sort();
     const trackByOrigin = new Map(origins.map((origin, index) => [origin, index + 1]));
+
     return sorted.map((item, index) => {
-      const startMs = asTime(item.creation_time);
+      const itemAnchor = anchorTimeForItem(item);
+      const startMs = asTime(itemAnchor);
       const start = Number.isFinite(anchorMs) && Number.isFinite(startMs)
         ? Math.max(0, (startMs - anchorMs) / 1000)
         : index * 0.01;
+      const duration = safeDuration(item.duration, defaultDuration);
       return {
         id: `clip-${index + 1}`,
         kind: "video",
-        ref: { asset_id: item.asset_id, url: item.url },
+        ref: {
+          asset_id: item.asset_id,
+          sha256: item.sha256,
+          url: item.url,
+          fallback_url: item.url,
+          fallback_path: item.fallback_path
+        },
         start,
-        duration: safeDuration(item.duration, defaultDuration),
+        duration,
         in: 0,
         track: trackByOrigin.get(item.origin || "unknown") || 1,
         origin: item.origin || "unknown",
-        creation_time: item.creation_time || ""
+        creation_time: item.creation_time || "",
+        timeline: item.timeline || { anchor_time: itemAnchor || null, anchor_source: "unknown", confidence: 0 },
+        facts: item.facts || { duration_seconds: duration }
       };
     });
   }
@@ -109,17 +149,45 @@ export function buildAssembledClips(payload, { mode = "sequence", defaultDuratio
     const clip = {
       id: `clip-${index + 1}`,
       kind: "video",
-      ref: { asset_id: item.asset_id, url: item.url },
+      ref: {
+        asset_id: item.asset_id,
+        sha256: item.sha256,
+        url: item.url,
+        fallback_url: item.url,
+        fallback_path: item.fallback_path
+      },
       start: cursor,
       duration,
       in: 0,
       track: 1,
       origin: item.origin || "unknown",
-      creation_time: item.creation_time || ""
+      creation_time: item.creation_time || "",
+      timeline: item.timeline || { anchor_time: anchorTimeForItem(item) || null, anchor_source: "unknown", confidence: 0 },
+      facts: item.facts || { duration_seconds: duration }
     };
     cursor += duration;
     return clip;
   });
+}
+
+export function summarizeAssembledClips(clips) {
+  const safe = Array.isArray(clips) ? clips : [];
+  const missingAnchor = safe.filter((clip) => !clip?.timeline?.anchor_time && !clip?.creation_time).length;
+  const missingDuration = safe.filter((clip) => !(Number(clip?.duration) > 0)).length;
+  const byOrigin = new Map();
+  safe.forEach((clip) => {
+    const origin = clip?.origin || "unknown";
+    if (!byOrigin.has(origin)) {
+      byOrigin.set(origin, clip?.track ?? 0);
+    }
+  });
+  const trackMap = Array.from(byOrigin.entries()).map(([origin, track]) => ({ origin, track }));
+  return {
+    total: safe.length,
+    missingAnchor,
+    missingDuration,
+    trackMap
+  };
 }
 
 export function clipsToImportNodes(clips) {
@@ -128,9 +196,9 @@ export function clipsToImportNodes(clips) {
     .sort((a, b) => a.start - b.start || a.track - b.track)
     .map((clip, index) => {
       const ref = clip?.ref || {};
-      const line = ref.asset_id && ref.url
-        ? `${ref.asset_id}|${ref.url}`
-        : (ref.asset_id || ref.url || "");
+      const line = ref.asset_id && (ref.fallback_url || ref.url)
+        ? `${ref.asset_id}|${ref.fallback_url || ref.url}`
+        : (ref.asset_id || ref.url || ref.fallback_path || "");
       return {
         id: `node-${index + 1}`,
         text: line,

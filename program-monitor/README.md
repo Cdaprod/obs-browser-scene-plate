@@ -122,8 +122,8 @@ Ways to import:
 - Send `postMessage` payload with `type: "CDAPROD_PROGRAM_MONITOR_ASSET_SELECTION"`, `version: 1`, and `payload` containing `items[]` or `asset_ids[]`.
 
 Supported assembly modes:
-- `sequence`: sorts by `creation_time` and appends clips end-to-end.
-- `multicam`: groups clips by `origin`, aligns by earliest `creation_time`, and places each origin on a separate track.
+- `sequence`: sorts by `timeline.anchor_time` / `creation_time` and appends clips end-to-end using best-available duration facts.
+- `multicam`: groups clips by `origin`, aligns by earliest `timeline.anchor_time` (fallback to `creation_time`), and places each origin on a stable track map.
 
 Example payload:
 
@@ -138,6 +138,8 @@ Example payload:
 ```
 
 Assembly metadata is saved as `assembly_spec` in project timeline payloads for reproducibility.
+
+Derive status is shown as `Derived clips: X/Y resolved` (including missing-anchor counts) and the assembly summary now displays origin→track mapping.
 
 ### OTIO export helper (artifact generation)
 

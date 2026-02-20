@@ -59,7 +59,11 @@ function mergeResult(entry, payload, source) {
     origin: payload?.origin || "unknown",
     orientation: payload?.orientation || null,
     canonicalName: payload?.canonical_name || "",
-    relativePath: payload?.relative_path || ""
+    relativePath: payload?.relative_path || "",
+    creationTime: payload?.timeline?.anchor_time || payload?.timestamps?.creation_time || "",
+    timeline: payload?.timeline || null,
+    facts: payload?.facts || null,
+    sha256: payload?.sha256 || (entry.assetId ? entry.assetId.replace(/^sha256:/, "") : "")
   };
 }
 
