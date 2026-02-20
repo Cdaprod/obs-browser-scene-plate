@@ -16,7 +16,7 @@ import {
 import { resolveMediaDurationSeconds } from "./media-duration.js";
 import { resolveMediaEntries } from "./media-registry.js";
 import { importFromOtio } from "./timeline/otio_import.js";
-import { buildAssembledClips, clipsToImportNodes, buildAssemblySpec } from "./timeline/assembly.js";
+import { buildAssembledClips, clipsToImportNodes, buildAssemblySpec, summarizeAssembledClips } from "./timeline/assembly.js";
 import { buildOtioTimeline } from "./timeline/otio_export.js";
 
 const STORAGE_KEY = "program-monitor.timeline.v1";
@@ -1889,7 +1889,76 @@ function exportJSON() {
 }
 
 
-function applyAssembledSelection(payload, { mode = "sequence", source = "manual" } = {}) {
+async function enrichAssemblyPayloadWithRegistry(payload) {
+  const incoming = Array.isArray(payload?.items) ? payload.items : [];
+  const assetEntries = incoming
+    .map((item) => ({
+      assetId: String(item?.asset_id || item?.sha256 || "").trim().toLowerCase(),
+      fallbackPath: item?.fallback_path || item?.relative_path || item?.url || item?.stream_url || ""
+    }))
+    .filter((entry) => /^sha256:[a-f0-9]{64}$/i.test(entry.assetId));
+
+  if (!assetEntries.length) {
+    return payload;
+  }
+
+  const resolved = await resolveMediaEntries(
+    assetEntries.map((entry) => ({ input: entry.assetId, fallbackPath: entry.fallbackPath })),
+    { env: window, cache: mediaRegistryCache, cacheTtlMs: MEDIA_REGISTRY_CACHE_TTL_MS }
+  );
+  const byAsset = new Map(resolved.map((entry) => [entry.assetId, entry]));
+
+  const items = incoming.map((item) => {
+    const key = String(item?.asset_id || item?.sha256 || "").trim().toLowerCase();
+    const enriched = byAsset.get(key);
+    if (!enriched) {
+      return item;
+    }
+    return {
+      ...item,
+      asset_id: key,
+      sha256: enriched.sha256 || String(item?.sha256 || "").trim().toLowerCase(),
+      origin: enriched.origin || item?.origin || "unknown",
+      creation_time: enriched.creationTime || item?.creation_time || "",
+      timeline: enriched.timeline || item?.timeline || null,
+      facts: enriched.facts || item?.facts || null,
+      url: enriched.finalMediaUrl || item?.url || item?.stream_url || "",
+      fallback_path: item?.fallback_path || enriched.relativePath || ""
+    };
+  });
+
+  return { ...payload, items };
+}
+
+async function applyAssembledSelection(payload, { mode = "sequence", source = "manual" } = {}) {
+  const enrichedPayload = await enrichAssemblyPayloadWithRegistry(payload);
+  const clips = buildAssembledClips(enrichedPayload, { mode });
+  const summary = summarizeAssembledClips(clips);
+  const nodes = clipsToImportNodes(clips);
+  if (!nodes.length) {
+    throw new Error("No valid assets found in selected payload");
+  }
+  state.nodes = nodes;
+  state.derivedClips = clips;
+  state.derivedResolved = { resolved: summary.total - summary.missingAnchor, total: summary.total };
+  state.activeIndex = 0;
+  state.selectedIndex = null;
+  state.validationResults = [];
+  state.assemblySpec = {
+    ...buildAssemblySpec(enrichedPayload, { mode }),
+    source,
+    track_map: summary.trackMap,
+    missing_anchor: summary.missingAnchor,
+    missing_duration: summary.missingDuration
+  };
+  if (elements.assemblySummary) {
+    const mapText = summary.trackMap.map((entry) => `${entry.origin}->T${entry.track}`).join(", ") || "none";
+    elements.assemblySummary.textContent = `Assembly: ${state.assemblySpec.mode} · clips: ${clips.length} · tracks: ${mapText}`;
+  }
+  renderDerivedStatus();
+}
+
+
   const clips = buildAssembledClips(payload, { mode });
   const nodes = clipsToImportNodes(clips);
   if (!nodes.length) {
@@ -1916,11 +1985,14 @@ function installAssetSelectionListener() {
     }
     try {
       const mode = String(data.mode || elements.assemblyMode?.value || "sequence").toLowerCase();
-      applyAssembledSelection(data.payload || data, { mode, source: "postmessage" });
-      renderNodes();
-      primeNode(state.activeIndex).catch(() => {});
-      saveLocal();
-      setMessage(`Imported selected assets (${mode})`);
+      applyAssembledSelection(data.payload || data, { mode, source: "postmessage" }).then(() => {
+        renderNodes();
+        primeNode(state.activeIndex).catch(() => {});
+        saveLocal();
+        setMessage(`Imported selected assets (${mode})`);
+      }).catch((error) => {
+        setMessage(`Selection import failed: ${error?.message || error}`);
+      });
       try {
         ev.source?.postMessage({ type: "CDAPROD_PROGRAM_MONITOR_ACK", ok: true, messageId: data.messageId || "" }, ev.origin || "*");
       } catch (error) {
@@ -2031,7 +2103,8 @@ function renderDerivedStatus() {
   }
   const resolved = Number.isFinite(state.derivedResolved?.resolved) ? state.derivedResolved.resolved : 0;
   const total = Number.isFinite(state.derivedResolved?.total) ? state.derivedResolved.total : 0;
-  elements.assemblyDerived.textContent = `Derived clips: ${resolved}/${total} resolved`;
+  const missing = Math.max(0, total - resolved);
+  elements.assemblyDerived.textContent = `Derived clips: ${resolved}/${total} resolved${missing ? ` · missing anchor: ${missing}` : ""}`;
 }
 
 async function autoDeriveLegacyClips({ force = false } = {}) {
@@ -2050,8 +2123,16 @@ async function autoDeriveLegacyClips({ force = false } = {}) {
   if (Array.isArray(payload.items) && payload.items.length) {
     const mode = String(elements.assemblyMode?.value || "sequence").toLowerCase();
     state.derivedClips = buildAssembledClips(payload, { mode });
+    const summary = summarizeAssembledClips(state.derivedClips);
+    state.derivedResolved = { resolved: summary.total - summary.missingAnchor, total: summary.total };
     if (!state.assemblySpec) {
-      state.assemblySpec = { ...buildAssemblySpec(payload, { mode }), source: "auto-derive-on-load" };
+      state.assemblySpec = {
+        ...buildAssemblySpec(payload, { mode }),
+        source: "auto-derive-on-load",
+        track_map: summary.trackMap,
+        missing_anchor: summary.missingAnchor,
+        missing_duration: summary.missingDuration
+      };
     }
   } else {
     state.derivedClips = [];
@@ -2068,7 +2149,7 @@ async function importJSONFile(file) {
     timeline = importFromOtio(payload);
   } else if (payload && (Array.isArray(payload.asset_ids) || Array.isArray(payload.items))) {
     const mode = String(payload.mode || elements.assemblyMode?.value || "sequence").toLowerCase();
-    applyAssembledSelection(payload, { mode, source: "file-import" });
+    await applyAssembledSelection(payload, { mode, source: "file-import" });
     timeline = { nodes: state.nodes, activeIndex: 0 };
   } else {
     timeline = normalizeProjectTimelinePayload(payload);
@@ -3826,11 +3907,15 @@ function bindUIOnce() {
         }
         const payload = JSON.parse(raw);
         const mode = String(elements.assemblyMode?.value || "sequence").toLowerCase();
-        applyAssembledSelection(payload, { mode, source: "panel" });
-        renderNodes();
-        primeNode(state.activeIndex).catch(() => {});
-        saveLocal();
-        setMessage(`Assembled ${state.nodes.length} nodes from selected assets.`);
+        applyAssembledSelection(payload, { mode, source: "panel" }).then(() => {
+          renderNodes();
+          primeNode(state.activeIndex).catch(() => {});
+          saveLocal();
+          setMessage(`Assembled ${state.nodes.length} nodes from selected assets.`);
+        }).catch((error) => {
+          setMessage(`Assembly failed: ${error?.message || error}`);
+        });
+        return;
       } catch (error) {
         setMessage(`Assembly failed: ${error?.message || error}`);
       }
@@ -3846,11 +3931,12 @@ function bindUIOnce() {
           setMessage("No derivable media-sync assets found in current nodes.");
           return;
         }
-        applyAssembledSelection(payload, { mode, source: "derive-current-project" });
+        await applyAssembledSelection(payload, { mode, source: "derive-current-project" });
         renderNodes();
         await primeNode(state.activeIndex);
         saveLocal();
-        setMessage(`Resolved ${payload.items.length} assets and rebuilt assembly.`);
+        const summary = summarizeAssembledClips(state.derivedClips);
+        setMessage(`Resolved ${summary.total - summary.missingAnchor}/${summary.total} assets and rebuilt assembly.`);
       } catch (error) {
         setMessage(`Derive failed: ${error?.message || error}`);
       }

@@ -49,3 +49,5 @@
 
 - Program Monitor now includes a `Repair Index` action that rebuilds project index state from discovered project files via render-api.
 - Legacy node-only projects now auto-attempt derive on load, reporting `Derived clips: X/Y resolved` with a retry control.
+
+- Program Monitor assembly now prioritizes `timeline.anchor_time`/duration facts when available and surfaces stable origin→track mappings plus missing-anchor derive counts.

@@ -41,7 +41,9 @@ test("resolveMediaEntries uses batch endpoint and returns stream URL", async () 
               asset_id: `sha256:${sha}`,
               urls: { stream: "https://cdn.local/stream.mp4", download: "https://cdn.local/download.mp4" },
               origin: "obs",
-              orientation: { rotation: 0, normalized: true }
+              orientation: { rotation: 0, normalized: true },
+              timeline: { anchor_time: "2026-01-01T00:00:00.000Z", anchor_source: "quicktime_creation_time", confidence: 0.9 },
+              facts: { duration_seconds: 12.5 }
             }
           },
           missing: []
@@ -65,6 +67,8 @@ test("resolveMediaEntries uses batch endpoint and returns stream URL", async () 
   assert.equal(entry.finalMediaUrl, "https://cdn.local/stream.mp4");
   assert.equal(entry.resolvedVia, "registry");
   assert.equal(entry.origin, "obs");
+  assert.equal(entry.creationTime, "2026-01-01T00:00:00.000Z");
+  assert.equal(entry.facts.duration_seconds, 12.5);
 });
 
 test("resolveMediaEntries falls back on failure/timeout behavior", async () => {

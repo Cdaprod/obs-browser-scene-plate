@@ -221,3 +221,11 @@ test("projects panel includes repair index and derive status controls", () => {
   assert.ok(source.includes("/api/projects:index-repair"));
   assert.ok(source.includes("autoDeriveLegacyClips"));
 });
+
+
+test("export semantics note and derived summary details are present", () => {
+  assert.ok(html.includes("Project JSON = editor state"));
+  assert.ok(html.includes("OTIO = timeline interchange (clips/tracks)"));
+  assert.ok(source.includes("missing anchor"));
+  assert.ok(source.includes("track_map"));
+});
