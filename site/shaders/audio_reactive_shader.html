@@ -1,0 +1,240 @@
+<!doctype html>
+<!-- Default URL+Parameters: audio_reactive_shader.html?fft=1024&smooth=0.85&gain=1.0 -->
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Audio Reactive Shader</title>
+  <style>
+    html, body { margin:0; height:100%; overflow:hidden; background:#000; }
+    canvas { width:100%; height:100%; display:block; }
+    .hud {
+      position:fixed; left:12px; top:12px; color:#fff; font:12px/1.4 system-ui;
+      background:rgba(0,0,0,.4); padding:10px 12px; border-radius:10px;
+    }
+    button { font:inherit; padding:6px 10px; }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div class="hud">
+    <button id="start">Enable Mic</button>
+    <div id="stats">bass=0 mid=0 treble=0 rms=0</div>
+  </div>
+
+<script>
+(() => {
+  const qs = new URLSearchParams(location.search);
+  const FFT = Math.max(128, Math.min(32768, parseInt(qs.get('fft') || '1024', 10)));
+  const SMOOTH = Math.max(0, Math.min(0.99, parseFloat(qs.get('smooth') || '0.85')));
+  const GAIN = Math.max(0.1, Math.min(10.0, parseFloat(qs.get('gain') || '1.0')));
+
+  const canvas = document.getElementById('c');
+  const gl = canvas.getContext('webgl', { antialias:false, alpha:true });
+  if (!gl) throw new Error('WebGL not supported');
+
+  function resize() {
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    canvas.width = Math.floor(innerWidth * dpr);
+    canvas.height = Math.floor(innerHeight * dpr);
+    gl.viewport(0, 0, canvas.width, canvas.height);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  const vs = `
+    attribute vec2 a_pos;
+    varying vec2 v_uv;
+    void main() {
+      v_uv = a_pos * 0.5 + 0.5;
+      gl_Position = vec4(a_pos, 0.0, 1.0);
+    }
+  `;
+
+  const fs = `
+    precision mediump float;
+    varying vec2 v_uv;
+    uniform vec2 u_res;
+    uniform float u_time;
+    uniform float u_bass;
+    uniform float u_mid;
+    uniform float u_treble;
+    uniform float u_rms;
+
+    // simple hash noise
+    float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
+
+    void main(){
+      vec2 uv = v_uv;
+      vec2 p = (uv * 2.0 - 1.0);
+      p.x *= u_res.x / u_res.y;
+
+      // audio-driven wobble
+      float wob = (u_bass * 0.9 + u_mid * 0.4) * 0.08;
+      uv += vec2(
+        sin(u_time*1.2 + p.y*6.0) * wob,
+        cos(u_time*0.9 + p.x*5.0) * wob
+      );
+
+      // scanline intensity driven by treble
+      float scan = 0.5 + 0.5*sin((uv.y * u_res.y) * 0.03 + u_time*8.0);
+      scan = mix(0.8, 1.25, scan) * (1.0 + u_treble * 0.8);
+
+      // radial glow driven by RMS
+      float r = length(p);
+      float glow = exp(-r*2.2) * (0.4 + u_rms * 2.0);
+
+      // base color shifting with bands
+      vec3 col = vec3(
+        0.08 + u_bass * 1.2,
+        0.10 + u_mid * 1.0,
+        0.12 + u_treble * 1.4
+      );
+
+      // grain increases with treble
+      float g = hash(uv * u_res + u_time) - 0.5;
+      col += g * (0.03 + u_treble * 0.08);
+
+      col *= scan;
+      col += glow;
+
+      gl_FragColor = vec4(col, 1.0);
+    }
+  `;
+
+  function compile(type, src){
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+      throw new Error(gl.getShaderInfoLog(sh) || 'shader compile failed');
+    }
+    return sh;
+  }
+
+  const prog = gl.createProgram();
+  gl.attachShader(prog, compile(gl.VERTEX_SHADER, vs));
+  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+    throw new Error(gl.getProgramInfoLog(prog) || 'program link failed');
+  }
+  gl.useProgram(prog);
+
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+    -1,-1,  1,-1, -1, 1,
+    -1, 1,  1,-1,  1, 1
+  ]), gl.STATIC_DRAW);
+
+  const a_pos = gl.getAttribLocation(prog, 'a_pos');
+  gl.enableVertexAttribArray(a_pos);
+  gl.vertexAttribPointer(a_pos, 2, gl.FLOAT, false, 0, 0);
+
+  const u_res    = gl.getUniformLocation(prog, 'u_res');
+  const u_time   = gl.getUniformLocation(prog, 'u_time');
+  const u_bass   = gl.getUniformLocation(prog, 'u_bass');
+  const u_mid    = gl.getUniformLocation(prog, 'u_mid');
+  const u_treble = gl.getUniformLocation(prog, 'u_treble');
+  const u_rms    = gl.getUniformLocation(prog, 'u_rms');
+
+  // audio
+  let analyser = null;
+  let freq = null;
+  let audioCtx = null;
+
+  const statsEl = document.getElementById('stats');
+  const startBtn = document.getElementById('start');
+
+  function avgRange(arr, lo, hi) {
+    lo = Math.max(0, lo|0); hi = Math.min(arr.length-1, hi|0);
+    let s = 0, n = 0;
+    for (let i = lo; i <= hi; i++) { s += arr[i]; n++; }
+    return n ? s / n : 0;
+  }
+
+  function computeRMS(timeDomain) {
+    // timeDomain values are 0..255, center at 128
+    let s = 0;
+    for (let i = 0; i < timeDomain.length; i++) {
+      const v = (timeDomain[i] - 128) / 128;
+      s += v * v;
+    }
+    return Math.sqrt(s / timeDomain.length);
+  }
+
+  async function enableMic() {
+    if (analyser) return;
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const stream = await navigator.mediaDevices.getUserMedia({ audio:true, video:false });
+    const src = audioCtx.createMediaStreamSource(stream);
+
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = FFT;
+    analyser.smoothingTimeConstant = SMOOTH;
+
+    src.connect(analyser);
+    freq = new Uint8Array(analyser.frequencyBinCount);
+
+    // optional gain control
+    const gainNode = audioCtx.createGain();
+    gainNode.gain.value = GAIN;
+    src.connect(gainNode);
+    gainNode.connect(analyser);
+
+    startBtn.textContent = 'Mic Enabled';
+    startBtn.disabled = true;
+  }
+
+  startBtn.addEventListener('click', () => enableMic().catch(err => {
+    console.error(err);
+    alert('Mic permission failed: ' + err.message);
+  }));
+
+  const timeDomain = new Uint8Array(FFT);
+
+  let t0 = performance.now();
+  function frame(now){
+    const t = (now - t0) / 1000;
+
+    gl.uniform2f(u_res, canvas.width, canvas.height);
+    gl.uniform1f(u_time, t);
+
+    let bass=0, mid=0, treble=0, rms=0;
+
+    if (analyser) {
+      analyser.getByteFrequencyData(freq);
+      analyser.getByteTimeDomainData(timeDomain);
+
+      // crude band splits (tweak per fftSize/sampleRate)
+      const n = freq.length;
+      bass   = avgRange(freq, 0, Math.floor(n * 0.12)) / 255;
+      mid    = avgRange(freq, Math.floor(n * 0.12), Math.floor(n * 0.45)) / 255;
+      treble = avgRange(freq, Math.floor(n * 0.45), n - 1) / 255;
+
+      rms = Math.min(1.0, computeRMS(timeDomain));
+
+      // compress a bit so it feels punchy
+      bass = Math.pow(bass, 0.7);
+      mid  = Math.pow(mid, 0.85);
+      treble = Math.pow(treble, 0.9);
+      rms  = Math.pow(rms, 0.7);
+    }
+
+    gl.uniform1f(u_bass, bass);
+    gl.uniform1f(u_mid, mid);
+    gl.uniform1f(u_treble, treble);
+    gl.uniform1f(u_rms, rms);
+
+    statsEl.textContent =
+      `bass=${bass.toFixed(3)} mid=${mid.toFixed(3)} treble=${treble.toFixed(3)} rms=${rms.toFixed(3)}`;
+
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

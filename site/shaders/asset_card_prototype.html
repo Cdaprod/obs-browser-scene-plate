@@ -1,0 +1,964 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Asset Card · Prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0a0a0c;
+    --surface: #111116;
+    --border: #1e1e28;
+    --border-hover: #3a3a50;
+    --text-primary: #e8e8f0;
+    --text-dim: #5a5a70;
+    --text-mid: #9090a8;
+    --accent: #4af0c0;
+    --accent-dim: rgba(74, 240, 192, 0.12);
+    --video-badge: #2060ff;
+    --audio-badge: #9020ff;
+    --image-badge: #20a0ff;
+    --card-w: 280px;
+    --card-ratio: 9/16;
+  }
+
+  body {
+    background: var(--bg);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--text-primary);
+    gap: 48px;
+    padding: 48px 24px;
+  }
+
+  /* ── Page header ── */
+  .page-header {
+    text-align: center;
+  }
+  .page-header h1 {
+    font-family: 'Syne', sans-serif;
+    font-weight: 800;
+    font-size: 11px;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+  .page-header p {
+    font-size: 10px;
+    color: var(--text-dim);
+    margin-top: 6px;
+    letter-spacing: 0.1em;
+  }
+
+  /* ── Card shell ── */
+  .card {
+    position: relative;
+    width: var(--card-w);
+    border-radius: 6px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    overflow: hidden;
+    cursor: pointer;
+    transition: border-color 0.3s, box-shadow 0.3s, transform 0.3s;
+    user-select: none;
+  }
+  .card:hover {
+    border-color: var(--border-hover);
+    box-shadow: 0 8px 48px rgba(0,0,0,0.7), 0 0 0 1px rgba(74,240,192,0.06);
+    transform: translateY(-2px);
+  }
+  .card.selected {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent), 0 8px 48px rgba(74,240,192,0.15);
+  }
+
+  /* ── Canvas / media area ── */
+  .card-media {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16/9;
+    background: #080810;
+    overflow: hidden;
+  }
+  .card-media canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  /* Audio placeholder */
+  .audio-placeholder {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #0d0d18;
+  }
+  .audio-waveform {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    height: 40px;
+  }
+  .audio-waveform span {
+    display: block;
+    width: 3px;
+    background: var(--audio-badge);
+    border-radius: 2px;
+    opacity: 0.6;
+    animation: wave 1.2s ease-in-out infinite;
+  }
+  .audio-waveform span:nth-child(1)  { height: 18px; animation-delay: 0s; }
+  .audio-waveform span:nth-child(2)  { height: 28px; animation-delay: 0.1s; }
+  .audio-waveform span:nth-child(3)  { height: 36px; animation-delay: 0.2s; }
+  .audio-waveform span:nth-child(4)  { height: 24px; animation-delay: 0.3s; }
+  .audio-waveform span:nth-child(5)  { height: 40px; animation-delay: 0.15s; }
+  .audio-waveform span:nth-child(6)  { height: 30px; animation-delay: 0.05s; }
+  .audio-waveform span:nth-child(7)  { height: 20px; animation-delay: 0.25s; }
+  .audio-waveform span:nth-child(8)  { height: 34px; animation-delay: 0.35s; }
+  .audio-waveform span:nth-child(9)  { height: 22px; animation-delay: 0.1s; }
+  .audio-waveform span:nth-child(10) { height: 16px; animation-delay: 0.2s; }
+  @keyframes wave {
+    0%, 100% { transform: scaleY(1); opacity: 0.5; }
+    50% { transform: scaleY(1.4); opacity: 1; }
+  }
+  .card:not(.playing) .audio-waveform span { animation-play-state: paused; }
+
+  /* ── Overlay layers ── */
+  .overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+
+  /* Gradient scrim at bottom for text legibility */
+  .scrim {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      to top,
+      rgba(0,0,0,0.92) 0%,
+      rgba(0,0,0,0.4) 40%,
+      transparent 70%
+    );
+    pointer-events: none;
+  }
+
+  /* Hover shimmer border */
+  .card::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    background: linear-gradient(135deg, rgba(74,240,192,0.15), transparent 50%) border-box;
+    -webkit-mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: destination-out;
+    mask-composite: exclude;
+    opacity: 0;
+    transition: opacity 0.3s;
+    pointer-events: none;
+  }
+  .card:hover::after { opacity: 1; }
+
+  /* ── Type badge ── */
+  .badge-type {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 9px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: lowercase;
+    padding: 3px 7px;
+    border-radius: 3px;
+    backdrop-filter: blur(8px);
+    z-index: 10;
+  }
+  .badge-type.video  { background: rgba(32,96,255,0.3);  border: 1px solid rgba(32,96,255,0.5);  color: #80b0ff; }
+  .badge-type.audio  { background: rgba(144,32,255,0.3); border: 1px solid rgba(144,32,255,0.5); color: #c080ff; }
+  .badge-type.image  { background: rgba(32,160,255,0.3); border: 1px solid rgba(32,160,255,0.5); color: #80d0ff; }
+
+  /* ── Checkbox ── */
+  .checkbox {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    border: 1.5px solid rgba(255,255,255,0.25);
+    background: rgba(0,0,0,0.4);
+    backdrop-filter: blur(8px);
+    cursor: pointer;
+    pointer-events: all;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: border-color 0.2s, background 0.2s;
+  }
+  .checkbox:hover { border-color: var(--accent); }
+  .card.selected .checkbox {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .checkbox svg { opacity: 0; transition: opacity 0.15s; }
+  .card.selected .checkbox svg { opacity: 1; }
+
+  /* ── Play button overlay ── */
+  .play-btn {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.25s;
+    pointer-events: none;
+    z-index: 5;
+  }
+  .card:hover .play-btn { opacity: 1; }
+  .card.playing .play-btn { opacity: 0; }
+  .play-btn-inner {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: rgba(0,0,0,0.6);
+    border: 1.5px solid rgba(255,255,255,0.5);
+    backdrop-filter: blur(12px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.2s, background 0.2s;
+  }
+  .card:hover .play-btn-inner { transform: scale(1.08); background: rgba(0,0,0,0.75); }
+  .play-btn-inner svg { margin-left: 3px; }
+
+  /* ── Hover preview indicator ── */
+  .preview-pill {
+    position: absolute;
+    bottom: 8px;
+    right: 8px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 8px;
+    letter-spacing: 0.1em;
+    padding: 2px 6px;
+    border-radius: 2px;
+    background: rgba(74,240,192,0.15);
+    border: 1px solid rgba(74,240,192,0.3);
+    color: var(--accent);
+    opacity: 0;
+    transition: opacity 0.2s;
+    pointer-events: none;
+    z-index: 10;
+    text-transform: uppercase;
+  }
+  .card:hover:not(.playing) .preview-pill { opacity: 1; }
+  .card.playing .preview-pill {
+    opacity: 1;
+    content: 'PLAYING';
+    background: rgba(255,60,60,0.15);
+    border-color: rgba(255,60,60,0.3);
+    color: #ff6060;
+  }
+
+  /* ── Duration badge ── */
+  .duration {
+    position: absolute;
+    bottom: 8px;
+    left: 8px;
+    font-size: 9px;
+    color: rgba(255,255,255,0.6);
+    letter-spacing: 0.05em;
+    z-index: 10;
+    pointer-events: none;
+  }
+  .card.playing .duration { color: rgba(255,255,255,0.9); }
+
+  /* ── Metadata footer ── */
+  .card-meta {
+    padding: 10px 10px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    position: relative;
+  }
+
+  .meta-size {
+    font-size: 9px;
+    color: var(--text-dim);
+    letter-spacing: 0.08em;
+  }
+
+  .meta-filename {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    letter-spacing: 0.01em;
+  }
+
+  .meta-path {
+    font-size: 9px;
+    color: var(--text-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    letter-spacing: 0.02em;
+  }
+
+  .meta-bottom {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 4px;
+  }
+
+  /* Debug/RV tag */
+  .meta-tag {
+    font-size: 8px;
+    padding: 2px 5px;
+    border-radius: 2px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.08);
+    color: var(--text-dim);
+    letter-spacing: 0.06em;
+  }
+
+  /* Shader selector */
+  .shader-select {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 8px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    color: var(--text-mid);
+    border-radius: 2px;
+    padding: 2px 4px;
+    cursor: pointer;
+    outline: none;
+    letter-spacing: 0.04em;
+  }
+  .shader-select:hover { border-color: rgba(74,240,192,0.3); color: var(--accent); }
+
+  /* ── State bar at very bottom of card ── */
+  .state-bar {
+    height: 2px;
+    width: 0%;
+    background: linear-gradient(90deg, var(--accent), #20c0ff);
+    transition: width 0.3s;
+    border-radius: 0 2px 2px 0;
+  }
+  .card.selected .state-bar { width: 100%; }
+  .card.playing .state-bar { width: 60%; background: linear-gradient(90deg, #ff4060, #ff8020); }
+
+  /* ── Demo controls ── */
+  .demo-controls {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .demo-btn {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    padding: 7px 14px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-mid);
+    cursor: pointer;
+    transition: border-color 0.2s, color 0.2s;
+    text-transform: uppercase;
+  }
+  .demo-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .demo-btn.active { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+
+  .demo-label {
+    font-size: 9px;
+    color: var(--text-dim);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    text-align: center;
+  }
+
+  /* ── URL input for live testing ── */
+  .url-row {
+    display: flex;
+    gap: 8px;
+    width: var(--card-w);
+  }
+  .url-row input {
+    flex: 1;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    padding: 7px 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--text-primary);
+    outline: none;
+    letter-spacing: 0.02em;
+  }
+  .url-row input:focus { border-color: var(--border-hover); }
+  .url-row button {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    padding: 7px 12px;
+    background: var(--accent-dim);
+    border: 1px solid rgba(74,240,192,0.25);
+    color: var(--accent);
+    border-radius: 3px;
+    cursor: pointer;
+    letter-spacing: 0.05em;
+    white-space: nowrap;
+  }
+  .url-row button:hover { background: rgba(74,240,192,0.2); }
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1>Asset Card · Prototype</h1>
+  <p>One card · WebGL shader · dark/cinematic</p>
+</div>
+
+<!-- ══════════════ THE CARD ══════════════ -->
+<div class="card" id="card">
+
+  <!-- Media area -->
+  <div class="card-media" id="cardMedia">
+    <canvas id="glCanvas"></canvas>
+
+    <!-- Audio placeholder (shown for audio type) -->
+    <div class="audio-placeholder" id="audioPlaceholder" style="display:none; position:absolute; inset:0;">
+      <div class="audio-waveform">
+        <span></span><span></span><span></span><span></span><span></span>
+        <span></span><span></span><span></span><span></span><span></span>
+      </div>
+    </div>
+
+    <!-- Scrim -->
+    <div class="scrim"></div>
+
+    <!-- Type badge -->
+    <div class="badge-type video" id="typeBadge">video</div>
+
+    <!-- Checkbox -->
+    <div class="checkbox" id="checkbox" onclick="toggleSelect(event)">
+      <svg width="10" height="8" viewBox="0 0 10 8" fill="none">
+        <path d="M1 4L3.5 6.5L9 1" stroke="#0a0a0c" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+
+    <!-- Play button -->
+    <div class="play-btn" id="playBtn">
+      <div class="play-btn-inner">
+        <svg width="14" height="16" viewBox="0 0 14 16" fill="white">
+          <path d="M1 1L13 8L1 15V1Z"/>
+        </svg>
+      </div>
+    </div>
+
+    <!-- Preview pill -->
+    <div class="preview-pill" id="previewPill">preview</div>
+
+    <!-- Duration -->
+    <div class="duration" id="durationEl"></div>
+  </div>
+
+  <!-- Metadata -->
+  <div class="card-meta">
+    <div class="meta-size" id="metaSize">9.1 MB</div>
+    <div class="meta-filename" id="metaFilename">2026-01-10_18-47-37.mp4</div>
+    <div class="meta-path" id="metaPath">ingest/originals/2026-01-10</div>
+    <div class="meta-bottom">
+      <span class="meta-tag" id="debugTag">RV--</span>
+      <select class="shader-select" id="shaderSelect" onchange="switchShader()">
+        <option value="passthrough">passthrough</option>
+        <option value="cinematic">cinematic</option>
+        <option value="grayscale">grayscale</option>
+        <option value="vignette">vignette</option>
+        <option value="scanlines">scanlines</option>
+        <option value="chromatic">chromatic ab.</option>
+        <option value="noir">noir</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- State bar -->
+  <div class="state-bar" id="stateBar"></div>
+</div>
+
+<!-- ══════════════ DEMO CONTROLS ══════════════ -->
+<div class="demo-label">simulate asset type</div>
+<div class="demo-controls">
+  <button class="demo-btn active" onclick="setType('video')">Video</button>
+  <button class="demo-btn" onclick="setType('image')">Image</button>
+  <button class="demo-btn" onclick="setType('audio')">Audio</button>
+</div>
+
+<div class="demo-label">load your media</div>
+<div class="url-row">
+  <input type="text" id="urlInput" placeholder="http://192.168.0.25:8787/media/…"/>
+  <button onclick="loadUrl()">Load</button>
+</div>
+<div class="url-row" style="justify-content:center;">
+  <input type="file" id="filePicker" accept="video/*,image/*,audio/*" onchange="loadFile()" style="font-family:monospace;font-size:10px;color:#5a5a70;width:100%;"/>
+</div>
+
+<!-- Hidden video -->
+<video id="video" loop playsinline muted style="display:none"></video>
+<!-- Hidden image -->
+<img id="imgEl" style="display:none" crossorigin="anonymous"/>
+
+<script>
+// ═══════════════════════════════════════════════════════
+// SHADERS
+// ═══════════════════════════════════════════════════════
+
+const VERT = `
+  attribute vec2 a_pos;
+  attribute vec2 a_uv;
+  varying vec2 v_uv;
+  void main() { gl_Position = vec4(a_pos, 0.0, 1.0); v_uv = a_uv; }
+`;
+
+const FRAGS = {
+  passthrough: `
+    precision mediump float;
+    uniform sampler2D u_tex;
+    varying vec2 v_uv;
+    void main() { gl_FragColor = texture2D(u_tex, v_uv); }
+  `,
+  cinematic: `
+    precision mediump float;
+    uniform sampler2D u_tex;
+    uniform float u_time;
+    uniform float u_hover;
+    varying vec2 v_uv;
+    vec3 grades(vec3 c) {
+      // Lift shadows slightly blue, push highlights warm
+      c = pow(c, vec3(1.08));
+      c.r = c.r * 1.05 + 0.01;
+      c.b = c.b * 0.95 + 0.03;
+      // S-curve contrast
+      c = c * c * (3.0 - 2.0 * c);
+      return c;
+    }
+    void main() {
+      vec4 col = texture2D(u_tex, v_uv);
+      vec3 c = grades(col.rgb);
+      // Subtle saturation boost on hover
+      float lum = dot(c, vec3(0.299,0.587,0.114));
+      float sat = 1.0 + u_hover * 0.3;
+      c = mix(vec3(lum), c, sat);
+      gl_FragColor = vec4(c, col.a);
+    }
+  `,
+  grayscale: `
+    precision mediump float;
+    uniform sampler2D u_tex;
+    uniform float u_hover;
+    varying vec2 v_uv;
+    void main() {
+      vec4 c = texture2D(u_tex, v_uv);
+      float g = dot(c.rgb, vec3(0.299,0.587,0.114));
+      vec3 col = mix(vec3(g), c.rgb, u_hover * 0.6);
+      gl_FragColor = vec4(col, c.a);
+    }
+  `,
+  vignette: `
+    precision mediump float;
+    uniform sampler2D u_tex;
+    uniform float u_hover;
+    varying vec2 v_uv;
+    void main() {
+      vec4 c = texture2D(u_tex, v_uv);
+      vec2 uv = v_uv - 0.5;
+      float v = 1.0 - dot(uv * (1.6 - u_hover * 0.4), uv * (1.6 - u_hover * 0.4));
+      v = clamp(v, 0.0, 1.0);
+      gl_FragColor = vec4(c.rgb * v, c.a);
+    }
+  `,
+  scanlines: `
+    precision mediump float;
+    uniform sampler2D u_tex;
+    uniform float u_time;
+    uniform vec2 u_res;
+    varying vec2 v_uv;
+    void main() {
+      vec4 c = texture2D(u_tex, v_uv);
+      float line = sin(v_uv.y * u_res.y * 2.5 + u_time * 2.0) * 0.06 + 0.94;
+      float noise = fract(sin(dot(v_uv + u_time * 0.01, vec2(12.9,78.2))) * 43758.5) * 0.03;
+      gl_FragColor = vec4(c.rgb * line + noise, c.a);
+    }
+  `,
+  chromatic: `
+    precision mediump float;
+    uniform sampler2D u_tex;
+    uniform float u_hover;
+    varying vec2 v_uv;
+    void main() {
+      float s = 0.006 * (0.3 + u_hover * 0.7);
+      vec2 d = (v_uv - 0.5) * s;
+      float r = texture2D(u_tex, v_uv + d).r;
+      float g = texture2D(u_tex, v_uv).g;
+      float b = texture2D(u_tex, v_uv - d).b;
+      gl_FragColor = vec4(r, g, b, 1.0);
+    }
+  `,
+  noir: `
+    precision mediump float;
+    uniform sampler2D u_tex;
+    uniform float u_time;
+    varying vec2 v_uv;
+    void main() {
+      vec4 c = texture2D(u_tex, v_uv);
+      float g = dot(c.rgb, vec3(0.299,0.587,0.114));
+      // High contrast, film grain
+      g = pow(g, 1.3);
+      g = g * 1.1 - 0.05;
+      float grain = fract(sin(dot(v_uv * 500.0 + u_time, vec2(127.1,311.7))) * 43758.5) * 0.06 - 0.03;
+      g = clamp(g + grain, 0.0, 1.0);
+      // Very slight warm shadow tint
+      vec3 col = vec3(g * 1.0, g * 0.96, g * 0.88);
+      gl_FragColor = vec4(col, c.a);
+    }
+  `,
+};
+
+// ═══════════════════════════════════════════════════════
+// WEBGL INIT
+// ═══════════════════════════════════════════════════════
+
+const canvas  = document.getElementById('glCanvas');
+const gl      = canvas.getContext('webgl');
+const video   = document.getElementById('video');
+const imgEl   = document.getElementById('imgEl');
+
+let program   = null;
+let texture   = null;
+let mediaType = 'video'; // video | image | audio | empty
+let isPlaying = false;
+let isHovered = false;
+let hoverVal  = 0;
+let animId    = null;
+let startTime = performance.now();
+
+// Resize canvas to match display size
+function resizeCanvas() {
+  const rect = canvas.getBoundingClientRect();
+  canvas.width  = rect.width  * devicePixelRatio;
+  canvas.height = rect.height * devicePixelRatio;
+}
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
+
+function compile(type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+
+function buildProgram(frag) {
+  const p = gl.createProgram();
+  gl.attachShader(p, compile(gl.VERTEX_SHADER, VERT));
+  gl.attachShader(p, compile(gl.FRAGMENT_SHADER, frag));
+  gl.linkProgram(p);
+  return p;
+}
+
+const pos = new Float32Array([-1,-1, 1,-1, -1,1, 1,1]);
+const uvs = new Float32Array([0,1,  1,1,  0,0, 1,0]);
+
+function setupBuffers(prog) {
+  const pb = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, pb);
+  gl.bufferData(gl.ARRAY_BUFFER, pos, gl.STATIC_DRAW);
+  const ap = gl.getAttribLocation(prog, 'a_pos');
+  gl.enableVertexAttribArray(ap);
+  gl.vertexAttribPointer(ap, 2, gl.FLOAT, false, 0, 0);
+
+  const ub = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, ub);
+  gl.bufferData(gl.ARRAY_BUFFER, uvs, gl.STATIC_DRAW);
+  const au = gl.getAttribLocation(prog, 'a_uv');
+  gl.enableVertexAttribArray(au);
+  gl.vertexAttribPointer(au, 2, gl.FLOAT, false, 0, 0);
+}
+
+function initTexture() {
+  texture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  // Default 1×1 black pixel so canvas isn't empty
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE,
+    new Uint8Array([8,8,12,255]));
+}
+
+function switchShader() {
+  const key = document.getElementById('shaderSelect').value;
+  if (program) gl.deleteProgram(program);
+  program = buildProgram(FRAGS[key]);
+  gl.useProgram(program);
+  setupBuffers(program);
+}
+
+// ═══════════════════════════════════════════════════════
+// RENDER LOOP
+// ═══════════════════════════════════════════════════════
+
+function render() {
+  animId = requestAnimationFrame(render);
+
+  // Smooth hover interpolation
+  hoverVal += (isHovered ? 1 : 0 - hoverVal) * 0.08;
+
+  // Upload new frame if video is playing
+  if (mediaType === 'video' && video.readyState >= video.HAVE_CURRENT_DATA) {
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+  }
+
+  // Draw
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.clearColor(0.03, 0.03, 0.05, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+
+  if (program) {
+    gl.useProgram(program);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+
+    const uTex = gl.getUniformLocation(program, 'u_tex');
+    gl.uniform1i(uTex, 0);
+
+    const uTime = gl.getUniformLocation(program, 'u_time');
+    if (uTime) gl.uniform1f(uTime, (performance.now() - startTime) / 1000);
+
+    const uHover = gl.getUniformLocation(program, 'u_hover');
+    if (uHover) gl.uniform1f(uHover, hoverVal);
+
+    const uRes = gl.getUniformLocation(program, 'u_res');
+    if (uRes) gl.uniform2f(uRes, canvas.width, canvas.height);
+
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// INTERACTIONS
+// ═══════════════════════════════════════════════════════
+
+const card = document.getElementById('card');
+
+card.addEventListener('mouseenter', () => { isHovered = true; startPreview(); });
+card.addEventListener('mouseleave', () => { isHovered = false; stopPreview(); });
+card.addEventListener('touchstart', () => { isHovered = true; }, { passive: true });
+
+card.addEventListener('click', (e) => {
+  if (e.target.closest('.checkbox')) return;
+  if (e.target.closest('.shader-select')) return;
+  togglePlay();
+});
+
+function toggleSelect(e) {
+  e.stopPropagation();
+  card.classList.toggle('selected');
+}
+
+function togglePlay() {
+  if (mediaType === 'audio' || mediaType === 'video') {
+    isPlaying ? pauseMedia() : playMedia();
+  }
+}
+
+// Hover preview — seek to 10% into the video
+let previewTimeout = null;
+function startPreview() {
+  if (mediaType !== 'video' || isPlaying) return;
+  previewTimeout = setTimeout(() => {
+    if (video.src && video.readyState >= 1 && video.duration) {
+      video.currentTime = video.duration * 0.1;
+      video.play().catch(() => {});
+      document.getElementById('previewPill').textContent = 'preview';
+    }
+  }, 200);
+}
+function stopPreview() {
+  clearTimeout(previewTimeout);
+  if (!isPlaying) {
+    video.pause();
+    if (video.duration) video.currentTime = 0;
+  }
+}
+
+function playMedia() {
+  if (!video.src) return;
+  video.play().then(() => {
+    isPlaying = true;
+    card.classList.add('playing');
+    document.getElementById('previewPill').textContent = 'playing';
+  }).catch(err => console.warn(err));
+}
+
+function pauseMedia() {
+  video.pause();
+  isPlaying = false;
+  card.classList.remove('playing');
+}
+
+// Duration display
+video.addEventListener('loadedmetadata', () => {
+  const d = video.duration;
+  if (d && isFinite(d)) {
+    const m = Math.floor(d / 60);
+    const s = Math.floor(d % 60).toString().padStart(2, '0');
+    document.getElementById('durationEl').textContent = `${m}:${s}`;
+  }
+});
+
+// ═══════════════════════════════════════════════════════
+// LOADING MEDIA
+// ═══════════════════════════════════════════════════════
+
+function loadVideoSrc(src, filename, size) {
+  setType('video');
+  isPlaying = false;
+  card.classList.remove('playing');
+
+  video.src = src;
+  video.muted = true;
+  video.load();
+
+  if (filename) document.getElementById('metaFilename').textContent = filename;
+  if (size)     document.getElementById('metaSize').textContent = size;
+}
+
+function loadImageSrc(src, filename) {
+  setType('image');
+  imgEl.onload = () => {
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, imgEl);
+  };
+  imgEl.src = src;
+  if (filename) document.getElementById('metaFilename').textContent = filename;
+}
+
+function loadUrl() {
+  const url = document.getElementById('urlInput').value.trim();
+  if (!url) return;
+  const ext = url.split('?')[0].split('.').pop().toLowerCase();
+  const images = ['jpg','jpeg','png','gif','webp','avif'];
+  const audios  = ['mp3','wav','aac','ogg','flac','m4a'];
+  if (images.includes(ext)) {
+    loadImageSrc(url, url.split('/').pop());
+  } else if (audios.includes(ext)) {
+    setType('audio');
+    video.src = url; video.load();
+    document.getElementById('metaFilename').textContent = url.split('/').pop();
+  } else {
+    loadVideoSrc(url, url.split('/').pop().split('?')[0]);
+  }
+}
+
+function loadFile() {
+  const file = document.getElementById('filePicker').files[0];
+  if (!file) return;
+  const src  = URL.createObjectURL(file);
+  const size = file.size > 1e9
+    ? (file.size/1e9).toFixed(1)+' GB'
+    : file.size > 1e6
+      ? (file.size/1e6).toFixed(1)+' MB'
+      : Math.round(file.size/1e3)+' KB';
+
+  if (file.type.startsWith('image/')) {
+    loadImageSrc(src, file.name);
+    document.getElementById('metaSize').textContent = size;
+  } else if (file.type.startsWith('audio/')) {
+    setType('audio');
+    video.src = src; video.muted = false; video.load();
+    document.getElementById('metaFilename').textContent = file.name;
+    document.getElementById('metaSize').textContent = size;
+  } else {
+    loadVideoSrc(src, file.name, size);
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// TYPE SWITCHING
+// ═══════════════════════════════════════════════════════
+
+function setType(type) {
+  mediaType = type;
+
+  // Update badge
+  const badge = document.getElementById('typeBadge');
+  badge.className = `badge-type ${type}`;
+  badge.textContent = type;
+
+  // Show/hide audio placeholder vs canvas
+  const ap = document.getElementById('audioPlaceholder');
+  if (type === 'audio') {
+    ap.style.display = 'flex';
+    canvas.style.opacity = '0';
+    document.getElementById('durationEl').textContent = '';
+  } else {
+    ap.style.display = 'none';
+    canvas.style.opacity = '1';
+  }
+
+  // Update demo buttons
+  document.querySelectorAll('.demo-btn').forEach(b => {
+    b.classList.toggle('active', b.textContent.toLowerCase() === type);
+  });
+
+  // Image assets: hide play UI
+  document.getElementById('playBtn').style.opacity = type === 'image' ? '0' : '';
+  document.getElementById('previewPill').style.display = type === 'image' ? 'none' : '';
+
+  if (type === 'image') {
+    document.getElementById('metaFilename').textContent = 'Z7V_1884.JPG';
+    document.getElementById('metaSize').textContent = '1.0 MB';
+    document.getElementById('metaPath').textContent = 'ingest/originals/Z7V_1884';
+  } else if (type === 'audio') {
+    document.getElementById('metaFilename').textContent = 'electro-synth-155475.mp3';
+    document.getElementById('metaSize').textContent = '2.7 MB';
+    document.getElementById('metaPath').textContent = 'ingest/originals/electro-synth';
+  } else {
+    document.getElementById('metaFilename').textContent = '2026-01-10_18-47-37.mp4';
+    document.getElementById('metaSize').textContent = '9.1 MB';
+    document.getElementById('metaPath').textContent = 'ingest/originals/2026-01-10';
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════════
+
+initTexture();
+switchShader(); // defaults to passthrough, selects 'cinematic' on load
+// Auto-select cinematic
+document.getElementById('shaderSelect').value = 'cinematic';
+switchShader();
+render();
+</script>
+</body>
+</html>

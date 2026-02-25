@@ -1,0 +1,1027 @@
+<!doctype html>
+<!--
+Default URL+Parameters:
+three_upload_pipeline_registry_authority_v3_responsive.html?dur=12&speed=1&labels=1&labelScale=0.55&orbit=1&bg=0a0f14&quality=1&layout=auto
+
+Notes:
+- This version auto-spreads the whole scene in PORTRAIT so it doesn’t look “squished”.
+- It also auto-pushes camera/target and staggers label positions to reduce overlap.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Upload → Hash → Registry Authority (Responsive)</title>
+
+  <style>
+    :root { --tl-t: 0; }
+    html, body { height: 100%; margin: 0; background: #0a0f14; overflow: hidden; }
+    canvas { display:block; width:100%; height:100%; }
+
+    .hud {
+      position: fixed; left: 12px; top: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      color: rgba(235,245,255,0.92);
+      font-size: 12px;
+      pointer-events: none;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.75);
+      line-height: 1.35;
+      max-width: min(720px, calc(100vw - 24px));
+    }
+    .hud .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    .hud .badge {
+      padding: 4px 8px; border-radius: 999px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.10);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      white-space: nowrap;
+    }
+    .hud .title { font-size: 13px; font-weight: 700; margin-bottom: 6px; opacity: 0.95; letter-spacing: .3px; }
+    .hud .muted { opacity: 0.75; }
+    .hud .mono { opacity: 0.92; }
+    .hud .line { margin-top: 8px; opacity: 0.85; }
+
+    .controls {
+      position: fixed; left: 12px; right: 12px; bottom: 12px;
+      display: flex; gap: 10px; align-items: center;
+      pointer-events: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      color: rgba(235,245,255,0.92);
+    }
+    .btn {
+      padding: 8px 10px; border-radius: 10px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      cursor: pointer;
+      user-select: none;
+    }
+    .btn:active { transform: translateY(1px); }
+    .slider {
+      flex: 1;
+      height: 34px;
+      display: flex; align-items: center;
+      padding: 0 10px;
+      border-radius: 10px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      gap: 10px;
+      min-width: 160px;
+    }
+    input[type="range"] { width: 100%; }
+    .hint {
+      position: fixed; right: 12px; top: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      color: rgba(235,245,255,0.65);
+      font-size: 11px;
+      pointer-events: none;
+      text-align: right;
+      line-height: 1.35;
+    }
+
+    /* tiny portrait HUD tightening */
+    @media (max-width: 430px) {
+      .hud { font-size: 11px; }
+      .hud .title { font-size: 12px; }
+    }
+  </style>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+
+<body>
+  <div class="hud" id="hud">
+    <div class="title">PIPELINE AUTHORITY — iPhone → API → Hash → Registry → Explorer</div>
+    <div class="row">
+      <div class="badge" id="phaseBadge">PHASE: —</div>
+      <div class="badge" id="timeBadge">t=0.00s</div>
+      <div class="badge" id="progressBadge">0%</div>
+      <div class="badge muted">timeline: <span id="timelineMode">internal</span></div>
+      <div class="badge mono" id="shaBadge">sha256: —</div>
+    </div>
+    <div class="line muted" id="caption">
+      Visual metaphor: selection → packet stream → ingest normalize → SHA256 identity → registry authority → explorer/library
+    </div>
+  </div>
+
+  <div class="hint" id="hint">
+    Drag to orbit • Scroll to zoom<br/>
+    URL params: dur, speed, labels, labelScale, orbit, bg, quality, layout
+  </div>
+
+  <div class="controls" id="controls">
+    <div class="btn" id="toggleBtn">⏸ pause</div>
+    <div class="slider">
+      <span style="opacity:.75;min-width:56px" id="scrubLabel">scrub</span>
+      <input id="scrub" type="range" min="0" max="1" step="0.0005" value="0" />
+    </div>
+    <div class="btn" id="resetBtn">⟲ reset</div>
+  </div>
+
+  <canvas id="c"></canvas>
+
+  <script type="module">
+    import * as THREE from "three";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+    // -----------------------------
+    // URL Params
+    // -----------------------------
+    const qs = new URLSearchParams(location.search);
+    const DUR = clamp(parseFloat(qs.get("dur") ?? "12"), 4, 60);
+    const SPEED = clamp(parseFloat(qs.get("speed") ?? "1"), 0.1, 5);
+    const LABELS = (qs.get("labels") ?? "1") !== "0";
+    const LABEL_SCALE_USER = clamp(parseFloat(qs.get("labelScale") ?? "0.55"), 0.2, 1.2);
+    const ORBIT = (qs.get("orbit") ?? "1") !== "0";
+    const BG = qs.get("bg") ? `#${qs.get("bg")}` : "#0a0f14";
+    const QUALITY = clamp(parseFloat(qs.get("quality") ?? "1"), 0.5, 2);
+    const LAYOUT = (qs.get("layout") ?? "auto"); // auto | wide | portrait
+
+    document.body.style.background = BG;
+
+    // -----------------------------
+    // Timeline hookup (optional)
+    // -----------------------------
+    const timelineModeEl = document.getElementById("timelineMode");
+    const hasSharedTimeline = !!(window.__TIMELINE__ && typeof window.__TIMELINE__.getTime === "function" && typeof window.__TIMELINE__.setTime === "function");
+    timelineModeEl.textContent = hasSharedTimeline ? "shared" : "internal";
+
+    let tl = 0;
+    let playing = true;
+
+    if (!window.setTimelineTime) window.setTimelineTime = (s) => setTimelineTime(s);
+
+    function setTimelineTime(seconds) {
+      const s = Math.max(0, Number.isFinite(seconds) ? seconds : 0);
+      if (hasSharedTimeline) window.__TIMELINE__.setTime(s);
+      else {
+        tl = s;
+        updateTLVar(tl);
+        window.dispatchEvent(new CustomEvent("timeline:time", { detail: { seconds: tl } }));
+      }
+    }
+    function getTimelineTime() { return hasSharedTimeline ? window.__TIMELINE__.getTime() : tl; }
+    function updateTLVar(seconds) { document.documentElement.style.setProperty("--tl-t", String(seconds)); }
+    updateTLVar(getTimelineTime());
+
+    // -----------------------------
+    // Three.js setup
+    // -----------------------------
+    const canvas = document.getElementById("c");
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio * QUALITY, 3));
+    renderer.setClearColor(new THREE.Color(BG), 1);
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(new THREE.Color(BG), 10, 60);
+
+    const camera = new THREE.PerspectiveCamera(52, 1, 0.1, 220);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enabled = ORBIT;
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+
+    // Lights
+    scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+    const key = new THREE.DirectionalLight(0xffffff, 0.90); key.position.set(6, 10, 6); scene.add(key);
+    const rim = new THREE.DirectionalLight(0xffffff, 0.45); rim.position.set(-8, 6, -8); scene.add(rim);
+
+    // Ground
+    const ground = new THREE.Mesh(
+      new THREE.CircleGeometry(34, 64),
+      new THREE.MeshStandardMaterial({ color: new THREE.Color(BG).offsetHSL(0, 0, 0.08), metalness: 0.0, roughness: 1.0 })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = 0;
+    scene.add(ground);
+
+    // Subtle rings on ground (UI vibe)
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.05 });
+    const rings = [];
+    for (let i = 1; i <= 6; i++) {
+      const ring = new THREE.Mesh(new THREE.RingGeometry(i*2.2, i*2.2 + 0.03, 160), ringMat);
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.01;
+      scene.add(ring);
+      rings.push(ring);
+    }
+
+    // -----------------------------
+    // Glow helper (cheap bloom vibe)
+    // -----------------------------
+    const glowTex = makeRadialGlowTexture();
+    function addGlow(parent, size=2.2, opacity=0.25) {
+      const mat = new THREE.MeshBasicMaterial({
+        map: glowTex,
+        transparent: true,
+        opacity,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending
+      });
+      const plane = new THREE.Mesh(new THREE.PlaneGeometry(size, size), mat);
+      plane.renderOrder = 10;
+      parent.add(plane);
+      return plane;
+    }
+
+    // -----------------------------
+    // Responsive layout (fix “squished” on portrait)
+    // -----------------------------
+    const STAGE = {
+      phone: new THREE.Vector3(),
+      gateway: new THREE.Vector3(),
+      hash: new THREE.Vector3(),
+      reg: new THREE.Vector3(),
+      lib: new THREE.Vector3()
+    };
+
+    // label anchors we’ll update too
+    const LABEL_ANCHOR = {
+      phone: new THREE.Vector3(),
+      upload: new THREE.Vector3(),
+      gateway: new THREE.Vector3(),
+      hash: new THREE.Vector3(),
+      reg: new THREE.Vector3(),
+      lib: new THREE.Vector3(),
+      eco: new THREE.Vector3(),
+      render: new THREE.Vector3(),
+      otio: new THREE.Vector3(),
+      resolve: new THREE.Vector3(),
+      explorer: new THREE.Vector3()
+    };
+
+    // dynamic label scale for portrait to reduce overlap (you can still override)
+    let LABEL_SCALE = LABEL_SCALE_USER;
+
+    function applyLayout() {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      const aspect = w / h;
+
+      const portrait = (LAYOUT === "portrait") || (LAYOUT === "auto" && aspect < 0.78);
+      const wide     = (LAYOUT === "wide") || (LAYOUT === "auto" && aspect >= 0.78);
+
+      // Stage spacing
+      // - wide: mostly x-line
+      // - portrait: arc + z-depth so you “see” the full pipeline without everything stacking
+      const xSpread = wide ? 3.2 : 2.2;
+      const zSpread = wide ? 0.9 : 2.2;
+      const yBasePhone = 1.25;
+      const yBaseStage = 1.35;
+      const yBaseLib = 1.15;
+
+      // In portrait, stagger Z like a gentle arc toward camera-left to camera-right
+      // phone (front-left) -> gateway (mid) -> hash (back) -> reg (mid) -> lib (front-right)
+      STAGE.phone.set( -2.2*xSpread, yBasePhone,  wide ?  0.0 :  1.6);
+      STAGE.gateway.set(-0.7*xSpread, yBaseStage, wide ?  0.0 :  0.3);
+      STAGE.hash.set(   0.8*xSpread,  yBaseStage, wide ?  0.0 : -1.2);
+      STAGE.reg.set(    2.0*xSpread,  yBaseStage, wide ?  0.0 :  0.2);
+      STAGE.lib.set(    3.2*xSpread,  yBaseLib,   wide ?  0.0 :  1.4);
+
+      // Camera framing (this is the real “no squish” fix)
+      // In portrait, pull back more and raise slightly, so HUD + whole arc reads.
+      if (portrait) {
+        camera.fov = 52;
+        camera.position.set(1.5, 4.6, 18.5);
+        controls.target.set(1.2, 1.6, 0.2);
+        scene.fog.near = 10;
+        scene.fog.far = 72;
+
+        // labels get smaller in portrait by default (override via labelScale param)
+        LABEL_SCALE = Math.min(LABEL_SCALE_USER, 0.46);
+      } else {
+        camera.fov = 52;
+        camera.position.set(1.2, 3.4, 13.2);
+        controls.target.set(1.2, 1.25, 0.0);
+        scene.fog.near = 10;
+        scene.fog.far = 60;
+        LABEL_SCALE = LABEL_SCALE_USER;
+      }
+      camera.updateProjectionMatrix();
+
+      // Ground rings scale a bit with layout so they still look “big”
+      const ringScale = portrait ? 1.10 : 1.00;
+      rings.forEach(r => r.scale.setScalar(ringScale));
+
+      // Label anchors (portrait staggers in Y/Z)
+      LABEL_ANCHOR.phone.copy(STAGE.phone).add(new THREE.Vector3(0, 2.25, 0));
+      LABEL_ANCHOR.upload.copy(STAGE.phone).add(new THREE.Vector3(1.7, 2.65, portrait ? 1.4 : 1.2));
+      LABEL_ANCHOR.gateway.copy(STAGE.gateway).add(new THREE.Vector3(0, 2.15, 0));
+      LABEL_ANCHOR.hash.copy(STAGE.hash).add(new THREE.Vector3(0, 2.35, 0));
+      LABEL_ANCHOR.reg.copy(STAGE.reg).add(new THREE.Vector3(0, 2.35, 0));
+      LABEL_ANCHOR.lib.copy(STAGE.lib).add(new THREE.Vector3(0, 2.15, 0));
+
+      LABEL_ANCHOR.eco.copy(STAGE.reg).add(new THREE.Vector3(0.0, -0.25, 0.0));
+      LABEL_ANCHOR.render.copy(STAGE.reg).add(new THREE.Vector3( portrait ? 1.6 : 2.1, 0.15, portrait ? 0.9 : 0.0));
+      LABEL_ANCHOR.otio.copy(STAGE.reg).add(new THREE.Vector3( portrait ? -1.6 : -2.1, 0.15, portrait ? -0.9 : 0.0));
+      LABEL_ANCHOR.resolve.copy(STAGE.reg).add(new THREE.Vector3( 0.0, 0.2, portrait ? 1.9 : 2.3));
+      LABEL_ANCHOR.explorer.copy(STAGE.reg).add(new THREE.Vector3( 0.0, 0.2, portrait ? -1.9 : -2.3));
+
+      // Resize renderer
+      const rw = Math.floor(w);
+      const rh = Math.floor(h);
+      camera.aspect = rw / rh;
+      camera.updateProjectionMatrix();
+      renderer.setSize(rw, rh, false);
+    }
+
+    // call once now, and on resize
+    applyLayout();
+    window.addEventListener("resize", applyLayout);
+
+    // -----------------------------
+    // Stage objects / geometry
+    // -----------------------------
+
+    // Phone (source)
+    const phone = new THREE.Group(); scene.add(phone);
+    const phoneBody = new THREE.Mesh(
+      new THREE.BoxGeometry(1.8, 3.2, 0.18),
+      new THREE.MeshStandardMaterial({ color: 0x0c1218, metalness: 0.35, roughness: 0.55 })
+    );
+    const phoneScreen = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.55, 2.85),
+      new THREE.MeshStandardMaterial({ color: 0x0d1a22, emissive: 0x0b2030, emissiveIntensity: 0.95, metalness: 0.0, roughness: 0.9 })
+    );
+    phoneScreen.position.z = 0.095;
+
+    const thumbs = new THREE.Group();
+    for (let i = 0; i < 6; i++) {
+      const card = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.62, 0.42),
+        new THREE.MeshStandardMaterial({ color: 0x163042, emissive: 0x0e2a3a, emissiveIntensity: 0.6, roughness: 0.95 })
+      );
+      const row = Math.floor(i / 2), col = i % 2;
+      card.position.set(-0.33 + col * 0.66, 0.75 - row * 0.55, 0.096);
+      thumbs.add(card);
+    }
+
+    // Selected clip on phone
+    const clip = new THREE.Mesh(
+      new THREE.BoxGeometry(0.9, 0.56, 0.16),
+      new THREE.MeshStandardMaterial({ color: 0x1d5a7a, emissive: 0x0f3a52, emissiveIntensity: 0.9, metalness: 0.25, roughness: 0.35 })
+    );
+    clip.position.set(0.0, -0.95, 0.18);
+    phone.add(phoneBody, phoneScreen, thumbs, clip);
+    const phoneGlow = addGlow(phone, 3.2, 0.12);
+
+    // Gateway (API)
+    const gateway = new THREE.Group(); scene.add(gateway);
+    const gatewayCore = new THREE.Mesh(
+      new THREE.BoxGeometry(1.35, 1.35, 1.35),
+      new THREE.MeshStandardMaterial({ color: 0x121a22, metalness: 0.18, roughness: 0.55, emissive: 0x0b2030, emissiveIntensity: 0.75 })
+    );
+    const gatewayFrame = new THREE.Mesh(
+      new THREE.BoxGeometry(1.55, 1.55, 1.55),
+      new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.06, metalness: 0.0, roughness: 1.0 })
+    );
+    gatewayFrame.scale.set(1.02, 1.02, 1.02);
+    gateway.add(gatewayCore, gatewayFrame);
+    const gatewayGlow = addGlow(gateway, 3.0, 0.14);
+
+    // Hash Forge
+    const hashForge = new THREE.Group(); scene.add(hashForge);
+    const hashCore = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(0.85, 1),
+      new THREE.MeshStandardMaterial({ color: 0x16344a, emissive: 0x0d2f46, emissiveIntensity: 1.0, roughness: 0.35, metalness: 0.15 })
+    );
+    const hashShell = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(1.05, 1),
+      new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.05, emissive: 0x0b2030, emissiveIntensity: 0.55, roughness: 1.0 })
+    );
+    hashForge.add(hashCore, hashShell);
+    const hashGlow = addGlow(hashForge, 3.0, 0.16);
+
+    // Registry Hub
+    const registry = new THREE.Group(); scene.add(registry);
+    const regCore = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(1.05, 1),
+      new THREE.MeshStandardMaterial({ color: 0x1b2b38, emissive: 0x174a68, emissiveIntensity: 0.9, roughness: 0.45, metalness: 0.12 })
+    );
+    const regRing = new THREE.Mesh(
+      new THREE.TorusGeometry(1.45, 0.03, 16, 256),
+      new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.08, emissive: 0x0b2030, emissiveIntensity: 0.65, roughness: 1.0 })
+    );
+    regRing.rotation.x = Math.PI / 2;
+    registry.add(regCore, regRing);
+    const regGlow = addGlow(registry, 3.4, 0.14);
+
+    // Ecosystem orbit group
+    const ecosystem = new THREE.Group(); scene.add(ecosystem);
+    const nodes = [];
+    for (let i = 0; i < 5; i++) {
+      const n = new THREE.Mesh(
+        new THREE.SphereGeometry(0.26, 18, 18),
+        new THREE.MeshStandardMaterial({ color: 0x1d5a7a, emissive: 0x0e2b3d, emissiveIntensity: 0.85, roughness: 0.45 })
+      );
+      ecosystem.add(n);
+      nodes.push({ mesh: n, glow: addGlow(n, 1.1, 0.10) });
+    }
+
+    // Library (Explorer)
+    const library = new THREE.Group(); scene.add(library);
+    const shelfBack = new THREE.Mesh(
+      new THREE.BoxGeometry(2.6, 2.8, 0.22),
+      new THREE.MeshStandardMaterial({ color: 0x0c1218, metalness: 0.2, roughness: 0.88 })
+    );
+    shelfBack.position.z = -0.1;
+
+    const grid = new THREE.Group();
+    const slots = [];
+    const rows = 3, cols = 3;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const slot = new THREE.Mesh(
+          new THREE.PlaneGeometry(0.66, 0.46),
+          new THREE.MeshStandardMaterial({ color: 0x13212c, emissive: 0x071a25, emissiveIntensity: 0.5, roughness: 0.95 })
+        );
+        slot.position.set(-0.78 + c * 0.78, 0.78 - r * 0.78, 0.02);
+        slots.push(slot);
+        grid.add(slot);
+      }
+    }
+
+    const finalTile = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.66, 0.46),
+      new THREE.MeshStandardMaterial({ color: 0x1d5a7a, emissive: 0x0f3a52, emissiveIntensity: 1.4, roughness: 0.55 })
+    );
+    finalTile.position.copy(slots[1].position);
+    finalTile.position.z = 0.03;
+    finalTile.visible = false;
+
+    library.add(shelfBack, grid, finalTile);
+    const libGlow = addGlow(library, 3.2, 0.10);
+
+    // -----------------------------
+    // Beams + packets (will be rebuilt when layout changes)
+    // -----------------------------
+    let beamPhoneToGateway, beamGatewayToHash, beamHashToReg, beamRegToLib;
+    const beamGroup = new THREE.Group(); scene.add(beamGroup);
+
+    function rebuildBeams() {
+      beamGroup.clear();
+      beamPhoneToGateway = makeBeam(STAGE.phone.clone().add(new THREE.Vector3(1.2, 0.4, 0.0)), STAGE.gateway.clone().add(new THREE.Vector3(-1.0, 0.1, 0.0)), 0.10, 0.12);
+      beamGatewayToHash  = makeBeam(STAGE.gateway.clone().add(new THREE.Vector3(0.9, 0.1, 0.0)), STAGE.hash.clone().add(new THREE.Vector3(-0.9, 0.1, 0.0)), 0.12, 0.10);
+      beamHashToReg      = makeBeam(STAGE.hash.clone().add(new THREE.Vector3(0.9, 0.1, 0.0)), STAGE.reg.clone().add(new THREE.Vector3(-1.0, 0.1, 0.0)), 0.12, 0.10);
+      beamRegToLib       = makeBeam(STAGE.reg.clone().add(new THREE.Vector3(1.0, 0.1, 0.0)), STAGE.lib.clone().add(new THREE.Vector3(-1.4, 0.1, 0.0)), 0.12, 0.10);
+      beamGroup.add(beamPhoneToGateway, beamGatewayToHash, beamHashToReg, beamRegToLib);
+    }
+
+    // Packets iPhone -> gateway
+    const streamGroup = new THREE.Group(); scene.add(streamGroup);
+    const packetCount = 160;
+    const packetGeo = new THREE.BoxGeometry(0.09, 0.09, 0.09);
+    const packetMat = new THREE.MeshStandardMaterial({
+      color: 0xbfe9ff, emissive: 0x224a60, emissiveIntensity: 0.95,
+      roughness: 0.5, transparent: true, opacity: 0.0
+    });
+    const packets = new THREE.InstancedMesh(packetGeo, packetMat, packetCount);
+    packets.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    streamGroup.add(packets);
+
+    let curveUpload;
+    function rebuildCurves() {
+      curveUpload = new THREE.CubicBezierCurve3(
+        STAGE.phone.clone().add(new THREE.Vector3(1.2, 0.4, 0.1)),
+        STAGE.phone.clone().add(new THREE.Vector3(2.6, 1.8, 1.2)),
+        STAGE.gateway.clone().add(new THREE.Vector3(-1.4, 1.2, 0.8)),
+        STAGE.gateway.clone().add(new THREE.Vector3(0.0, 0.1, 0.0))
+      );
+    }
+
+    // -----------------------------
+    // Hash forge particles (INGEST + HASH)
+    // -----------------------------
+    const forgeGroup = new THREE.Group(); scene.add(forgeGroup);
+    const forgeCount = 260;
+    const forgeGeo = new THREE.SphereGeometry(0.045, 8, 8);
+    const forgeMat = new THREE.MeshBasicMaterial({ color: 0xbfe9ff, transparent: true, opacity: 0.0 });
+    const forgeParticles = new THREE.InstancedMesh(forgeGeo, forgeMat, forgeCount);
+    forgeParticles.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    forgeGroup.add(forgeParticles);
+
+    // -----------------------------
+    // Labels
+    // -----------------------------
+    const labels = [];
+    let labelPhone, labelUpload, labelGateway, labelHash, labelRegistry, labelLibrary;
+    let labelEcosystem, labelResolve, labelRender, labelOTIO, labelExplorer;
+
+    function buildLabels() {
+      // clear old
+      labels.forEach(s => scene.remove(s));
+      labels.length = 0;
+
+      if (!LABELS) return;
+
+      labelPhone    = makeLabel("iPhone\nCamera Roll", LABEL_ANCHOR.phone, LABEL_SCALE);
+      labelUpload   = makeLabel("UPLOAD\n(encrypted packets)", LABEL_ANCHOR.upload, LABEL_SCALE * 0.80);
+      labelGateway  = makeLabel("API\nGateway", LABEL_ANCHOR.gateway, LABEL_SCALE);
+      labelHash     = makeLabel("HASH FORGE\nsha256 identity", LABEL_ANCHOR.hash, LABEL_SCALE);
+      labelRegistry = makeLabel("REGISTRY\nauthoritative lookup", LABEL_ANCHOR.reg, LABEL_SCALE);
+      labelLibrary  = makeLabel("Asset Explorer\nLibrary", LABEL_ANCHOR.lib, LABEL_SCALE);
+
+      labelEcosystem = makeLabel("Ecosystem", LABEL_ANCHOR.eco, LABEL_SCALE * 0.70);
+      labelRender    = makeLabel("Render API", LABEL_ANCHOR.render, LABEL_SCALE * 0.55);
+      labelOTIO      = makeLabel("OTIO Export", LABEL_ANCHOR.otio, LABEL_SCALE * 0.55);
+      labelResolve   = makeLabel("Resolve/Blender\nImporter", LABEL_ANCHOR.resolve, LABEL_SCALE * 0.55);
+      labelExplorer  = makeLabel("Explorer UI", LABEL_ANCHOR.explorer, LABEL_SCALE * 0.55);
+
+      labels.push(labelPhone,labelUpload,labelGateway,labelHash,labelRegistry,labelLibrary,labelEcosystem,labelRender,labelOTIO,labelResolve,labelExplorer);
+      labels.forEach(s => scene.add(s));
+    }
+
+    // Re-apply stage positions to objects
+    function applyStagePositions() {
+      phone.position.copy(STAGE.phone);
+      gateway.position.copy(STAGE.gateway);
+      hashForge.position.copy(STAGE.hash);
+      registry.position.copy(STAGE.reg);
+      ecosystem.position.copy(STAGE.reg);
+      library.position.copy(STAGE.lib);
+
+      forgeGroup.position.copy(STAGE.hash);
+    }
+
+    // Hook layout changes into rebuilds
+    function rebuildLayoutArtifacts() {
+      applyStagePositions();
+      rebuildBeams();
+      rebuildCurves();
+      buildLabels();
+    }
+
+    // initial build after first applyLayout
+    rebuildLayoutArtifacts();
+
+    // whenever we resize, applyLayout is called; we need to rebuild dependent artifacts too
+    // (we debounce it slightly so Safari isn’t angry)
+    let resizeTimer = null;
+    window.addEventListener("resize", () => {
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        applyLayout();
+        rebuildLayoutArtifacts();
+      }, 40);
+    });
+
+    // -----------------------------
+    // Beams helper
+    // -----------------------------
+    function makeBeam(a, b, width = 0.02, opacity = 0.18) {
+      const dir = b.clone().sub(a);
+      const len = dir.length();
+      const geom = new THREE.PlaneGeometry(len, width);
+      const mat = new THREE.MeshBasicMaterial({
+        map: glowTex,
+        transparent: true,
+        opacity,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending
+      });
+      const mesh = new THREE.Mesh(geom, mat);
+      const mid = a.clone().add(b).multiplyScalar(0.5);
+      mesh.position.copy(mid);
+      mesh.lookAt(b);
+      mesh.renderOrder = 9;
+      return mesh;
+    }
+
+    // -----------------------------
+    // Seeds
+    // -----------------------------
+    const packetSeeds = new Float32Array(packetCount);
+    for (let i = 0; i < packetCount; i++) packetSeeds[i] = Math.random();
+
+    const forgeSeeds = new Float32Array(forgeCount);
+    for (let i = 0; i < forgeCount; i++) forgeSeeds[i] = Math.random();
+
+    // Fake sha generator (visual-only)
+    const SHA_HEX = "0123456789abcdef";
+    function makeFakeSha(u) {
+      const base = Math.floor(u * 10_000);
+      let out = "";
+      for (let i = 0; i < 64; i++) out += SHA_HEX[(base + i*97) % 16];
+      return out;
+    }
+
+    // Traveling “asset”
+    const asset = new THREE.Mesh(
+      new THREE.BoxGeometry(0.9, 0.56, 0.16),
+      new THREE.MeshStandardMaterial({ color: 0x1d5a7a, emissive: 0x0f3a52, emissiveIntensity: 1.0, metalness: 0.25, roughness: 0.30 })
+    );
+    asset.visible = false;
+    scene.add(asset);
+    const assetGlow = addGlow(asset, 1.8, 0.18);
+
+    // -----------------------------
+    // HUD + controls
+    // -----------------------------
+    const phaseBadge = document.getElementById("phaseBadge");
+    const timeBadge = document.getElementById("timeBadge");
+    const progressBadge = document.getElementById("progressBadge");
+    const shaBadge = document.getElementById("shaBadge");
+    const caption = document.getElementById("caption");
+    const toggleBtn = document.getElementById("toggleBtn");
+    const resetBtn = document.getElementById("resetBtn");
+    const scrub = document.getElementById("scrub");
+
+    toggleBtn.addEventListener("click", () => {
+      playing = !playing;
+      toggleBtn.textContent = playing ? "⏸ pause" : "▶ play";
+    });
+    resetBtn.addEventListener("click", () => {
+      setTimelineTime(0);
+      scrub.value = "0";
+      playing = true;
+      toggleBtn.textContent = "⏸ pause";
+    });
+    scrub.addEventListener("input", () => setTimelineTime(parseFloat(scrub.value) * DUR));
+    window.addEventListener("timeline:time", (e) => {
+      const seconds = e?.detail?.seconds;
+      if (Number.isFinite(seconds)) scrub.value = String(clamp(seconds / DUR, 0, 1));
+    });
+
+    // -----------------------------
+    // Phase model
+    // -----------------------------
+    function phases(u) {
+      return {
+        select: smoothstep(0.00, 0.16, u),
+        upload: smoothstep(0.16, 0.42, u),
+        ingest: smoothstep(0.42, 0.62, u),
+        hash:   smoothstep(0.62, 0.80, u),
+        place:  smoothstep(0.80, 1.00, u),
+      };
+    }
+
+    const tmp = new THREE.Object3D();
+    let last = performance.now() / 1000;
+
+    // -----------------------------
+    // Main loop
+    // -----------------------------
+    function tick() {
+      requestAnimationFrame(tick);
+
+      const now = performance.now() / 1000;
+      const dt = Math.min(0.05, Math.max(0, now - last));
+      last = now;
+
+      if (!hasSharedTimeline && playing) {
+        tl += dt * SPEED;
+        if (tl > DUR) tl -= DUR;
+        updateTLVar(tl);
+      }
+
+      const t = getTimelineTime();
+      const u = (t % DUR) / DUR;
+      scrub.value = String(u);
+
+      timeBadge.textContent = `t=${t.toFixed(2)}s`;
+      progressBadge.textContent = `${Math.round(u * 100)}%`;
+
+      const P = phases(u);
+
+      const phaseName =
+        (u < 0.16) ? "SELECT + PREP" :
+        (u < 0.42) ? "UPLOAD STREAM" :
+        (u < 0.62) ? "INGEST NORMALIZE" :
+        (u < 0.80) ? "HASH IDENTITY" :
+                     "REGISTRY RESOLVE";
+      phaseBadge.textContent = `PHASE: ${phaseName}`;
+
+      const sha = makeFakeSha(P.hash * 0.999 + P.place * 0.001);
+      shaBadge.textContent = `sha256: ${sha.slice(0, 12)}…${sha.slice(-8)}`;
+
+      caption.textContent =
+        (u < 0.16) ? "Select clip → lift from camera roll → attach metadata + origin hints" :
+        (u < 0.42) ? "Packetize → encrypt → flow through LAN/API tunnel → chunks reassemble at gateway" :
+        (u < 0.62) ? "Ingest → validate → normalize orientation → dedupe → canonical naming plan" :
+        (u < 0.80) ? "Hash forge → content fingerprint becomes primary asset_id (path becomes optional)" :
+                     "Registry → authoritative resolve → ecosystem references sha256 → explorer shows canonical tile";
+
+      // Stage breathing
+      const wob = Math.sin(u * Math.PI * 2);
+      phone.position.y = STAGE.phone.y + wob * 0.06;
+      phone.rotation.y = wob * 0.06;
+
+      gatewayCore.rotation.y = (u * 1.0) + P.ingest * 1.2;
+      gatewayCore.rotation.x = P.ingest * 0.2;
+
+      hashCore.rotation.y = u * 1.6 + P.hash * 2.1;
+      hashCore.rotation.x = P.hash * 0.4;
+      hashShell.rotation.y = -u * 1.2;
+
+      regCore.rotation.y = u * 0.9;
+      regRing.rotation.z = u * 1.8;
+
+      library.position.y = STAGE.lib.y + Math.sin((u + 0.25) * Math.PI * 2) * 0.05;
+
+      // Glow breathing per phase
+      phoneGlow.material.opacity   = 0.08 + P.select * 0.10 + P.upload * 0.06;
+      gatewayGlow.material.opacity = 0.08 + P.upload * 0.10 + P.ingest * 0.10;
+      hashGlow.material.opacity    = 0.08 + P.hash * 0.16;
+      regGlow.material.opacity     = 0.08 + P.place * 0.12;
+      libGlow.material.opacity     = 0.06 + P.place * 0.10;
+
+      assetGlow.material.opacity   = asset.visible ? (0.10 + P.hash * 0.10 + P.place * 0.10) : 0.0;
+
+      // Beams emphasize active link (and billboard)
+      beamPhoneToGateway.material.opacity = 0.05 + P.upload * 0.22;
+      beamGatewayToHash.material.opacity  = 0.05 + P.ingest * 0.22 + P.hash * 0.10;
+      beamHashToReg.material.opacity      = 0.05 + P.hash * 0.22 + P.place * 0.10;
+      beamRegToLib.material.opacity       = 0.05 + P.place * 0.22;
+
+      [beamPhoneToGateway, beamGatewayToHash, beamHashToReg, beamRegToLib].forEach(b => {
+        b.quaternion.copy(camera.quaternion);
+      });
+
+      // Clip lift on phone (SELECT)
+      {
+        const lift = P.select;
+        const hover = 0.08 * Math.sin(u * Math.PI * 10);
+        clip.position.y = -0.95 + lift * 1.35 + hover;
+        clip.position.x = lift * 0.18;
+        clip.material.emissiveIntensity = 0.65 + lift * 1.1;
+        clip.rotation.y = lift * 0.35;
+      }
+
+      // Traveling asset (uses dynamic stage positions; this is why portrait works now)
+      asset.visible = u > 0.10;
+      if (asset.visible) {
+        const a0 = 0.10, a1 = 0.30; // phone->gateway
+        const b0 = 0.30, b1 = 0.55; // gateway->hash
+        const c0 = 0.55, c1 = 0.78; // forge orbit
+        const d0 = 0.78, d1 = 1.00; // reg->lib
+
+        if (u < a1) {
+          const k = smoothstep(a0, a1, u);
+          const start = STAGE.phone.clone().add(new THREE.Vector3(0.9, 0.7, 0.25));
+          const end   = STAGE.gateway.clone().add(new THREE.Vector3(-0.9, 0.2, 0.2));
+          const mid   = start.clone().lerp(end, 0.5).add(new THREE.Vector3(0.0, 0.9, 0.4));
+          const p = bezier3(start, mid, end, k);
+          asset.position.copy(p);
+          asset.rotation.set(0, k * 0.8, k * 0.2);
+          asset.scale.setScalar(0.95 + k * 0.15);
+          asset.material.emissiveIntensity = 0.9 + k * 0.4;
+        } else if (u < b1) {
+          const k = smoothstep(b0, b1, u);
+          const start = STAGE.gateway.clone().add(new THREE.Vector3(0.7, 0.2, 0.15));
+          const end   = STAGE.hash.clone().add(new THREE.Vector3(-0.9, 0.2, 0.15));
+          const mid   = start.clone().lerp(end, 0.5).add(new THREE.Vector3(0.2, 1.0, -0.2));
+          const p = bezier3(start, mid, end, k);
+          asset.position.copy(p);
+          asset.rotation.set(k * 0.2, 0.8 + k * 1.2, -k * 0.2);
+          asset.scale.setScalar(1.05 + k * 0.25);
+          asset.material.emissiveIntensity = 1.1 + k * 0.8;
+        } else if (u < c1) {
+          const k = smoothstep(c0, c1, u);
+          const ang = (u * Math.PI * 6);
+          const r = 1.2 - k * 0.55;
+          asset.position.set(
+            STAGE.hash.x + Math.cos(ang) * r,
+            STAGE.hash.y + 0.2 + Math.sin(ang * 0.7) * 0.35,
+            STAGE.hash.z + Math.sin(ang) * r
+          );
+          asset.rotation.set(k * 0.4, ang, -k * 0.25);
+          asset.scale.setScalar(1.25 - k * 0.20);
+          asset.material.emissiveIntensity = 1.6 + k * 0.6;
+        } else {
+          const k = smoothstep(d0, d1, u);
+          const start = STAGE.reg.clone().add(new THREE.Vector3(0.9, 0.2, 0.2));
+          const endW  = library.localToWorld(slots[1].position.clone()).add(new THREE.Vector3(0, 0, 0.04));
+          const mid   = start.clone().lerp(endW, 0.5).add(new THREE.Vector3(0.0, 1.1, 0.0));
+          const p = bezier3(start, mid, endW, k);
+          asset.position.copy(p);
+          asset.rotation.set(0.0, 2.2 + k * 0.6, 0.0);
+          asset.scale.setScalar(1.05 - k * 0.20);
+          asset.material.emissiveIntensity = 1.2 + (1.0 - k) * 0.6;
+        }
+      }
+
+      // Packets (UPLOAD STREAM)
+      const streamAlpha =
+        (u < 0.16) ? 0 :
+        (u < 0.42) ? smoothstep(0.16, 0.22, u) :
+        (u < 0.62) ? (1.0 - smoothstep(0.42, 0.62, u)) * 0.6 :
+                     0.0;
+      packetMat.opacity = 0.88 * streamAlpha;
+
+      for (let i = 0; i < packetCount; i++) {
+        const seed = packetSeeds[i];
+        const pu = fract(P.upload * 1.25 + seed);
+        const pos = curveUpload.getPoint(pu);
+
+        const spread = 0.20 + P.upload * 0.12;
+        pos.y += (seed - 0.5) * spread;
+        pos.z += Math.sin((seed + u) * 40) * 0.06;
+
+        const s = 0.85 + 0.6 * Math.sin((seed + u) * Math.PI * 2);
+        tmp.position.copy(pos);
+        tmp.scale.setScalar(0.9 + s * 0.2);
+
+        const nearGate = 1.0 - clamp(pos.distanceTo(STAGE.gateway) / 2.0, 0, 1);
+        tmp.scale.multiplyScalar(1.0 + nearGate * 0.9 * P.upload);
+
+        tmp.updateMatrix();
+        packets.setMatrixAt(i, tmp.matrix);
+      }
+      packets.instanceMatrix.needsUpdate = true;
+
+      // Hash forge particles
+      const forgeAlpha = clamp(P.ingest * 1.2 + P.hash * 1.2, 0, 1);
+      forgeMat.opacity = 0.95 * forgeAlpha;
+
+      for (let i = 0; i < forgeCount; i++) {
+        const seed = forgeSeeds[i];
+        const ang = seed * Math.PI * 2 + u * (4 + P.hash * 8);
+        const lift = (seed - 0.5) * 1.2;
+
+        const gather = 1.0 - P.hash;
+        const rBase = 1.8 * gather + 1.0 * (1.0 - gather);
+        const rTight = 0.95 - P.hash * 0.55;
+        const r = lerp(rBase, rTight, P.hash);
+
+        const from = STAGE.gateway.clone().add(new THREE.Vector3(0.6, 0.1, 0.1));
+        const to   = STAGE.hash.clone();
+
+        const center = from.lerp(to, smoothstep(0.42, 0.70, u));
+
+        tmp.position.set(
+          center.x + Math.cos(ang) * r,
+          center.y + 0.2 + Math.sin(ang * 0.9) * 0.25 + lift * 0.15,
+          center.z + Math.sin(ang) * r
+        );
+
+        const sc = 0.8 + 0.6 * Math.sin((u + seed) * Math.PI * 2);
+        tmp.scale.setScalar(0.85 + sc * 0.25);
+        tmp.updateMatrix();
+        forgeParticles.setMatrixAt(i, tmp.matrix);
+      }
+      forgeParticles.instanceMatrix.needsUpdate = true;
+
+      hashCore.material.emissiveIntensity = 0.85 + P.hash * 1.05 + pulse(u, 0.72) * 0.35;
+
+      // Registry ecosystem orbit
+      const ecoSpin = u * 5.5;
+      nodes.forEach((obj, i) => {
+        const a = ecoSpin + i * (Math.PI * 2 / nodes.length);
+        const radius = 2.3 + 0.25 * Math.sin(u * Math.PI * 2 + i);
+        obj.mesh.position.set(Math.cos(a) * radius, 0.0 + 0.25*Math.sin(a*0.7), Math.sin(a) * radius);
+        obj.glow.material.opacity = 0.06 + P.place * 0.10 + 0.04 * Math.sin(u * Math.PI * 2 + i);
+        obj.mesh.material.emissiveIntensity = 0.65 + P.place * 0.55;
+      });
+
+      // Library arrival
+      if (u >= 0.84) {
+        finalTile.visible = true;
+        const placeU = smoothstep(0.84, 1.00, u);
+        finalTile.material.emissiveIntensity = 0.9 + placeU * 1.2;
+        slots[1].material.emissiveIntensity = 0.25 + pulse(placeU, 0.75) * 0.85;
+      } else {
+        finalTile.visible = false;
+      }
+
+      // Slot twinkle
+      for (let i = 0; i < slots.length; i++) {
+        const tw = 0.10 + 0.10 * Math.sin((u * 2*Math.PI) + i * 0.7);
+        slots[i].material.emissiveIntensity = 0.16 + tw * 0.32;
+      }
+
+      // Labels face camera + phase opacity emphasis
+      if (LABELS) {
+        labels.forEach((s) => s.quaternion.copy(camera.quaternion));
+        if (labelUpload)   labelUpload.material.opacity = 0.25 + streamAlpha * 0.75;
+        if (labelHash)     labelHash.material.opacity = 0.35 + P.hash * 0.65;
+        if (labelRegistry) labelRegistry.material.opacity = 0.35 + P.place * 0.65;
+        if (labelLibrary)  labelLibrary.material.opacity = 0.40 + P.place * 0.60;
+
+        // Keep labels attached to anchors (anchors shift w/ portrait layout)
+        labelPhone.position.copy(LABEL_ANCHOR.phone);
+        labelUpload.position.copy(LABEL_ANCHOR.upload);
+        labelGateway.position.copy(LABEL_ANCHOR.gateway);
+        labelHash.position.copy(LABEL_ANCHOR.hash);
+        labelRegistry.position.copy(LABEL_ANCHOR.reg);
+        labelLibrary.position.copy(LABEL_ANCHOR.lib);
+        labelEcosystem.position.copy(LABEL_ANCHOR.eco);
+        labelRender.position.copy(LABEL_ANCHOR.render);
+        labelOTIO.position.copy(LABEL_ANCHOR.otio);
+        labelResolve.position.copy(LABEL_ANCHOR.resolve);
+        labelExplorer.position.copy(LABEL_ANCHOR.explorer);
+      }
+
+      // Gentle ring drift (adds “space”)
+      rings.forEach((r, i) => r.material.opacity = 0.03 + 0.02*Math.sin(u*2*Math.PI + i*0.7));
+
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    tick();
+
+    // -----------------------------
+    // Helpers
+    // -----------------------------
+    function clamp(x, a, b) { return Math.min(b, Math.max(a, x)); }
+    function lerp(a,b,t){ return a + (b-a)*t; }
+    function fract(x) { return x - Math.floor(x); }
+    function smoothstep(a, b, x) {
+      const t = clamp((x - a) / (b - a), 0, 1);
+      return t * t * (3 - 2 * t);
+    }
+    function pulse(x, center) {
+      const d = Math.abs(x - center);
+      return Math.exp(-d * d * 40);
+    }
+    function bezier3(a, b, c, t) {
+      const ab = a.clone().lerp(b, t);
+      const bc = b.clone().lerp(c, t);
+      return ab.lerp(bc, t);
+    }
+
+    function makeRadialGlowTexture() {
+      const cnv = document.createElement("canvas");
+      cnv.width = 256; cnv.height = 256;
+      const ctx = cnv.getContext("2d");
+
+      const g = ctx.createRadialGradient(128,128, 0, 128,128, 128);
+      g.addColorStop(0.0, "rgba(255,255,255,1.0)");
+      g.addColorStop(0.25,"rgba(255,255,255,0.45)");
+      g.addColorStop(0.55,"rgba(255,255,255,0.15)");
+      g.addColorStop(1.0, "rgba(255,255,255,0.0)");
+
+      ctx.fillStyle = g;
+      ctx.fillRect(0,0,256,256);
+
+      const tex = new THREE.CanvasTexture(cnv);
+      tex.minFilter = THREE.LinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      return tex;
+    }
+
+    function makeLabel(text, worldPos, scale = 1.0) {
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
+
+      const lines = String(text).split("\n");
+      const fontSize = 44;
+      const pad = 18;
+      const lineH = Math.round(fontSize * 1.06);
+
+      ctx.font = `700 ${fontSize}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
+      const w = Math.max(...lines.map(l => ctx.measureText(l).width)) + pad*2;
+      const h = lines.length * lineH + pad*2;
+
+      canvas.width = Math.ceil(w);
+      canvas.height = Math.ceil(h);
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "rgba(255,255,255,0.07)";
+      roundRect(ctx, 0, 0, canvas.width, canvas.height, 22, true, false);
+
+      ctx.strokeStyle = "rgba(255,255,255,0.16)";
+      ctx.lineWidth = 3;
+      roundRect(ctx, 1.5, 1.5, canvas.width-3, canvas.height-3, 22, false, true);
+
+      ctx.fillStyle = "rgba(235,245,255,0.95)";
+      ctx.font = `700 ${fontSize}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
+      ctx.textBaseline = "top";
+      for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], pad, pad + i * lineH);
+
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.minFilter = THREE.LinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+
+      const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.95, depthTest: true });
+      const sprite = new THREE.Sprite(mat);
+
+      const aspect = canvas.width / canvas.height;
+      sprite.scale.set(2.0 * aspect * scale, 2.0 * scale, 1);
+      sprite.position.copy(worldPos);
+      return sprite;
+    }
+
+    function roundRect(ctx, x, y, w, h, r, fill, stroke) {
+      const rr = Math.min(r, w/2, h/2);
+      ctx.beginPath();
+      ctx.moveTo(x + rr, y);
+      ctx.arcTo(x + w, y, x + w, y + h, rr);
+      ctx.arcTo(x + w, y + h, x, y + h, rr);
+      ctx.arcTo(x, y + h, x, y, rr);
+      ctx.arcTo(x, y, x + w, y, rr);
+      ctx.closePath();
+      if (fill) ctx.fill();
+      if (stroke) ctx.stroke();
+    }
+  </script>
+</body>
+</html>

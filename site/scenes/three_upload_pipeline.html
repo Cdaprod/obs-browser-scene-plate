@@ -1,0 +1,575 @@
+<!doctype html>
+<!-- Default URL+Parameters: three_upload_pipeline_preview.html?dur=8&speed=1&labels=1&orbit=1&bg=0a0f14&quality=1 -->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>3D Upload Pipeline (iPhone → API → Explorer)</title>
+  <style>
+    :root { --tl-t: 0; }
+    html, body { height: 100%; margin: 0; background: #0a0f14; overflow: hidden; }
+    canvas { display:block; width:100%; height:100%; }
+
+    .hud {
+      position: fixed; left: 12px; top: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      color: rgba(235,245,255,0.92);
+      font-size: 12px;
+      pointer-events: none;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.75);
+      line-height: 1.35;
+      max-width: min(560px, calc(100vw - 24px));
+    }
+    .hud .row { display:flex; gap:10px; flex-wrap:wrap; }
+    .hud .badge {
+      padding: 4px 8px; border-radius: 999px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.10);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+    }
+    .hud .title { font-size: 13px; font-weight: 700; margin-bottom: 6px; opacity: 0.95; }
+    .hud .muted { opacity: 0.75; }
+
+    .controls {
+      position: fixed; left: 12px; right: 12px; bottom: 12px;
+      display: flex; gap: 10px; align-items: center;
+      pointer-events: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      color: rgba(235,245,255,0.92);
+    }
+    .btn {
+      padding: 8px 10px; border-radius: 10px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      cursor: pointer;
+      user-select: none;
+    }
+    .btn:active { transform: translateY(1px); }
+    .slider {
+      flex: 1;
+      height: 34px;
+      display: flex; align-items: center;
+      padding: 0 10px;
+      border-radius: 10px;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      gap: 10px;
+    }
+    input[type="range"] { width: 100%; }
+    .hint {
+      position: fixed; right: 12px; top: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      color: rgba(235,245,255,0.65);
+      font-size: 11px;
+      pointer-events: none;
+      text-align: right;
+    }
+  </style>
+
+  <!-- Import map so "three" resolves correctly (no bare-specifier errors) -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div class="hud" id="hud">
+    <div class="title">UPLOAD PIPELINE — iPhone → API → Asset Explorer</div>
+    <div class="row">
+      <div class="badge" id="phaseBadge">PHASE: —</div>
+      <div class="badge" id="timeBadge">t=0.00s</div>
+      <div class="badge" id="progressBadge">0%</div>
+      <div class="badge muted">timeline: <span id="timelineMode">internal</span></div>
+    </div>
+    <div class="muted" style="margin-top:8px" id="caption">
+      Visual metaphor: selection → encrypted packet flow → ingest transforms → indexed library placement
+    </div>
+  </div>
+
+  <div class="hint" id="hint">
+    Drag to orbit • Scroll to zoom<br/>
+    URL params: dur, speed, labels, orbit, bg, quality
+  </div>
+
+  <div class="controls" id="controls">
+    <div class="btn" id="toggleBtn">⏸ pause</div>
+    <div class="slider">
+      <span style="opacity:.75;min-width:56px" id="scrubLabel">scrub</span>
+      <input id="scrub" type="range" min="0" max="1" step="0.0005" value="0" />
+    </div>
+    <div class="btn" id="resetBtn">⟲ reset</div>
+  </div>
+
+  <canvas id="c"></canvas>
+
+  <script type="module">
+    import * as THREE from "three";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+    // -----------------------------
+    // URL Params
+    // -----------------------------
+    const qs = new URLSearchParams(location.search);
+    const DUR = clamp(parseFloat(qs.get("dur") ?? "8"), 2, 60);
+    const SPEED = clamp(parseFloat(qs.get("speed") ?? "1"), 0.1, 5);
+    const LABELS = (qs.get("labels") ?? "1") !== "0";
+    const ORBIT = (qs.get("orbit") ?? "1") !== "0";
+    const BG = qs.get("bg") ? `#${qs.get("bg")}` : "#0a0f14";
+    const QUALITY = clamp(parseFloat(qs.get("quality") ?? "1"), 0.5, 2);
+
+    document.body.style.background = BG;
+
+    // -----------------------------
+    // Timeline hookup (optional)
+    // -----------------------------
+    const timelineModeEl = document.getElementById("timelineMode");
+    const hasSharedTimeline = !!(window.__TIMELINE__ && typeof window.__TIMELINE__.getTime === "function" && typeof window.__TIMELINE__.setTime === "function");
+    timelineModeEl.textContent = hasSharedTimeline ? "shared" : "internal";
+
+    let tl = 0;
+    let playing = true;
+
+    if (!window.setTimelineTime) window.setTimelineTime = (s) => setTimelineTime(s);
+
+    function setTimelineTime(seconds) {
+      const s = Math.max(0, Number.isFinite(seconds) ? seconds : 0);
+      if (hasSharedTimeline) window.__TIMELINE__.setTime(s);
+      else {
+        tl = s;
+        updateTLVar(tl);
+        window.dispatchEvent(new CustomEvent("timeline:time", { detail: { seconds: tl } }));
+      }
+    }
+    function getTimelineTime() { return hasSharedTimeline ? window.__TIMELINE__.getTime() : tl; }
+    function updateTLVar(seconds) { document.documentElement.style.setProperty("--tl-t", String(seconds)); }
+    updateTLVar(getTimelineTime());
+
+    // -----------------------------
+    // Three.js setup
+    // -----------------------------
+    const canvas = document.getElementById("c");
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio * QUALITY, 3));
+    renderer.setClearColor(new THREE.Color(BG), 1);
+
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.Fog(new THREE.Color(BG), 8, 40);
+
+    const camera = new THREE.PerspectiveCamera(55, 1, 0.1, 200);
+    camera.position.set(0, 3.2, 12);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enabled = ORBIT;
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.target.set(0, 1.2, 0);
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+    const key = new THREE.DirectionalLight(0xffffff, 0.85); key.position.set(6, 10, 6); scene.add(key);
+    const rim = new THREE.DirectionalLight(0xffffff, 0.45); rim.position.set(-8, 6, -8); scene.add(rim);
+
+    const ground = new THREE.Mesh(
+      new THREE.CircleGeometry(20, 64),
+      new THREE.MeshStandardMaterial({ color: new THREE.Color(BG).offsetHSL(0, 0, 0.08), metalness: 0.0, roughness: 1.0 })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = 0;
+    scene.add(ground);
+
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.05 });
+    for (let i = 1; i <= 4; i++) {
+      const ring = new THREE.Mesh(new THREE.RingGeometry(i*2.2, i*2.2 + 0.02, 128), ringMat);
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.01;
+      scene.add(ring);
+    }
+
+    // Phone
+    const phone = new THREE.Group(); phone.position.set(-5.2, 1.2, 0);
+    const phoneBody = new THREE.Mesh(
+      new THREE.BoxGeometry(1.8, 3.2, 0.18),
+      new THREE.MeshStandardMaterial({ color: 0x0c1218, metalness: 0.35, roughness: 0.55 })
+    );
+    const phoneScreen = new THREE.Mesh(
+      new THREE.PlaneGeometry(1.55, 2.85),
+      new THREE.MeshStandardMaterial({ color: 0x0d1a22, emissive: 0x0b2030, emissiveIntensity: 0.9, metalness: 0.0, roughness: 0.9 })
+    );
+    phoneScreen.position.z = 0.095;
+
+    const thumbs = new THREE.Group();
+    for (let i = 0; i < 6; i++) {
+      const card = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.62, 0.42),
+        new THREE.MeshStandardMaterial({ color: 0x163042, emissive: 0x0e2a3a, emissiveIntensity: 0.6, roughness: 0.95 })
+      );
+      const row = Math.floor(i / 2), col = i % 2;
+      card.position.set(-0.33 + col * 0.66, 0.75 - row * 0.55, 0.096);
+      thumbs.add(card);
+    }
+
+    const clip = new THREE.Mesh(
+      new THREE.BoxGeometry(0.8, 0.5, 0.14),
+      new THREE.MeshStandardMaterial({ color: 0x1d5a7a, emissive: 0x0f3a52, emissiveIntensity: 0.85, metalness: 0.2, roughness: 0.35 })
+    );
+    clip.position.set(0.0, -0.95, 0.18);
+
+    phone.add(phoneBody, phoneScreen, thumbs, clip);
+    scene.add(phone);
+
+    // Gateway
+    const gateway = new THREE.Group(); gateway.position.set(0, 1.35, 0);
+    const gatewayCore = new THREE.Mesh(
+      new THREE.BoxGeometry(1.2, 1.2, 1.2),
+      new THREE.MeshStandardMaterial({ color: 0x121a22, metalness: 0.15, roughness: 0.6, emissive: 0x0b2030, emissiveIntensity: 0.7 })
+    );
+    const gatewayFrame = new THREE.Mesh(
+      new THREE.BoxGeometry(1.35, 1.35, 1.35),
+      new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.06, metalness: 0.0, roughness: 1.0 })
+    );
+    gatewayFrame.scale.set(1.02, 1.02, 1.02);
+    gateway.add(gatewayCore, gatewayFrame);
+    scene.add(gateway);
+
+    // Library
+    const library = new THREE.Group(); library.position.set(5.2, 1.15, 0);
+    const shelfBack = new THREE.Mesh(
+      new THREE.BoxGeometry(2.4, 2.6, 0.22),
+      new THREE.MeshStandardMaterial({ color: 0x0c1218, metalness: 0.2, roughness: 0.85 })
+    );
+    shelfBack.position.z = -0.1;
+
+    const grid = new THREE.Group();
+    const slots = [];
+    const rows = 3, cols = 3;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const slot = new THREE.Mesh(
+          new THREE.PlaneGeometry(0.62, 0.44),
+          new THREE.MeshStandardMaterial({ color: 0x13212c, emissive: 0x071a25, emissiveIntensity: 0.5, roughness: 0.95 })
+        );
+        slot.position.set(-0.72 + c * 0.72, 0.72 - r * 0.72, 0.02);
+        slots.push(slot);
+        grid.add(slot);
+      }
+    }
+
+    const finalTile = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.62, 0.44),
+      new THREE.MeshStandardMaterial({ color: 0x1d5a7a, emissive: 0x0f3a52, emissiveIntensity: 1.2, roughness: 0.55 })
+    );
+    finalTile.position.copy(slots[1].position);
+    finalTile.position.z = 0.03;
+    finalTile.visible = false;
+
+    library.add(shelfBack, grid, finalTile);
+    scene.add(library);
+
+    // Packet stream
+    const streamGroup = new THREE.Group(); scene.add(streamGroup);
+    const packetCount = 140;
+    const packetGeo = new THREE.BoxGeometry(0.09, 0.09, 0.09);
+    const packetMat = new THREE.MeshStandardMaterial({
+      color: 0xbfe9ff, emissive: 0x224a60, emissiveIntensity: 0.95,
+      roughness: 0.5, transparent: true, opacity: 0.0
+    });
+    const packets = new THREE.InstancedMesh(packetGeo, packetMat, packetCount);
+    packets.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    streamGroup.add(packets);
+
+    const p0 = new THREE.Vector3(-4.2, 1.35, 0.15);
+    const p1 = new THREE.Vector3(-2.5, 2.1, 1.3);
+    const p2 = new THREE.Vector3(-0.8, 1.6, 0.6);
+    const p3 = new THREE.Vector3( 0.0, 1.35, 0.0);
+    const q0 = new THREE.Vector3( 0.0, 1.35, 0.0);
+    const q1 = new THREE.Vector3( 1.3, 1.9,-0.8);
+    const q2 = new THREE.Vector3( 3.0, 1.4, 0.8);
+    const q3 = new THREE.Vector3( 4.2, 1.15, 0.10);
+
+    const curveIn  = new THREE.CubicBezierCurve3(p0, p1, p2, p3);
+    const curveOut = new THREE.CubicBezierCurve3(q0, q1, q2, q3);
+
+    // Checkpoint rings
+    const checkpoints = new THREE.Group();
+    for (let i = 0; i < 3; i++) {
+      const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(0.95 + i*0.22, 0.014, 16, 128),
+        new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.09, emissive: 0x0b2030, emissiveIntensity: 0.7 })
+      );
+      ring.rotation.x = Math.PI/2;
+      ring.position.y = 0.02 + i*0.02;
+      checkpoints.add(ring);
+    }
+    checkpoints.position.copy(gateway.position);
+    scene.add(checkpoints);
+
+    // Labels as sprites
+    const labels = [];
+    if (LABELS) {
+      labels.push(makeLabel("iPhone\nCamera Roll", new THREE.Vector3(-5.2, 3.3, 0), 0.5));
+      labels.push(makeLabel("UPLOAD\n(encrypted packets)", new THREE.Vector3(-2.4, 3.2, 1.2), 0.2));
+      labels.push(makeLabel("API\nGateway", new THREE.Vector3(0, 3.1, 0), 0.5));
+      labels.push(makeLabel("INGEST\nhash • dedupe • index", new THREE.Vector3(0, 5, 0), 0.7));
+      labels.push(makeLabel("Asset Explorer\nLibrary", new THREE.Vector3(5.2, 3.0, 0), 0.5));
+      labels.forEach(s => scene.add(s));
+    }
+
+    // HUD + controls
+    const phaseBadge = document.getElementById("phaseBadge");
+    const timeBadge = document.getElementById("timeBadge");
+    const progressBadge = document.getElementById("progressBadge");
+    const caption = document.getElementById("caption");
+    const toggleBtn = document.getElementById("toggleBtn");
+    const resetBtn = document.getElementById("resetBtn");
+    const scrub = document.getElementById("scrub");
+
+    toggleBtn.addEventListener("click", () => {
+      playing = !playing;
+      toggleBtn.textContent = playing ? "⏸ pause" : "▶ play";
+    });
+    resetBtn.addEventListener("click", () => {
+      setTimelineTime(0);
+      scrub.value = "0";
+      playing = true;
+      toggleBtn.textContent = "⏸ pause";
+    });
+    scrub.addEventListener("input", () => setTimelineTime(parseFloat(scrub.value) * DUR));
+    window.addEventListener("timeline:time", (e) => {
+      const seconds = e?.detail?.seconds;
+      if (Number.isFinite(seconds)) {
+        updateTLVar(seconds);
+        scrub.value = String(clamp(seconds / DUR, 0, 1));
+      }
+    });
+
+    function phases(u) {
+      return {
+        select: smoothstep(0.00, 0.18, u),
+        upload: smoothstep(0.18, 0.55, u),
+        ingest: smoothstep(0.55, 0.78, u),
+        place: smoothstep(0.78, 1.00, u),
+      };
+    }
+
+    const tmp = new THREE.Object3D();
+    let last = performance.now() / 1000;
+
+    function onResize() {
+      const w = Math.floor(window.innerWidth);
+      const h = Math.floor(window.innerHeight);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h, false);
+    }
+    window.addEventListener("resize", onResize);
+    onResize();
+
+    const packetSeeds = new Float32Array(packetCount);
+    for (let i = 0; i < packetCount; i++) packetSeeds[i] = Math.random();
+
+    function tick() {
+      requestAnimationFrame(tick);
+
+      const now = performance.now() / 1000;
+      const dt = Math.min(0.05, Math.max(0, now - last));
+      last = now;
+
+      if (!hasSharedTimeline && playing) {
+        tl += dt * SPEED;
+        if (tl > DUR) tl -= DUR;
+        updateTLVar(tl);
+      }
+
+      const t = getTimelineTime();
+      updateTLVar(t);
+
+      const u = (t % DUR) / DUR;
+      scrub.value = String(u);
+
+      timeBadge.textContent = `t=${t.toFixed(2)}s`;
+      progressBadge.textContent = `${Math.round(u * 100)}%`;
+
+      const P = phases(u);
+      const phaseName =
+        (u < 0.18) ? "SELECT + PREP" :
+        (u < 0.55) ? "UPLOAD STREAM" :
+        (u < 0.78) ? "INGEST" :
+                     "INDEX + READY";
+      phaseBadge.textContent = `PHASE: ${phaseName}`;
+      caption.textContent =
+        (u < 0.18) ? "Select clip → lift from camera roll → attach metadata" :
+        (u < 0.55) ? "Packetize → encrypt → flow through LAN/API tunnel" :
+        (u < 0.78) ? "Validate checksum → dedupe → normalize → index" :
+                     "Asset lands in explorer grid → ready for edit/preview";
+
+      // Phone motion
+      phone.position.y = 1.2 + Math.sin(u * Math.PI * 2) * 0.06;
+      phone.rotation.y = Math.sin(u * Math.PI * 2) * 0.05;
+
+      // Clip lift
+      {
+        const lift = P.select;
+        const hover = 0.08 * Math.sin(u * Math.PI * 10);
+        clip.position.y = -0.95 + lift * 1.25 + hover;
+        clip.position.x = lift * 0.15;
+        clip.material.emissiveIntensity = 0.65 + lift * 0.9;
+        clip.rotation.y = lift * 0.35;
+      }
+
+      // Gateway ingest
+      gatewayCore.rotation.y = (u * 0.9) + P.ingest * 1.4;
+      gatewayCore.rotation.x = P.ingest * 0.25;
+      checkpoints.rotation.z = u * 1.4;
+      checkpoints.children.forEach((r, i) => r.material.opacity = 0.05 + 0.14 * pulse(P.ingest, 0.45 + i*0.12));
+
+      // Library bob
+      library.position.y = 1.15 + Math.sin((u + 0.25) * Math.PI * 2) * 0.05;
+
+      // Packets
+      const streamAlpha =
+        (u < 0.18) ? 0 :
+        (u < 0.55) ? smoothstep(0.18, 0.24, u) :
+        (u < 0.78) ? (1.0 - smoothstep(0.55, 0.78, u)) * 0.6 :
+                     0.0;
+      packetMat.opacity = 0.85 * streamAlpha;
+
+      for (let i = 0; i < packetCount; i++) {
+        const seed = packetSeeds[i];
+        const spread = 0.18;
+        let pos;
+
+        if (u < 0.55) {
+          const pu = fract(P.upload * 1.12 + seed);
+          pos = curveIn.getPoint(pu);
+          pos.y += (seed - 0.5) * spread;
+          pos.z += Math.sin((seed + u) * 40) * 0.06;
+        } else {
+          const ou = fract(P.place * 1.25 + seed);
+          pos = curveOut.getPoint(ou);
+          pos.y += (seed - 0.5) * (spread * 0.7);
+          pos.z += Math.cos((seed + u) * 36) * 0.05;
+        }
+
+        const s = 0.85 + 0.6 * Math.sin((seed + u) * Math.PI * 2);
+        tmp.position.copy(pos);
+        tmp.scale.setScalar(0.9 + s * 0.2);
+
+        const nearGate = 1.0 - clamp(pos.distanceTo(gateway.position) / 2.0, 0, 1);
+        tmp.scale.multiplyScalar(1.0 + nearGate * 0.8 * P.ingest);
+
+        tmp.updateMatrix();
+        packets.setMatrixAt(i, tmp.matrix);
+      }
+      packets.instanceMatrix.needsUpdate = true;
+
+      // Placement tile
+      if (u >= 0.78) {
+        finalTile.visible = true;
+        const placeU = P.place;
+
+        const start = gateway.position.clone().add(new THREE.Vector3(0.0, 0.0, 0.9));
+        const end = library.localToWorld(slots[1].position.clone()).add(new THREE.Vector3(0, 0, 0.03));
+        const mid = start.clone().lerp(end, 0.5).add(new THREE.Vector3(0, 1.0, -0.3));
+
+        const a = bezier3(start, mid, end, placeU);
+        finalTile.position.copy(library.worldToLocal(a.clone()));
+
+        const glow = smoothstep(0.90, 1.00, placeU);
+        finalTile.material.emissiveIntensity = 0.8 + glow * 1.4;
+        slots[1].material.emissiveIntensity = 0.35 + pulse(placeU, 0.85) * 0.65;
+      } else {
+        finalTile.visible = false;
+      }
+
+      // Slot twinkle
+      for (let i = 0; i < slots.length; i++) {
+        const tw = 0.12 + 0.10 * Math.sin((u * 2*Math.PI) + i * 0.7);
+        slots[i].material.emissiveIntensity = 0.18 + tw * 0.35;
+      }
+
+      // Labels face camera
+      if (LABELS) labels.forEach((s) => s.quaternion.copy(camera.quaternion));
+
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    tick();
+
+    // Helpers
+    function clamp(x, a, b) { return Math.min(b, Math.max(a, x)); }
+    function fract(x) { return x - Math.floor(x); }
+    function smoothstep(a, b, x) {
+      const t = clamp((x - a) / (b - a), 0, 1);
+      return t * t * (3 - 2 * t);
+    }
+    function pulse(x, center) {
+      const d = Math.abs(x - center);
+      return Math.exp(-d * d * 40);
+    }
+    function bezier3(a, b, c, t) {
+      const ab = a.clone().lerp(b, t);
+      const bc = b.clone().lerp(c, t);
+      return ab.lerp(bc, t);
+    }
+
+    function makeLabel(text, worldPos, scale = 1.0) {
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
+
+      const lines = String(text).split("\n");
+      const fontSize = 44;
+      const pad = 18;
+      const lineH = Math.round(fontSize * 1.06);
+
+      ctx.font = `700 ${fontSize}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
+      const w = Math.max(...lines.map(l => ctx.measureText(l).width)) + pad*2;
+      const h = lines.length * lineH + pad*2;
+
+      canvas.width = Math.ceil(w);
+      canvas.height = Math.ceil(h);
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "rgba(255,255,255,0.07)";
+      roundRect(ctx, 0, 0, canvas.width, canvas.height, 22, true, false);
+
+      ctx.strokeStyle = "rgba(255,255,255,0.16)";
+      ctx.lineWidth = 3;
+      roundRect(ctx, 1.5, 1.5, canvas.width-3, canvas.height-3, 22, false, true);
+
+      ctx.fillStyle = "rgba(235,245,255,0.95)";
+      ctx.font = `700 ${fontSize}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace`;
+      ctx.textBaseline = "top";
+      for (let i = 0; i < lines.length; i++) ctx.fillText(lines[i], pad, pad + i * lineH);
+
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.minFilter = THREE.LinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+
+      const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0.95, depthTest: true });
+      const sprite = new THREE.Sprite(mat);
+
+      const aspect = canvas.width / canvas.height;
+      sprite.scale.set(2.0 * aspect * scale, 2.0 * scale, 1);
+      sprite.position.copy(worldPos);
+      return sprite;
+    }
+
+    function roundRect(ctx, x, y, w, h, r, fill, stroke) {
+      const rr = Math.min(r, w/2, h/2);
+      ctx.beginPath();
+      ctx.moveTo(x + rr, y);
+      ctx.arcTo(x + w, y, x + w, y + h, rr);
+      ctx.arcTo(x + w, y + h, x, y + h, rr);
+      ctx.arcTo(x, y + h, x, y, rr);
+      ctx.arcTo(x, y, x + w, y, rr);
+      ctx.closePath();
+      if (fill) ctx.fill();
+      if (stroke) ctx.stroke();
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,428 @@
+<!doctype html>
+<!--
+Default URL+Parameters:
+  blank_webgl_starter_vertical.html?fps=1&animate=1&grid=1&vignette=1&scan=0&dpr=auto&bg=0a0f14&debug=0
+
+What this is:
+- A single self-contained HTML file you can save + preview on iPhone (vertical).
+- WebGL2 (falls back to WebGL1).
+- Fullscreen quad so the fragment shader runs "per-pixel" across the whole canvas.
+- URL params to toggle simple effects while you iterate.
+
+Tips:
+- On iPhone Safari, WebGL2 support varies by iOS version/device. This will fall back gracefully.
+- This file is intentionally minimal but structured so you can drop in your own shader code.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>Blank WebGL Shader Starter (Vertical)</title>
+  <style>
+    :root { color-scheme: dark; }
+    html, body {
+      margin: 0; padding: 0;
+      width: 100%; height: 100%;
+      background: #000;
+      overflow: hidden;
+      touch-action: none; /* prevent accidental scroll while you test */
+      -webkit-user-select: none; user-select: none;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+    canvas {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      display: block;
+    }
+    .hud {
+      position: fixed;
+      left: 12px;
+      top: 12px;
+      right: 12px;
+      z-index: 10;
+      pointer-events: none;
+      font-size: 12px;
+      line-height: 1.35;
+      color: rgba(255,255,255,.9);
+      text-shadow: 0 1px 2px rgba(0,0,0,.65);
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: rgba(0,0,0,.35);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+    }
+    .hud .row { display: flex; justify-content: space-between; gap: 8px; }
+    .hud .muted { color: rgba(255,255,255,.65); }
+    .hud .warn { color: rgba(255,180,120,.95); }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: rgba(255,255,255,.12);
+      border: 1px solid rgba(255,255,255,.15);
+      margin-left: 6px;
+    }
+    .err {
+      position: fixed;
+      left: 12px; right: 12px; bottom: 12px;
+      padding: 12px;
+      border-radius: 12px;
+      background: rgba(90, 10, 10, .8);
+      border: 1px solid rgba(255, 80, 80, .35);
+      color: rgba(255,255,255,.95);
+      font-size: 12px;
+      white-space: pre-wrap;
+      z-index: 20;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gl"></canvas>
+
+  <div class="hud" id="hud">
+    <div class="row">
+      <div>
+        <strong>WebGL Shader Starter</strong>
+        <span class="badge" id="modeBadge">init</span>
+      </div>
+      <div class="muted" id="timeBadge">t=0.00</div>
+    </div>
+    <div class="row">
+      <div class="muted" id="sizeBadge">0×0</div>
+      <div class="muted" id="fpsBadge">fps=—</div>
+    </div>
+    <div class="row">
+      <div class="muted">
+        Toggles: grid=<span id="gridBadge">1</span>, vignette=<span id="vigBadge">1</span>, scan=<span id="scanBadge">0</span>
+      </div>
+      <div class="muted">
+        dpr=<span id="dprBadge">auto</span>
+      </div>
+    </div>
+    <div class="row">
+      <div class="muted">
+        Edit <strong>FRAG</strong> below to start.
+      </div>
+      <div class="muted">
+        tap screen = pause/resume
+      </div>
+    </div>
+  </div>
+
+  <div class="err" id="err"></div>
+
+<script>
+(() => {
+  // ----------------------------
+  // URL params (tiny toggles)
+  // ----------------------------
+  const qp = new URLSearchParams(location.search);
+  const getInt = (k, d) => qp.has(k) ? parseInt(qp.get(k), 10) : d;
+  const getStr = (k, d) => qp.has(k) ? String(qp.get(k)) : d;
+
+  const CFG = {
+    animate: getInt("animate", 1) !== 0,
+    fpsGate: Math.max(0, getInt("fps", 1)),     // 1 = normal; 0 = render once
+    grid: getInt("grid", 1) !== 0,
+    vignette: getInt("vignette", 1) !== 0,
+    scan: getInt("scan", 0) !== 0,
+    debug: getInt("debug", 0) !== 0,
+    bgHex: getStr("bg", "0a0f14"),
+    dpr: getStr("dpr", "auto"), // auto | 1 | 2 | 3
+  };
+
+  const hud = {
+    mode: document.getElementById("modeBadge"),
+    time: document.getElementById("timeBadge"),
+    size: document.getElementById("sizeBadge"),
+    fps: document.getElementById("fpsBadge"),
+    grid: document.getElementById("gridBadge"),
+    vig: document.getElementById("vigBadge"),
+    scan: document.getElementById("scanBadge"),
+    dpr: document.getElementById("dprBadge"),
+  };
+  hud.grid.textContent = CFG.grid ? "1" : "0";
+  hud.vig.textContent = CFG.vignette ? "1" : "0";
+  hud.scan.textContent = CFG.scan ? "1" : "0";
+  hud.dpr.textContent = CFG.dpr;
+
+  const errBox = document.getElementById("err");
+  const showErr = (msg) => { errBox.style.display = "block"; errBox.textContent = msg; };
+  const hideErr = () => { errBox.style.display = "none"; errBox.textContent = ""; };
+
+  // ----------------------------
+  // Canvas + GL context
+  // ----------------------------
+  const canvas = document.getElementById("gl");
+  /** @type {WebGL2RenderingContext|WebGLRenderingContext|null} */
+  let gl = canvas.getContext("webgl2", { antialias: false, alpha: false, preserveDrawingBuffer: false });
+  let isWebGL2 = !!gl;
+  if (!gl) {
+    gl = canvas.getContext("webgl", { antialias: false, alpha: false, preserveDrawingBuffer: false });
+    isWebGL2 = false;
+  }
+  if (!gl) {
+    showErr("WebGL not available on this device/browser.\nTry Safari (not in-app webviews), or ensure WebGL is enabled.");
+    hud.mode.textContent = "no-webgl";
+    return;
+  }
+
+  hud.mode.textContent = isWebGL2 ? "webgl2" : "webgl1";
+
+  // ----------------------------
+  // Shader sources
+  // ----------------------------
+  // Fullscreen quad: 2 triangles using a_position in clipspace.
+  const VERT = `
+    attribute vec2 a_position;
+    varying vec2 v_uv;
+    void main() {
+      v_uv = a_position * 0.5 + 0.5;
+      gl_Position = vec4(a_position, 0.0, 1.0);
+    }
+  `;
+
+  // EDIT THIS: Your fragment shader starts here.
+  // - v_uv is 0..1 (bottom-left to top-right)
+  // - u_res is pixel resolution
+  // - u_time is seconds
+  // - toggles: u_grid, u_vignette, u_scan
+  const FRAG = `
+    precision highp float;
+    varying vec2 v_uv;
+
+    uniform vec2  u_res;
+    uniform float u_time;
+
+    uniform float u_grid;
+    uniform float u_vignette;
+    uniform float u_scan;
+
+    uniform vec3  u_bg; // base background color
+
+    // Simple helpers
+    float hash21(vec2 p){
+      p = fract(p*vec2(234.34, 435.345));
+      p += dot(p, p+34.23);
+      return fract(p.x*p.y);
+    }
+
+    void main() {
+      vec2 uv = v_uv;
+
+      // Base background
+      vec3 col = u_bg;
+
+      // Subtle animated gradient
+      col += 0.06 * vec3(
+        sin((uv.y + u_time*0.05) * 6.2831),
+        sin((uv.x + u_time*0.03) * 6.2831),
+        sin((uv.x + uv.y + u_time*0.02) * 6.2831)
+      );
+
+      // Optional grid (debug)
+      if (u_grid > 0.5) {
+        vec2 g = abs(fract(uv * vec2(12.0, 24.0)) - 0.5);
+        float line = smoothstep(0.49, 0.50, max(g.x, g.y));
+        col = mix(col, col + vec3(0.12, 0.18, 0.22), line);
+      }
+
+      // Optional scanlines
+      if (u_scan > 0.5) {
+        float s = sin((uv.y * u_res.y) * 3.14159 * 0.5);
+        col *= 0.90 + 0.10 * s;
+      }
+
+      // Optional vignette
+      if (u_vignette > 0.5) {
+        vec2 p = uv - 0.5;
+        p.x *= u_res.x / u_res.y;
+        float v = smoothstep(0.85, 0.20, dot(p, p));
+        col *= v;
+      }
+
+      // Tiny grain
+      col += (hash21(uv * u_res + u_time) - 0.5) * 0.02;
+
+      gl_FragColor = vec4(col, 1.0);
+    }
+  `;
+
+  // ----------------------------
+  // Compile + link
+  // ----------------------------
+  const compile = (type, src) => {
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+      const info = gl.getShaderInfoLog(sh) || "unknown shader compile error";
+      gl.deleteShader(sh);
+      throw new Error(info);
+    }
+    return sh;
+  };
+
+  const link = (vs, fs) => {
+    const prog = gl.createProgram();
+    gl.attachShader(prog, vs);
+    gl.attachShader(prog, fs);
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+      const info = gl.getProgramInfoLog(prog) || "unknown program link error";
+      gl.deleteProgram(prog);
+      throw new Error(info);
+    }
+    return prog;
+  };
+
+  let program, a_position;
+  let u_res, u_time, u_grid, u_vignette, u_scan, u_bg;
+
+  try {
+    const vs = compile(gl.VERTEX_SHADER, VERT);
+    const fs = compile(gl.FRAGMENT_SHADER, FRAG);
+    program = link(vs, fs);
+
+    a_position = gl.getAttribLocation(program, "a_position");
+    u_res      = gl.getUniformLocation(program, "u_res");
+    u_time     = gl.getUniformLocation(program, "u_time");
+    u_grid     = gl.getUniformLocation(program, "u_grid");
+    u_vignette = gl.getUniformLocation(program, "u_vignette");
+    u_scan     = gl.getUniformLocation(program, "u_scan");
+    u_bg       = gl.getUniformLocation(program, "u_bg");
+
+    hideErr();
+  } catch (e) {
+    showErr("Shader error:\n" + String(e && e.message ? e.message : e));
+    hud.mode.textContent = "shader-error";
+    return;
+  }
+
+  // ----------------------------
+  // Fullscreen quad geometry
+  // ----------------------------
+  // Two triangles covering clipspace:
+  // (-1,-1) (1,-1) (-1,1) and (-1,1) (1,-1) (1,1)
+  const quad = new Float32Array([
+    -1, -1,   1, -1,  -1,  1,
+    -1,  1,   1, -1,   1,  1,
+  ]);
+
+  const vbo = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
+
+  // ----------------------------
+  // Resize: iPhone-friendly DPR handling
+  // ----------------------------
+  const parseHexRGB = (hex) => {
+    const h = (hex || "").replace("#","").trim();
+    if (h.length !== 6) return [0.04, 0.06, 0.08];
+    const r = parseInt(h.slice(0,2),16) / 255;
+    const g = parseInt(h.slice(2,4),16) / 255;
+    const b = parseInt(h.slice(4,6),16) / 255;
+    return [r,g,b];
+  };
+  const BG = parseHexRGB(CFG.bgHex);
+
+  let DPR = 1;
+  const computeDPR = () => {
+    if (CFG.dpr === "auto") return Math.min(3, Math.max(1, window.devicePixelRatio || 1));
+    const n = Number(CFG.dpr);
+    return Number.isFinite(n) ? Math.min(3, Math.max(1, n)) : 1;
+  };
+
+  const resize = () => {
+    DPR = computeDPR();
+    const w = Math.floor(window.innerWidth * DPR);
+    const h = Math.floor(window.innerHeight * DPR);
+
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+      gl.viewport(0, 0, w, h);
+      hud.size.textContent = `${w}×${h}`;
+    }
+  };
+
+  // iOS sometimes needs a kick after orientation changes
+  window.addEventListener("resize", () => resize(), { passive: true });
+  window.addEventListener("orientationchange", () => setTimeout(resize, 80), { passive: true });
+  resize();
+
+  // ----------------------------
+  // Render loop (tap to pause)
+  // ----------------------------
+  let start = performance.now();
+  let last = start;
+  let paused = false;
+
+  let fpsAcc = 0, fpsFrames = 0, fpsLast = start;
+
+  const draw = (now) => {
+    if (CFG.fpsGate === 0) {
+      // Render once
+      render(now);
+      return;
+    }
+    requestAnimationFrame(draw);
+    if (!CFG.animate || paused) return;
+    render(now);
+  };
+
+  const render = (now) => {
+    resize();
+
+    const t = (now - start) / 1000;
+    hud.time.textContent = `t=${t.toFixed(2)}`;
+
+    // FPS estimate (simple)
+    const dt = (now - last) / 1000;
+    last = now;
+    fpsAcc += dt;
+    fpsFrames++;
+    if (now - fpsLast > 500) {
+      const fps = fpsFrames / fpsAcc;
+      hud.fps.textContent = `fps=${fps.toFixed(0)}`;
+      fpsAcc = 0; fpsFrames = 0; fpsLast = now;
+    }
+
+    gl.useProgram(program);
+
+    // Bind quad
+    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+    gl.enableVertexAttribArray(a_position);
+    gl.vertexAttribPointer(a_position, 2, gl.FLOAT, false, 0, 0);
+
+    // Uniforms
+    gl.uniform2f(u_res, canvas.width, canvas.height);
+    gl.uniform1f(u_time, t);
+    gl.uniform1f(u_grid, CFG.grid ? 1.0 : 0.0);
+    gl.uniform1f(u_vignette, CFG.vignette ? 1.0 : 0.0);
+    gl.uniform1f(u_scan, CFG.scan ? 1.0 : 0.0);
+    gl.uniform3f(u_bg, BG[0], BG[1], BG[2]);
+
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+  };
+
+  // Tap to pause/resume (handy on iPhone)
+  const togglePause = () => {
+    paused = !paused;
+    hud.mode.textContent = paused ? (isWebGL2 ? "webgl2 (paused)" : "webgl1 (paused)") : (isWebGL2 ? "webgl2" : "webgl1");
+  };
+  canvas.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    togglePause();
+  }, { passive: false });
+
+  // Initial frame + loop
+  requestAnimationFrame(draw);
+
+})();
+</script>
+</body>
+</html>

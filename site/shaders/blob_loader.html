@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Blob Loader</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #030912;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 80px;
+    flex-wrap: wrap;
+    font-family: 'Courier New', monospace;
+  }
+  .demo-label {
+    color: rgba(110,198,245,0.3);
+    font-size: 10px;
+    letter-spacing: .2em;
+    text-align: center;
+    margin-top: 12px;
+    text-transform: uppercase;
+  }
+</style>
+</head>
+<body>
+
+<!-- DEMO: two instances -->
+<div>
+  <div id="blob1"></div>
+  <div class="demo-label">with progress</div>
+</div>
+<div>
+  <div id="blob2"></div>
+  <div class="demo-label">indeterminate</div>
+</div>
+
+<script type="module">
+// ─────────────────────────────────────────────────────────────────────────────
+//  blob-loader.mjs  –  drop-in ES module, zero dependencies
+//  Usage:
+//    import { BlobLoader } from './blob-loader.mjs';
+//    const loader = new BlobLoader(document.getElementById('mount'), {
+//      label: 'Loading assets', size: 220, progress: null
+//    });
+//    loader.setProgress(74);   // 0-100
+//    loader.setLabel('Almost there');
+//    loader.destroy();
+// ─────────────────────────────────────────────────────────────────────────────
+
+const VERT = `
+attribute vec2 a_pos;
+void main() { gl_Position = vec4(a_pos, 0.0, 1.0); }
+`;
+
+const FRAG = `
+precision highp float;
+uniform float u_time;
+uniform vec2  u_res;
+
+// ── Utilities ──────────────────────────────────────────────────────────────
+
+float smin(float a, float b, float k) {
+  float h = clamp(0.5 + 0.5*(b-a)/k, 0.0, 1.0);
+  return mix(b, a, h) - k*h*(1.0-h);
+}
+
+// Value noise
+vec2 hash2(vec2 p) {
+  p = vec2(dot(p,vec2(127.1,311.7)), dot(p,vec2(269.5,183.3)));
+  return -1.0 + 2.0*fract(sin(p)*43758.5453);
+}
+float noise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  vec2 u = f*f*(3.0-2.0*f);
+  float a = dot(hash2(i+vec2(0,0)), f-vec2(0,0));
+  float b = dot(hash2(i+vec2(1,0)), f-vec2(1,0));
+  float c = dot(hash2(i+vec2(0,1)), f-vec2(0,1));
+  float d = dot(hash2(i+vec2(1,1)), f-vec2(1,1));
+  return mix(mix(a,b,u.x), mix(c,d,u.x), u.y);
+}
+float fbm(vec2 p, int oct) {
+  float v=0.0, a=0.5;
+  for(int i=0;i<8;i++){
+    if(i>=oct) break;
+    v += a*noise(p);
+    p = p*2.1 + vec2(1.7,9.2);
+    a *= 0.5;
+  }
+  return v;
+}
+
+// ── Metaball SDF ───────────────────────────────────────────────────────────
+
+float blob(vec2 uv, float t) {
+  // Domain-warped coordinates for extra squish
+  vec2 warp = vec2(
+    fbm(uv*2.5 + vec2(0.0, t*0.18), 4),
+    fbm(uv*2.5 + vec2(5.2, t*0.14), 4)
+  );
+  vec2 w = uv + 0.18*warp;
+
+  // 6 orbiting lobes on animated paths
+  float d = length(w) - 0.20;
+  d = smin(d, length(w - vec2( 0.22*sin(t*0.71),  0.22*cos(t*0.53))) - 0.14, 0.14);
+  d = smin(d, length(w - vec2( 0.24*sin(t*0.89+2.1), 0.24*cos(t*0.67+1.0))) - 0.13, 0.13);
+  d = smin(d, length(w - vec2( 0.21*sin(t*1.13+4.2), 0.21*cos(t*0.44+3.1))) - 0.12, 0.12);
+  d = smin(d, length(w - vec2( 0.20*sin(t*0.55+1.4), 0.20*cos(t*1.10+0.8))) - 0.11, 0.11);
+  d = smin(d, length(w - vec2( 0.19*sin(t*1.30+5.0), 0.19*cos(t*0.78+2.7))) - 0.10, 0.10);
+  d = smin(d, length(w - vec2( 0.17*sin(t*0.62+3.3), 0.17*cos(t*1.25+1.6))) - 0.09, 0.09);
+  return d;
+}
+
+// ── Colour palette ─────────────────────────────────────────────────────────
+
+vec3 palette(float t) {
+  // Deep bioluminescent teal/cyan with hot core
+  vec3 a = vec3(0.05, 0.12, 0.28);
+  vec3 b = vec3(0.05, 0.35, 0.48);
+  vec3 c = vec3(0.60, 0.90, 1.00);
+  vec3 d = vec3(0.00, 0.25, 0.52);
+  return a + b*cos(6.2832*(c*t+d));
+}
+
+// ── Caustic shimmer on surface ─────────────────────────────────────────────
+
+float caustics(vec2 uv, float t) {
+  float c = 0.0;
+  for(int i=0;i<3;i++){
+    float fi = float(i);
+    vec2 p = uv * (3.0 + fi*1.5);
+    p += vec2(sin(t*0.3+fi*2.1), cos(t*0.27+fi*1.7)) * 0.8;
+    float n = noise(p + t*0.2);
+    c += pow(max(0.0, 1.0 - abs(n)), 4.0);
+  }
+  return c / 3.0;
+}
+
+// ── SSS-style sub-surface scatter approximation ────────────────────────────
+
+float sss(vec2 uv, float d, float t) {
+  float thickness = smoothstep(-0.25, 0.0, d);  // thin near edge
+  return thickness * (0.5 + 0.5*fbm(uv*4.0 + t*0.1, 3));
+}
+
+// ── Main ───────────────────────────────────────────────────────────────────
+
+void main() {
+  vec2 uv = (gl_FragCoord.xy - 0.5*u_res) / min(u_res.x, u_res.y);
+  float t  = u_time;
+
+  float d = blob(uv, t);
+
+  // Masks
+  float fill  = smoothstep( 0.008, -0.04, d);
+  float shell = smoothstep( 0.04,  0.0,   d);   // soft outer glow
+  float rim   = smoothstep( 0.016, 0.0, abs(d)); // sharp rim light
+
+  // Core colour from depth
+  float depth = clamp(-d / 0.3, 0.0, 1.0);
+  vec3 baseCol = palette(depth * 0.6 + 0.2 + 0.06*sin(t*0.4));
+
+  // Caustic highlights on fill surface
+  float caust  = caustics(uv, t) * fill;
+  vec3  causticCol = vec3(0.6, 1.0, 1.0) * caust * 0.55;
+
+  // Sub-surface warm core
+  float sssVal = sss(uv, d, t);
+  vec3  sssCol  = vec3(0.1, 0.6, 0.9) * sssVal * fill * 0.4;
+
+  // Rim / edge light
+  vec3  rimCol  = vec3(0.5, 0.95, 1.0) * rim * 0.9;
+
+  // Specular blob (moving light source)
+  vec2  lp  = vec2(0.35*sin(t*0.5), 0.35*cos(t*0.37));
+  float sp  = pow(max(0.0, 1.0 - length(uv - lp)*4.5), 3.0);
+  vec3  specCol = vec3(0.8, 0.97, 1.0) * sp * fill * 0.7;
+
+  // Outer ambient glow (no geometry clip)
+  vec3  glowCol = vec3(0.04, 0.28, 0.55) * shell * (1.0-fill) * 0.8;
+
+  // Compose
+  vec3 col  = vec3(0.0);
+  col += baseCol  * fill;
+  col += sssCol;
+  col += causticCol;
+  col += rimCol;
+  col += specCol;
+  col += glowCol;
+
+  // Subtle grain
+  float gr = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898,78.233)) + t*100.0)*43758.5453);
+  col += (gr - 0.5) * 0.018;
+
+  // Alpha: filled + soft glow halo
+  float alpha = fill + shell * 0.35 * (1.0-fill);
+
+  gl_FragColor = vec4(col * alpha, alpha);
+}
+`;
+
+// ── WebGL helpers ──────────────────────────────────────────────────────────
+
+function compileShader(gl, type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
+    throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+
+function createProgram(gl, vert, frag) {
+  const p = gl.createProgram();
+  gl.attachShader(p, compileShader(gl, gl.VERTEX_SHADER,   vert));
+  gl.attachShader(p, compileShader(gl, gl.FRAGMENT_SHADER, frag));
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS))
+    throw new Error(gl.getProgramInfoLog(p));
+  return p;
+}
+
+// ── BlobLoader class ───────────────────────────────────────────────────────
+
+export class BlobLoader {
+  /**
+   * @param {HTMLElement} mount   - container element
+   * @param {object}      options
+   *   size     {number}  canvas CSS size in px (default 220)
+   *   label    {string}  loading text
+   *   progress {number|null} 0-100, null = indeterminate
+   */
+  constructor(mount, { size = 220, label = 'Loading…', progress = null } = {}) {
+    this._mount    = mount;
+    this._size     = size;
+    this._label    = label;
+    this._progress = progress;
+    this._raf      = null;
+    this._start    = performance.now();
+    this._dots     = '.';
+    this._dotTimer = null;
+
+    this._build();
+    this._initGL();
+    this._loop();
+    this._dotLoop();
+  }
+
+  // ── Public API ───────────────────────────────────────────────────────────
+
+  setProgress(v) {
+    this._progress = v;
+    this._updateBar();
+  }
+
+  setLabel(s) {
+    this._label = s;
+    if (this._labelEl) this._labelEl.firstChild.nodeValue = s;
+  }
+
+  destroy() {
+    cancelAnimationFrame(this._raf);
+    clearInterval(this._dotTimer);
+    this._mount.innerHTML = '';
+  }
+
+  // ── DOM construction ─────────────────────────────────────────────────────
+
+  _build() {
+    const s = this._size;
+
+    const wrap = document.createElement('div');
+    wrap.style.cssText = `
+      display:flex; flex-direction:column; align-items:center; gap:14px;
+      font-family:'Courier New',monospace; user-select:none;
+    `;
+
+    // Canvas wrapper (for glow shadow)
+    const cWrap = document.createElement('div');
+    cWrap.style.cssText = `
+      position:relative; width:${s}px; height:${s}px;
+      filter: drop-shadow(0 0 22px rgba(30,160,255,0.35));
+    `;
+
+    const canvas = document.createElement('canvas');
+    // Hi-DPI: set internal resolution now; resize loop handles it too
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width  = Math.round(s * dpr);
+    canvas.height = Math.round(s * dpr);
+    canvas.style.cssText = `width:${s}px; height:${s}px; display:block;`;
+    this._canvas = canvas;
+    cWrap.appendChild(canvas);
+
+    // Specular lens flare overlay
+    const lens = document.createElement('div');
+    lens.style.cssText = `
+      position:absolute; inset:0; pointer-events:none; border-radius:50%;
+      background: radial-gradient(
+        ellipse 50% 32% at 36% 26%,
+        rgba(255,255,255,0.16) 0%,
+        transparent 70%
+      );
+    `;
+    cWrap.appendChild(lens);
+    wrap.appendChild(cWrap);
+
+    // Label
+    const labelEl = document.createElement('span');
+    labelEl.style.cssText = `
+      font-size:11px; letter-spacing:.2em; color:#6ec6f5;
+      text-transform:uppercase; opacity:.85;
+    `;
+    labelEl.textContent = this._label;
+    this._labelEl = labelEl;
+    wrap.appendChild(labelEl);
+
+    // Progress bar (hidden when progress===null)
+    const barWrap = document.createElement('div');
+    barWrap.style.cssText = `
+      width:${s}px; height:2px; background:rgba(110,198,245,.12);
+      border-radius:2px; overflow:hidden;
+      opacity:${this._progress === null ? 0 : 1};
+      transition: opacity .3s;
+    `;
+    const barFill = document.createElement('div');
+    barFill.style.cssText = `
+      height:100%; width:${this._progress ?? 0}%;
+      background:linear-gradient(90deg,#1a9fdc,#7de8ff);
+      border-radius:2px; transition:width .25s ease;
+    `;
+    barWrap.appendChild(barFill);
+    this._barWrap = barWrap;
+    this._barFill = barFill;
+    wrap.appendChild(barWrap);
+
+    this._mount.appendChild(wrap);
+  }
+
+  _updateBar() {
+    if (!this._barFill) return;
+    const show = this._progress !== null;
+    this._barWrap.style.opacity = show ? '1' : '0';
+    if (show) this._barFill.style.width = `${this._progress}%`;
+  }
+
+  // ── WebGL setup ──────────────────────────────────────────────────────────
+
+  _initGL() {
+    const gl = this._canvas.getContext('webgl', {
+      alpha: true, premultipliedAlpha: false, antialias: false
+    });
+    if (!gl) { console.warn('WebGL not supported'); return; }
+    this._gl = gl;
+
+    const prog = createProgram(gl, VERT, FRAG);
+    gl.useProgram(prog);
+
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER,
+      new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+    const aPos = gl.getAttribLocation(prog, 'a_pos');
+    gl.enableVertexAttribArray(aPos);
+    gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+    this._uTime = gl.getUniformLocation(prog, 'u_time');
+    this._uRes  = gl.getUniformLocation(prog, 'u_res');
+  }
+
+  // ── Render loop ──────────────────────────────────────────────────────────
+
+  _loop() {
+    const gl = this._gl;
+    if (!gl) return;
+    const canvas = this._canvas;
+    const dpr = window.devicePixelRatio || 1;
+    const s   = this._size;
+    const w   = Math.round(s * dpr);
+    const h   = Math.round(s * dpr);
+
+    // Only resize if needed
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width  = w;
+      canvas.height = h;
+      gl.viewport(0, 0, w, h);
+    }
+
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.uniform1f(this._uTime, (performance.now() - this._start) * 0.001);
+    gl.uniform2f(this._uRes, w, h);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+    this._raf = requestAnimationFrame(() => this._loop());
+  }
+
+  // ── Dot animation ────────────────────────────────────────────────────────
+
+  _dotLoop() {
+    this._dotTimer = setInterval(() => {
+      this._dots = this._dots.length >= 3 ? '.' : this._dots + '.';
+      if (this._labelEl) {
+        this._labelEl.textContent = this._label + this._dots;
+      }
+    }, 480);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  DEMO (remove below when embedding)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const b1 = new BlobLoader(document.getElementById('blob1'), {
+  size: 220, label: 'Loading assets', progress: 0
+});
+const b2 = new BlobLoader(document.getElementById('blob2'), {
+  size: 140, label: 'Compiling', progress: null
+});
+
+// Simulate progress
+let p = 0;
+setInterval(() => {
+  p = p >= 100 ? 0 : p + 0.6;
+  b1.setProgress(Math.round(p));
+}, 40);
+
+</script>
+</body>
+</html>

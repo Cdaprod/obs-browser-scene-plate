@@ -1,0 +1,1008 @@
+<!doctype html>
+<!--
+Default URL+Parameters:
+  svg_diagram_editor_over_shader_vertical.html?dpr=auto&bg=0a0f14&grid=1&vignette=1&scan=0&glow=1&debug=0
+
+What this is:
+- WebGL shader background (fullscreen quad) + SVG diagram editor overlay (touch-first, iPhone vertical friendly).
+- Tap empty space: create node
+- Drag node: move node
+- Tap node (select) then tap another node: create arrow edge
+- Tap node (select) then tap empty space: create new node AND arrow to it
+- Double-tap node: edit label
+- Export/Import: copy/paste JSON
+
+Notes:
+- Coordinates are stored normalized (0..1) so exports are resolution-independent.
+- The shader highlights the selected node with a glow (optional via glow=1).
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>SVG Diagram Editor over Shader (Vertical)</title>
+  <style>
+    :root { color-scheme: dark; }
+    html, body {
+      margin: 0; padding: 0;
+      width: 100%; height: 100%;
+      background: #000;
+      overflow: hidden;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+
+    /* Layers */
+    #gl {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      display: block;
+      z-index: 0;
+    }
+    #svg {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      display: block;
+      z-index: 5;
+      touch-action: none; /* we handle gestures */
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    /* HUD */
+    .hud {
+      position: fixed;
+      left: 12px;
+      right: 12px;
+      top: 12px;
+      z-index: 20;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      padding: 10px 10px;
+      border-radius: 14px;
+      background: rgba(0,0,0,.35);
+      border: 1px solid rgba(255,255,255,.10);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+    .hud .title {
+      font-weight: 700;
+      margin-right: 8px;
+      color: rgba(255,255,255,.92);
+      letter-spacing: .2px;
+    }
+    .hud .meta {
+      margin-left: auto;
+      color: rgba(255,255,255,.65);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .btn {
+      pointer-events: auto;
+      appearance: none;
+      border: 1px solid rgba(255,255,255,.14);
+      background: rgba(255,255,255,.10);
+      color: rgba(255,255,255,.92);
+      padding: 8px 10px;
+      border-radius: 12px;
+      font-size: 12px;
+      line-height: 1;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .btn:active { transform: translateY(1px); }
+    .btn.danger {
+      border-color: rgba(255, 80, 80, .25);
+      background: rgba(255, 80, 80, .12);
+    }
+    .hint {
+      width: 100%;
+      margin-top: 6px;
+      color: rgba(255,255,255,.70);
+      font-size: 12px;
+      line-height: 1.3;
+    }
+    .hint b { color: rgba(255,255,255,.92); }
+
+    /* Modal */
+    .modal {
+      position: fixed;
+      inset: 0;
+      display: none;
+      z-index: 50;
+      background: rgba(0,0,0,.55);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      padding: 14px;
+      box-sizing: border-box;
+    }
+    .modal.open { display: block; }
+    .panel {
+      position: absolute;
+      left: 14px; right: 14px;
+      top: 14px; bottom: 14px;
+      border-radius: 16px;
+      background: rgba(8, 12, 16, .92);
+      border: 1px solid rgba(255,255,255,.12);
+      box-shadow: 0 10px 30px rgba(0,0,0,.55);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .panel .bar {
+      padding: 12px 12px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      border-bottom: 1px solid rgba(255,255,255,.10);
+    }
+    .panel .bar .label {
+      font-weight: 700;
+      color: rgba(255,255,255,.92);
+    }
+    .panel .bar .spacer { margin-left: auto; }
+    .panel textarea {
+      flex: 1;
+      width: 100%;
+      resize: none;
+      border: 0;
+      outline: none;
+      padding: 12px;
+      box-sizing: border-box;
+      background: transparent;
+      color: rgba(255,255,255,.90);
+      font-size: 12px;
+      line-height: 1.35;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+    .panel .foot {
+      padding: 10px 12px;
+      border-top: 1px solid rgba(255,255,255,.10);
+      color: rgba(255,255,255,.65);
+      font-size: 12px;
+      line-height: 1.3;
+    }
+
+    /* SVG styles */
+    .edge {
+      stroke: rgba(255,255,255,.45);
+      stroke-width: 2;
+      fill: none;
+      vector-effect: non-scaling-stroke;
+    }
+    .edge.selected {
+      stroke: rgba(160, 220, 255, .85);
+      stroke-width: 3;
+    }
+
+    .node-circle {
+      fill: rgba(255,255,255,.12);
+      stroke: rgba(255,255,255,.75);
+      stroke-width: 2;
+      vector-effect: non-scaling-stroke;
+    }
+    .node-circle.selected {
+      fill: rgba(160, 220, 255, .16);
+      stroke: rgba(160, 220, 255, .95);
+      stroke-width: 3;
+    }
+    .node-label {
+      fill: rgba(255,255,255,.92);
+      font-size: 12px;
+      dominant-baseline: middle;
+      text-anchor: middle;
+      pointer-events: none;
+      paint-order: stroke;
+      stroke: rgba(0,0,0,.55);
+      stroke-width: 3px;
+    }
+    .toast {
+      position: fixed;
+      left: 12px;
+      right: 12px;
+      bottom: 12px;
+      z-index: 30;
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: rgba(0,0,0,.45);
+      border: 1px solid rgba(255,255,255,.10);
+      color: rgba(255,255,255,.85);
+      font-size: 12px;
+      line-height: 1.25;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      display: none;
+    }
+    .toast.show { display: block; }
+  </style>
+</head>
+<body>
+  <canvas id="gl"></canvas>
+
+  <svg id="svg" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="userSpaceOnUse">
+        <path d="M2,2 L10,6 L2,10 Z" fill="rgba(255,255,255,.55)"></path>
+      </marker>
+      <marker id="arrowSel" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="userSpaceOnUse">
+        <path d="M2,2 L10,6 L2,10 Z" fill="rgba(160,220,255,.95)"></path>
+      </marker>
+    </defs>
+
+    <!-- edges go here -->
+    <g id="edges"></g>
+
+    <!-- nodes go here -->
+    <g id="nodes"></g>
+  </svg>
+
+  <div class="hud">
+    <div class="title">Diagram</div>
+    <button class="btn" id="btnExport">Export</button>
+    <button class="btn" id="btnImport">Import</button>
+    <button class="btn danger" id="btnClear">Clear</button>
+    <button class="btn" id="btnHelp">Help</button>
+    <div class="meta" id="meta">nodes=0 edges=0</div>
+    <div class="hint" id="hint">
+      <b>Tap</b> empty = node · <b>Drag</b> node = move · <b>Tap</b> node then <b>tap</b> node = arrow · <b>Tap</b> node then <b>tap</b> empty = new node + arrow · <b>Double tap</b> node = label
+    </div>
+  </div>
+
+  <div class="modal" id="modal">
+    <div class="panel">
+      <div class="bar">
+        <div class="label" id="modalTitle">Export</div>
+        <div class="spacer"></div>
+        <button class="btn" id="btnCopy">Copy</button>
+        <button class="btn" id="btnApply">Apply</button>
+        <button class="btn" id="btnClose">Close</button>
+      </div>
+      <textarea id="modalText" spellcheck="false"></textarea>
+      <div class="foot" id="modalFoot">
+        Export: copy JSON anywhere. Import: paste JSON and hit Apply.
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+(() => {
+  // ------------------------------------------------------------
+  // URL params
+  // ------------------------------------------------------------
+  const qp = new URLSearchParams(location.search);
+  const getInt = (k, d) => qp.has(k) ? parseInt(qp.get(k), 10) : d;
+  const getStr = (k, d) => qp.has(k) ? String(qp.get(k)) : d;
+
+  const CFG = {
+    dpr: getStr("dpr", "auto"), // auto | 1 | 2 | 3
+    bgHex: getStr("bg", "0a0f14"),
+    grid: getInt("grid", 1) !== 0,
+    vignette: getInt("vignette", 1) !== 0,
+    scan: getInt("scan", 0) !== 0,
+    glow: getInt("glow", 1) !== 0,
+    debug: getInt("debug", 0) !== 0,
+  };
+
+  // ------------------------------------------------------------
+  // Helpers
+  // ------------------------------------------------------------
+  const clamp01 = (v) => Math.max(0, Math.min(1, v));
+  const nowMs = () => performance.now();
+
+  const parseHexRGB = (hex) => {
+    const h = (hex || "").replace("#","").trim();
+    if (h.length !== 6) return [0.04, 0.06, 0.08];
+    const r = parseInt(h.slice(0,2),16) / 255;
+    const g = parseInt(h.slice(2,4),16) / 255;
+    const b = parseInt(h.slice(4,6),16) / 255;
+    return [r,g,b];
+  };
+
+  const toastEl = document.getElementById("toast");
+  let toastTimer = null;
+  const toast = (msg, ms=1200) => {
+    toastEl.textContent = msg;
+    toastEl.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove("show"), ms);
+  };
+
+  // ------------------------------------------------------------
+  // WebGL background (fullscreen quad)
+  // ------------------------------------------------------------
+  const canvas = document.getElementById("gl");
+  let gl = canvas.getContext("webgl2", { antialias:false, alpha:false, preserveDrawingBuffer:false });
+  let isWebGL2 = !!gl;
+  if (!gl) {
+    gl = canvas.getContext("webgl", { antialias:false, alpha:false, preserveDrawingBuffer:false });
+    isWebGL2 = false;
+  }
+
+  const BG = parseHexRGB(CFG.bgHex);
+
+  const computeDPR = () => {
+    if (CFG.dpr === "auto") return Math.min(3, Math.max(1, window.devicePixelRatio || 1));
+    const n = Number(CFG.dpr);
+    return Number.isFinite(n) ? Math.min(3, Math.max(1, n)) : 1;
+  };
+
+  let DPR = 1;
+  let W = 0, H = 0;
+
+  const resize = () => {
+    DPR = computeDPR();
+    const w = Math.floor(window.innerWidth * DPR);
+    const h = Math.floor(window.innerHeight * DPR);
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+      W = w; H = h;
+      if (gl) gl.viewport(0, 0, w, h);
+      renderDiagram(); // keep SVG aligned with real pixels
+    }
+  };
+
+  window.addEventListener("resize", resize, { passive:true });
+  window.addEventListener("orientationchange", () => setTimeout(resize, 80), { passive:true });
+
+  let prog = null;
+  let a_position = null;
+  let u_res = null, u_time = null, u_bg = null, u_grid = null, u_vignette = null, u_scan = null, u_focus = null, u_focusOn = null, u_glow = null;
+
+  const VERT = `
+    attribute vec2 a_position;
+    varying vec2 v_uv;
+    void main() {
+      v_uv = a_position * 0.5 + 0.5;
+      gl_Position = vec4(a_position, 0.0, 1.0);
+    }
+  `;
+
+  // Shader: background + optional grid/vignette/scan + optional focus glow
+  const FRAG = `
+    precision highp float;
+    varying vec2 v_uv;
+    uniform vec2  u_res;
+    uniform float u_time;
+    uniform vec3  u_bg;
+    uniform float u_grid;
+    uniform float u_vignette;
+    uniform float u_scan;
+    uniform vec2  u_focus;   // 0..1
+    uniform float u_focusOn; // 0/1
+    uniform float u_glow;    // 0/1
+
+    float hash21(vec2 p){
+      p = fract(p*vec2(234.34, 435.345));
+      p += dot(p, p+34.23);
+      return fract(p.x*p.y);
+    }
+
+    void main() {
+      vec2 uv = v_uv;
+
+      // Base
+      vec3 col = u_bg;
+
+      // Gentle animated gradient / atmosphere
+      float t = u_time;
+      col += 0.06 * vec3(
+        sin((uv.y + t*0.05) * 6.2831),
+        sin((uv.x + t*0.03) * 6.2831),
+        sin((uv.x + uv.y + t*0.02) * 6.2831)
+      );
+
+      // Grid
+      if (u_grid > 0.5) {
+        vec2 g = abs(fract(uv * vec2(12.0, 24.0)) - 0.5);
+        float line = smoothstep(0.49, 0.50, max(g.x, g.y));
+        col = mix(col, col + vec3(0.10, 0.16, 0.22), line);
+      }
+
+      // Scanlines (subtle)
+      if (u_scan > 0.5) {
+        float s = sin((uv.y * u_res.y) * 3.14159 * 0.5);
+        col *= 0.92 + 0.08 * s;
+      }
+
+      // Vignette
+      if (u_vignette > 0.5) {
+        vec2 p = uv - 0.5;
+        p.x *= u_res.x / u_res.y;
+        float v = smoothstep(0.90, 0.22, dot(p, p));
+        col *= v;
+      }
+
+      // Focus glow around selected node
+      if (u_glow > 0.5 && u_focusOn > 0.5) {
+        vec2 p = uv - u_focus;
+        p.x *= u_res.x / u_res.y;
+        float d = length(p);
+        float ring = exp(-d * 22.0);
+        float pulse = 0.65 + 0.35 * sin(t * 2.6);
+        col += vec3(0.18, 0.28, 0.40) * ring * pulse;
+      }
+
+      // Grain
+      col += (hash21(uv * u_res + u_time) - 0.5) * 0.018;
+
+      gl_FragColor = vec4(col, 1.0);
+    }
+  `;
+
+  const compile = (type, src) => {
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+      const info = gl.getShaderInfoLog(sh) || "shader compile error";
+      gl.deleteShader(sh);
+      throw new Error(info);
+    }
+    return sh;
+  };
+
+  const link = (vs, fs) => {
+    const p = gl.createProgram();
+    gl.attachShader(p, vs);
+    gl.attachShader(p, fs);
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+      const info = gl.getProgramInfoLog(p) || "program link error";
+      gl.deleteProgram(p);
+      throw new Error(info);
+    }
+    return p;
+  };
+
+  const initGL = () => {
+    if (!gl) return;
+    const vs = compile(gl.VERTEX_SHADER, VERT);
+    const fs = compile(gl.FRAGMENT_SHADER, FRAG);
+    prog = link(vs, fs);
+
+    a_position = gl.getAttribLocation(prog, "a_position");
+    u_res      = gl.getUniformLocation(prog, "u_res");
+    u_time     = gl.getUniformLocation(prog, "u_time");
+    u_bg       = gl.getUniformLocation(prog, "u_bg");
+    u_grid     = gl.getUniformLocation(prog, "u_grid");
+    u_vignette = gl.getUniformLocation(prog, "u_vignette");
+    u_scan     = gl.getUniformLocation(prog, "u_scan");
+    u_focus    = gl.getUniformLocation(prog, "u_focus");
+    u_focusOn  = gl.getUniformLocation(prog, "u_focusOn");
+    u_glow     = gl.getUniformLocation(prog, "u_glow");
+
+    // Fullscreen quad buffer
+    const quad = new Float32Array([
+      -1, -1,   1, -1,  -1,  1,
+      -1,  1,   1, -1,   1,  1,
+    ]);
+    const vbo = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+    gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
+
+    gl.useProgram(prog);
+    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+    gl.enableVertexAttribArray(a_position);
+    gl.vertexAttribPointer(a_position, 2, gl.FLOAT, false, 0, 0);
+
+    resize();
+  };
+
+  let t0 = nowMs();
+  let focus = { x: 0.5, y: 0.5, on: 0 };
+
+  const drawGL = () => {
+    if (!gl || !prog) return;
+    resize();
+    const t = (nowMs() - t0) / 1000;
+
+    gl.useProgram(prog);
+    gl.uniform2f(u_res, canvas.width, canvas.height);
+    gl.uniform1f(u_time, t);
+    gl.uniform3f(u_bg, BG[0], BG[1], BG[2]);
+    gl.uniform1f(u_grid, CFG.grid ? 1.0 : 0.0);
+    gl.uniform1f(u_vignette, CFG.vignette ? 1.0 : 0.0);
+    gl.uniform1f(u_scan, CFG.scan ? 1.0 : 0.0);
+    gl.uniform2f(u_focus, focus.x, focus.y);
+    gl.uniform1f(u_focusOn, focus.on);
+    gl.uniform1f(u_glow, CFG.glow ? 1.0 : 0.0);
+
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+  };
+
+  // ------------------------------------------------------------
+  // Diagram data model
+  // ------------------------------------------------------------
+  const state = {
+    nodes: [], // {id, x, y, label}
+    edges: [], // {id, from, to}
+    selectedNodeId: null,
+    selectedEdgeId: null,
+    draggingNodeId: null,
+    dragOffset: { x: 0, y: 0 },
+    lastTapMs: 0,
+    lastTapNodeId: null,
+  };
+
+  const uid = (prefix="id") => `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`;
+
+  const metaEl = document.getElementById("meta");
+  const updateMeta = () => {
+    metaEl.textContent = `nodes=${state.nodes.length} edges=${state.edges.length}`;
+  };
+
+  // ------------------------------------------------------------
+  // SVG rendering
+  // ------------------------------------------------------------
+  const svg = document.getElementById("svg");
+  const gEdges = document.getElementById("edges");
+  const gNodes = document.getElementById("nodes");
+
+  const pxToNorm = (clientX, clientY) => {
+    const rect = svg.getBoundingClientRect();
+    const x = (clientX - rect.left) / rect.width;
+    const y = (clientY - rect.top) / rect.height;
+    return { x: clamp01(x), y: clamp01(y) };
+  };
+
+  const normToPx = (nx, ny) => {
+    const rect = svg.getBoundingClientRect();
+    return { x: nx * rect.width, y: ny * rect.height };
+  };
+
+  const nodeRadiusPx = () => {
+    // feels good on iPhone; scales gently with screen
+    const rect = svg.getBoundingClientRect();
+    const base = Math.min(rect.width, rect.height);
+    return Math.max(16, Math.min(26, base * 0.03));
+  };
+
+  const findNodeAt = (nx, ny) => {
+    const r = nodeRadiusPx();
+    const rect = svg.getBoundingClientRect();
+    const px = { x: nx * rect.width, y: ny * rect.height };
+    for (let i = state.nodes.length - 1; i >= 0; i--) {
+      const n = state.nodes[i];
+      const np = normToPx(n.x, n.y);
+      const dx = px.x - np.x;
+      const dy = px.y - np.y;
+      if ((dx*dx + dy*dy) <= (r*r)) return n;
+    }
+    return null;
+  };
+
+  const renderDiagram = () => {
+    // Edges
+    gEdges.innerHTML = "";
+    for (const e of state.edges) {
+      const from = state.nodes.find(n => n.id === e.from);
+      const to   = state.nodes.find(n => n.id === e.to);
+      if (!from || !to) continue;
+
+      const a = normToPx(from.x, from.y);
+      const b = normToPx(to.x, to.y);
+
+      const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      line.setAttribute("x1", a.x);
+      line.setAttribute("y1", a.y);
+      line.setAttribute("x2", b.x);
+      line.setAttribute("y2", b.y);
+
+      const isSel = (e.id === state.selectedEdgeId);
+      line.setAttribute("class", isSel ? "edge selected" : "edge");
+      line.setAttribute("marker-end", isSel ? "url(#arrowSel)" : "url(#arrow)");
+      line.dataset.edgeId = e.id;
+
+      // Allow selecting an edge by tapping it (hit area via thick transparent overlay)
+      const hit = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      hit.setAttribute("x1", a.x);
+      hit.setAttribute("y1", a.y);
+      hit.setAttribute("x2", b.x);
+      hit.setAttribute("y2", b.y);
+      hit.setAttribute("stroke", "rgba(0,0,0,0)");
+      hit.setAttribute("stroke-width", "18");
+      hit.setAttribute("vector-effect", "non-scaling-stroke");
+      hit.style.pointerEvents = "stroke";
+      hit.dataset.edgeId = e.id;
+
+      gEdges.appendChild(line);
+      gEdges.appendChild(hit);
+    }
+
+    // Nodes
+    gNodes.innerHTML = "";
+    const r = nodeRadiusPx();
+
+    for (const n of state.nodes) {
+      const p = normToPx(n.x, n.y);
+      const grp = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      grp.dataset.nodeId = n.id;
+
+      const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      c.setAttribute("cx", p.x);
+      c.setAttribute("cy", p.y);
+      c.setAttribute("r", r);
+      const isSel = (n.id === state.selectedNodeId);
+      c.setAttribute("class", isSel ? "node-circle selected" : "node-circle");
+
+      const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      t.setAttribute("x", p.x);
+      t.setAttribute("y", p.y);
+      t.setAttribute("class", "node-label");
+      t.textContent = (n.label || "").trim() || "node";
+
+      grp.appendChild(c);
+      grp.appendChild(t);
+      gNodes.appendChild(grp);
+    }
+
+    // Shader focus follows selected node
+    const sel = state.nodes.find(n => n.id === state.selectedNodeId);
+    if (sel) {
+      focus.x = sel.x; focus.y = sel.y; focus.on = 1;
+    } else {
+      focus.on = 0;
+    }
+
+    updateMeta();
+  };
+
+  // ------------------------------------------------------------
+  // Editor operations
+  // ------------------------------------------------------------
+  const addNode = (nx, ny, label=null) => {
+    const n = { id: uid("n"), x: nx, y: ny, label: label ?? `N${state.nodes.length + 1}` };
+    state.nodes.push(n);
+    return n;
+  };
+
+  const addEdge = (fromId, toId) => {
+    // prevent duplicates (same direction)
+    const exists = state.edges.some(e => e.from === fromId && e.to === toId);
+    if (exists) return null;
+    const e = { id: uid("e"), from: fromId, to: toId };
+    state.edges.push(e);
+    return e;
+  };
+
+  const clearSelection = () => {
+    state.selectedNodeId = null;
+    state.selectedEdgeId = null;
+  };
+
+  const selectNode = (id) => {
+    state.selectedNodeId = id;
+    state.selectedEdgeId = null;
+  };
+
+  const selectEdge = (id) => {
+    state.selectedEdgeId = id;
+    state.selectedNodeId = null;
+  };
+
+  const deleteSelected = () => {
+    if (state.selectedEdgeId) {
+      state.edges = state.edges.filter(e => e.id !== state.selectedEdgeId);
+      state.selectedEdgeId = null;
+      toast("Edge deleted");
+      renderDiagram();
+      return;
+    }
+    if (state.selectedNodeId) {
+      const nid = state.selectedNodeId;
+      state.nodes = state.nodes.filter(n => n.id !== nid);
+      state.edges = state.edges.filter(e => e.from !== nid && e.to !== nid);
+      state.selectedNodeId = null;
+      toast("Node deleted");
+      renderDiagram();
+    }
+  };
+
+  const editNodeLabel = (nodeId) => {
+    const n = state.nodes.find(nn => nn.id === nodeId);
+    if (!n) return;
+    const next = prompt("Node label:", n.label || "");
+    if (next === null) return;
+    n.label = String(next).slice(0, 64);
+    renderDiagram();
+  };
+
+  // ------------------------------------------------------------
+  // Pointer / touch interactions
+  // ------------------------------------------------------------
+  const DOUBLE_TAP_MS = 320;
+  const TAP_MOVE_PX = 10;
+
+  let pointerDown = false;
+  let downPt = { x: 0, y: 0 };       // normalized
+  let downClient = { x: 0, y: 0 };   // client px
+  let downOnNodeId = null;
+  let downOnEdgeId = null;
+
+  const onPointerDown = (ev) => {
+    // ignore multi-touch here (we're not implementing pinch in B; keep stable)
+    if (ev.pointerType === "touch" && ev.isPrimary === false) return;
+
+    pointerDown = true;
+    svg.setPointerCapture(ev.pointerId);
+
+    downClient = { x: ev.clientX, y: ev.clientY };
+    downPt = pxToNorm(ev.clientX, ev.clientY);
+
+    // hit test node first
+    const n = findNodeAt(downPt.x, downPt.y);
+    downOnNodeId = n ? n.id : null;
+
+    // hit test edge by DOM target dataset
+    const targetEdgeId = (ev.target && ev.target.dataset) ? ev.target.dataset.edgeId : null;
+    downOnEdgeId = targetEdgeId || null;
+
+    if (downOnNodeId) {
+      // possible drag
+      state.draggingNodeId = downOnNodeId;
+      const node = state.nodes.find(nn => nn.id === downOnNodeId);
+      state.dragOffset = { x: (node.x - downPt.x), y: (node.y - downPt.y) };
+
+      // selection (don’t create edge yet; wait for pointerup for taps)
+      selectNode(downOnNodeId);
+      renderDiagram();
+      ev.preventDefault();
+      return;
+    }
+
+    if (downOnEdgeId) {
+      selectEdge(downOnEdgeId);
+      renderDiagram();
+      ev.preventDefault();
+      return;
+    }
+
+    // Touch down on empty: don't create node yet; wait for pointerup to distinguish tap/drag
+    clearSelection();
+    // Touch down on empty:
+    // IMPORTANT: do NOT clear selection here, because we support:
+    // “tap selected node, then tap empty” => create new node + edge on pointerup.
+    // We’ll clear selection only if user taps empty with no selection, on pointerup.
+    renderDiagram();
+    ev.preventDefault();
+  };
+
+  const onPointerMove = (ev) => {
+    if (!pointerDown) return;
+
+    // If dragging node
+    if (state.draggingNodeId) {
+      const pt = pxToNorm(ev.clientX, ev.clientY);
+      const node = state.nodes.find(nn => nn.id === state.draggingNodeId);
+      if (!node) return;
+
+      node.x = clamp01(pt.x + state.dragOffset.x);
+      node.y = clamp01(pt.y + state.dragOffset.y);
+
+      renderDiagram();
+      ev.preventDefault();
+    }
+  };
+
+  const onPointerUp = (ev) => {
+    if (!pointerDown) return;
+    pointerDown = false;
+
+    // Determine if it was a tap (low movement)
+    const dx = ev.clientX - downClient.x;
+    const dy = ev.clientY - downClient.y;
+    const moved = Math.sqrt(dx*dx + dy*dy);
+    const isTap = moved <= TAP_MOVE_PX;
+
+    const upPt = pxToNorm(ev.clientX, ev.clientY);
+    const upNode = findNodeAt(upPt.x, upPt.y);
+    const upNodeId = upNode ? upNode.id : null;
+
+    // Stop dragging
+    const wasDragging = !!state.draggingNodeId;
+    state.draggingNodeId = null;
+
+    if (!isTap) {
+      // Drag ended; nothing else
+      renderDiagram();
+      ev.preventDefault();
+      return;
+    }
+
+    // Double-tap node to edit label
+    const t = nowMs();
+    const isDouble = (state.lastTapNodeId && upNodeId && state.lastTapNodeId === upNodeId && (t - state.lastTapMs) <= DOUBLE_TAP_MS);
+
+    state.lastTapMs = t;
+    state.lastTapNodeId = upNodeId;
+
+    if (isDouble && upNodeId) {
+      editNodeLabel(upNodeId);
+      ev.preventDefault();
+      return;
+    }
+
+    // TAP behaviors:
+    // 1) Tap on node: select (already selected on pointerdown)
+    if (upNodeId) {
+      // If a node was already selected (and it's different), create edge
+      const prevSel = state.selectedNodeId;
+      if (prevSel && prevSel !== upNodeId) {
+        addEdge(prevSel, upNodeId);
+        toast("Arrow created");
+      }
+      selectNode(upNodeId);
+      renderDiagram();
+      ev.preventDefault();
+      return;
+    }
+
+    // 2) Tap on empty:
+    // If a node is selected, create new node + edge from selected to new
+    if (state.selectedNodeId) {
+      const newN = addNode(upPt.x, upPt.y);
+      addEdge(state.selectedNodeId, newN.id);
+      selectNode(newN.id);
+      toast("Node + arrow created");
+      renderDiagram();
+      ev.preventDefault();
+      return;
+    }
+
+    // Otherwise create a standalone node
+    const n = addNode(upPt.x, upPt.y);
+    selectNode(n.id);
+    toast("Node created");
+    renderDiagram();
+    ev.preventDefault();
+  };
+
+  const onKeyDown = (ev) => {
+    // for desktop testing
+    if (ev.key === "Backspace" || ev.key === "Delete") {
+      deleteSelected();
+    }
+    if (ev.key === "Escape") {
+      clearSelection();
+      renderDiagram();
+    }
+  };
+
+  svg.addEventListener("pointerdown", onPointerDown, { passive: false });
+  svg.addEventListener("pointermove", onPointerMove, { passive: false });
+  svg.addEventListener("pointerup", onPointerUp, { passive: false });
+  window.addEventListener("keydown", onKeyDown);
+
+  // ------------------------------------------------------------
+  // Modal (Export/Import)
+  // ------------------------------------------------------------
+  const modal = document.getElementById("modal");
+  const modalTitle = document.getElementById("modalTitle");
+  const modalText = document.getElementById("modalText");
+  const modalFoot = document.getElementById("modalFoot");
+  const btnClose = document.getElementById("btnClose");
+  const btnCopy = document.getElementById("btnCopy");
+  const btnApply = document.getElementById("btnApply");
+
+  let modalMode = "export"; // export | import
+
+  const openModal = (mode) => {
+    modalMode = mode;
+    modal.classList.add("open");
+    if (mode === "export") {
+      modalTitle.textContent = "Export JSON";
+      btnApply.style.display = "none";
+      btnCopy.style.display = "inline-block";
+      modalFoot.textContent = "Copy this JSON anywhere. It stores normalized coordinates (0..1).";
+      modalText.value = JSON.stringify({ nodes: state.nodes, edges: state.edges }, null, 2);
+      setTimeout(() => { modalText.focus(); modalText.select(); }, 30);
+    } else {
+      modalTitle.textContent = "Import JSON";
+      btnApply.style.display = "inline-block";
+      btnCopy.style.display = "none";
+      modalFoot.textContent = "Paste JSON and hit Apply. Invalid JSON won’t be applied.";
+      modalText.value = "";
+      setTimeout(() => { modalText.focus(); }, 30);
+    }
+  };
+
+  const closeModal = () => {
+    modal.classList.remove("open");
+  };
+
+  btnClose.addEventListener("click", closeModal);
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal) closeModal();
+  });
+
+  btnCopy.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(modalText.value);
+      toast("Copied to clipboard");
+    } catch {
+      // fallback: select text
+      modalText.focus();
+      modalText.select();
+      toast("Select + copy");
+    }
+  });
+
+  btnApply.addEventListener("click", () => {
+    try {
+      const obj = JSON.parse(modalText.value);
+      if (!obj || !Array.isArray(obj.nodes) || !Array.isArray(obj.edges)) throw new Error("JSON must contain {nodes:[], edges:[]}");
+      // sanitize
+      const nodes = obj.nodes.map(n => ({
+        id: String(n.id || uid("n")),
+        x: clamp01(Number(n.x)),
+        y: clamp01(Number(n.y)),
+        label: String(n.label || "node").slice(0, 64),
+      }));
+      const nodeIds = new Set(nodes.map(n => n.id));
+      const edges = obj.edges
+        .map(e => ({ id: String(e.id || uid("e")), from: String(e.from), to: String(e.to) }))
+        .filter(e => nodeIds.has(e.from) && nodeIds.has(e.to));
+
+      state.nodes = nodes;
+      state.edges = edges;
+      clearSelection();
+      renderDiagram();
+      closeModal();
+      toast("Imported");
+    } catch (err) {
+      toast("Import failed: " + (err && err.message ? err.message : String(err)), 1800);
+    }
+  });
+
+  // HUD buttons
+  document.getElementById("btnExport").addEventListener("click", () => openModal("export"));
+  document.getElementById("btnImport").addEventListener("click", () => openModal("import"));
+  document.getElementById("btnClear").addEventListener("click", () => {
+    if (!confirm("Clear all nodes/edges?")) return;
+    state.nodes = [];
+    state.edges = [];
+    clearSelection();
+    renderDiagram();
+    toast("Cleared");
+  });
+  document.getElementById("btnHelp").addEventListener("click", () => {
+    toast("Tap empty: node · Drag node: move · Tap node then tap node: arrow · Tap node then tap empty: new+arrow · Double tap node: label", 2200);
+  });
+
+  // ------------------------------------------------------------
+  // Start / animate
+  // ------------------------------------------------------------
+  if (gl) {
+    try { initGL(); } catch (e) { /* ignore, SVG editor still works */ }
+  }
+
+  // Seed a tiny starter graph so it feels alive (optional)
+  const seed = () => {
+    const a = addNode(0.30, 0.30, "Ingest");
+    const b = addNode(0.72, 0.32, "Index");
+    const c = addNode(0.50, 0.68, "Explorer");
+    addEdge(a.id, b.id);
+    addEdge(b.id, c.id);
+    state.selectedNodeId = a.id;
+    renderDiagram();
+  };
+  seed();
+
+  const frame = () => {
+    drawGL();
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+
+})();
+</script>
+</body>
+</html>

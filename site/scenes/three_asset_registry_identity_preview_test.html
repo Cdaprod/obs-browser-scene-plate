@@ -1,0 +1,199 @@
+<!doctype html>
+<!--
+Default URL+Parameters:
+three_asset_registry_identity_preview.html?dur=10&speed=1&labelScale=0.55&orbit=1&bg=0a0f14
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Asset Identity Pipeline — Registry Authority Visual</title>
+
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#0a0f14}
+canvas{display:block}
+.hud{
+position:fixed;top:10px;left:10px;color:#e6f2ff;
+font:12px ui-monospace,monospace;pointer-events:none
+}
+</style>
+
+<!-- Importmap fixes the “three not valid URL” issue -->
+<script type="importmap">
+{
+ "imports": {
+   "three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+   "three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+ }
+}
+</script>
+</head>
+
+<body>
+<div class="hud">
+<b>Asset Registry Identity Formation</b><br/>
+Capture → Normalize → Hash → Registry → Ecosystem
+</div>
+
+<script type="module">
+import * as THREE from "three";
+import {OrbitControls} from "three/addons/controls/OrbitControls.js";
+
+/* ---------------- URL Params ---------------- */
+const qs=new URLSearchParams(location.search);
+const DUR=parseFloat(qs.get("dur")||10);
+const SPEED=parseFloat(qs.get("speed")||1);
+const LABEL_SCALE=parseFloat(qs.get("labelScale")||0.55);
+const BG="#" + (qs.get("bg")||"0a0f14");
+const ORBIT=qs.get("orbit")!=="0";
+
+/* ---------------- Renderer ---------------- */
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth,innerHeight);
+renderer.setClearColor(BG,1);
+document.body.appendChild(renderer.domElement);
+
+/* ---------------- Scene ---------------- */
+const scene=new THREE.Scene();
+scene.fog=new THREE.Fog(BG,10,60);
+
+const camera=new THREE.PerspectiveCamera(55,innerWidth/innerHeight,0.1,200);
+camera.position.set(0,4,14);
+
+const controls=new OrbitControls(camera,renderer.domElement);
+controls.enabled=ORBIT;
+
+/* Lights */
+scene.add(new THREE.AmbientLight(0xffffff,.55));
+const key=new THREE.DirectionalLight(0xffffff,.8);
+key.position.set(6,10,6); scene.add(key);
+
+/* Ground */
+const ground=new THREE.Mesh(
+ new THREE.CircleGeometry(30,64),
+ new THREE.MeshStandardMaterial({color:0x0f1b24,roughness:1})
+);
+ground.rotation.x=-Math.PI/2;
+scene.add(ground);
+
+/* ---------------- Zones ---------------- */
+
+/* RAW ASSET */
+const asset=new THREE.Mesh(
+ new THREE.BoxGeometry(1.6,.9,.3),
+ new THREE.MeshStandardMaterial({color:0x225a77,emissive:0x113344})
+);
+asset.position.set(-6,1.4,0);
+scene.add(asset);
+
+/* NORMALIZE ENGINE */
+const normalize=new THREE.Mesh(
+ new THREE.BoxGeometry(2,2,2),
+ new THREE.MeshStandardMaterial({
+   color:0x162029,
+   emissive:0x0a1e2b,
+   transparent:true,
+   opacity:.6
+ })
+);
+normalize.position.set(-2,1.5,0);
+scene.add(normalize);
+
+/* HASH FORGE (particle swirl) */
+const forgeGroup=new THREE.Group();
+forgeGroup.position.set(1.8,1.5,0);
+scene.add(forgeGroup);
+
+const particles=200;
+const pGeo=new THREE.SphereGeometry(.04,6,6);
+const pMat=new THREE.MeshBasicMaterial({color:0xbfe9ff});
+const swirl=new THREE.InstancedMesh(pGeo,pMat,particles);
+forgeGroup.add(swirl);
+
+/* REGISTRY HUB */
+const registry=new THREE.Mesh(
+ new THREE.IcosahedronGeometry(1.4,1),
+ new THREE.MeshStandardMaterial({
+   color:0x16232d,
+   emissive:0x0c3146,
+   roughness:.5
+ })
+);
+registry.position.set(5.5,1.5,0);
+scene.add(registry);
+
+/* Orbit nodes */
+const nodes=[];
+for(let i=0;i<4;i++){
+ let n=new THREE.Mesh(
+  new THREE.SphereGeometry(.35,16,16),
+  new THREE.MeshStandardMaterial({color:0x1d5a7a,emissive:0x0e2b3d})
+ );
+ scene.add(n);
+ nodes.push(n);
+}
+
+/* ---------------- Animation ---------------- */
+
+let t=0;
+const dummy=new THREE.Object3D();
+
+function animate(){
+ requestAnimationFrame(animate);
+ t+=0.016*SPEED;
+ const u=(t%DUR)/DUR;
+
+ /* RAW asset wobble */
+ asset.rotation.y=Math.sin(u*6)*.2;
+
+ /* Move asset across pipeline */
+ if(u<.3){
+   asset.position.x=-6+u*14;
+ }
+ else if(u<.6){
+   asset.position.x=-6+(.3*14);
+ }
+ else{
+   asset.position.x=-6+(.3*14)+(u-.6)*12;
+ }
+
+ /* Normalize cube pulse */
+ normalize.scale.setScalar(1+.2*Math.sin(u*10));
+
+ /* HASH swirl */
+ for(let i=0;i<particles;i++){
+  const a=i/particles*Math.PI*6+u*12;
+  const r=1.4*(1-u*.5);
+  dummy.position.set(Math.cos(a)*r,Math.sin(a*1.4)*.6,Math.sin(a)*r);
+  dummy.updateMatrix();
+  swirl.setMatrixAt(i,dummy.matrix);
+ }
+ swirl.instanceMatrix.needsUpdate=true;
+
+ /* Registry hub rotate */
+ registry.rotation.y+=.01;
+
+ /* Ecosystem nodes orbit */
+ nodes.forEach((n,i)=>{
+  const ang=u*6+i*Math.PI/2;
+  n.position.set(
+    registry.position.x+Math.cos(ang)*3,
+    1.5,
+    Math.sin(ang)*3
+  );
+ });
+
+ controls.update();
+ renderer.render(scene,camera);
+}
+animate();
+
+/* Resize */
+addEventListener("resize",()=>{
+ renderer.setSize(innerWidth,innerHeight);
+ camera.aspect=innerWidth/innerHeight;
+ camera.updateProjectionMatrix();
+});
+</script>
+</body>
+</html>

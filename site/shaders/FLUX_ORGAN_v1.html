@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>FLUX.ORGAN</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Oxanium:wght@200;400;700&family=VT323&display=swap');
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --ink:#050508;
+  --neon:#39ff8f;
+  --blood:#ff2d4e;
+  --rust:#c84b00;
+  --chrome:#8899aa;
+  --dim:rgba(0,0,0,0.75);
+  --panel:rgba(3,6,10,0.88);
+}
+html,body{width:100%;height:100%;overflow:hidden;background:#000;cursor:none}
+body{font-family:'Oxanium',sans-serif;color:var(--neon)}
+
+#c{position:fixed;inset:0;width:100%;height:100%}
+
+/* cursor */
+#cur{position:fixed;pointer-events:none;z-index:9999;mix-blend-mode:screen;
+  width:16px;height:16px;border:1px solid var(--neon);border-radius:50%;
+  transform:translate(-50%,-50%);transition:border-color .1s}
+
+/* HUD shell */
+#hud{position:fixed;inset:0;pointer-events:none;z-index:100}
+
+/* top bar */
+#topbar{position:fixed;top:0;left:0;right:0;height:42px;
+  background:linear-gradient(to bottom,rgba(0,0,0,.9),transparent);
+  display:flex;align-items:center;padding:0 18px;gap:20px;z-index:200;pointer-events:none}
+#logo{font-family:'VT323',monospace;font-size:1.5rem;letter-spacing:.25em;
+  color:#fff;text-shadow:0 0 18px var(--neon),0 0 40px var(--neon);pointer-events:none}
+#logo em{color:var(--neon);font-style:normal}
+#sceneTag{font-family:'VT323',monospace;font-size:1.1rem;letter-spacing:.2em;
+  color:var(--chrome);opacity:.7}
+
+/* right status */
+#stat{position:fixed;top:10px;right:16px;z-index:200;pointer-events:none;
+  font-size:.55rem;letter-spacing:.18em;color:var(--chrome);text-align:right;line-height:2}
+#stat .live{color:var(--neon)}
+#stat .dead{color:var(--blood)}
+
+/* scene switcher */
+#scenes{position:fixed;top:50%;left:12px;transform:translateY(-50%);
+  z-index:200;display:flex;flex-direction:column;gap:8px;pointer-events:all}
+.sc-btn{background:transparent;border:1px solid rgba(57,255,143,.18);
+  color:rgba(57,255,143,.35);font-family:'VT323',monospace;font-size:.85rem;
+  letter-spacing:.15em;padding:6px 10px;cursor:pointer;transition:all .2s;
+  writing-mode:horizontal-tb;width:44px;text-align:center}
+.sc-btn:hover,.sc-btn.on{border-color:var(--neon);color:var(--neon);
+  background:rgba(57,255,143,.08);box-shadow:0 0 10px rgba(57,255,143,.2)}
+.sc-btn.on{background:rgba(57,255,143,.14)}
+
+/* bottom controls */
+#ctrl{position:fixed;bottom:0;left:0;right:0;z-index:200;
+  background:linear-gradient(to top,rgba(0,0,0,.95) 60%,transparent);
+  padding:14px 18px 18px;display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap}
+.cg{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.cl{font-size:.5rem;letter-spacing:.2em;color:rgba(57,255,143,.4);text-transform:uppercase}
+.sb{background:transparent;border:1px solid rgba(57,255,143,.2);
+  color:rgba(57,255,143,.45);font-family:'Oxanium',sans-serif;font-size:.6rem;
+  letter-spacing:.12em;padding:5px 12px;cursor:pointer;transition:all .15s;text-transform:uppercase}
+.sb:hover,.sb.on{border-color:var(--neon);color:var(--neon);
+  background:rgba(57,255,143,.08);box-shadow:0 0 8px rgba(57,255,143,.15)}
+.sb.on{background:rgba(57,255,143,.12)}
+
+/* video toggle */
+#vidToggle{accent-color:var(--neon);width:14px;height:14px;cursor:pointer}
+
+/* meters */
+#mwrap{display:flex;flex-direction:column;gap:3px;min-width:110px}
+.mr{display:flex;align-items:center;gap:6px;font-size:.5rem;letter-spacing:.08em}
+.ml{width:30px;color:rgba(57,255,143,.4);flex-shrink:0}
+.mbo{flex:1;height:2px;background:rgba(57,255,143,.08);overflow:hidden}
+.mbi{height:100%;width:0%;background:var(--neon);box-shadow:0 0 4px var(--neon);transition:width .04s}
+.mv{width:28px;text-align:right;color:rgba(57,255,143,.55);font-size:.48rem}
+
+/* beat dot */
+#bdot{width:12px;height:12px;border-radius:50%;border:1px solid rgba(57,255,143,.2);transition:all .05s}
+
+/* spec mini */
+#sc2{position:fixed;right:14px;bottom:74px;width:160px;height:44px;
+  opacity:.5;z-index:200;border-bottom:1px solid rgba(57,255,143,.15)}
+
+/* video preview (hidden) */
+#vid{display:none}
+#vidSrc{display:none}
+
+/* scanlines */
+#sl{position:fixed;inset:0;pointer-events:none;z-index:150;
+  background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.035) 2px,rgba(0,0,0,.035) 4px)}
+
+/* corners */
+.cr{position:fixed;width:32px;height:32px;z-index:200;pointer-events:none;opacity:.3}
+.cr::before,.cr::after{content:'';position:absolute;background:var(--neon)}
+.cr::before{width:1px;height:100%}.cr::after{width:100%;height:1px}
+.tl{top:14px;left:14px}.tr{top:14px;right:14px;transform:scaleX(-1)}
+.bl{bottom:14px;left:14px;transform:scaleY(-1)}.br{bottom:14px;right:14px;transform:scale(-1)}
+
+/* glitch flash overlay */
+#gfl{position:fixed;inset:0;z-index:160;pointer-events:none;opacity:0;
+  background:var(--blood);mix-blend-mode:screen;transition:opacity .05s}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<canvas id="sc2"></canvas>
+<video id="vid" autoplay muted playsinline loop></video>
+<video id="vidSrc" autoplay muted playsinline loop></video>
+
+<div id="cur"></div>
+<div id="sl"></div>
+<div id="gfl"></div>
+<div class="cr tl"></div><div class="cr tr"></div>
+<div class="cr bl"></div><div class="cr br"></div>
+
+<div id="topbar">
+  <div id="logo">FLUX<em>.</em>ORGAN</div>
+  <div id="sceneTag">// SCN_01 MEMBRANE</div>
+</div>
+
+<div id="stat">
+  <div><span class="dead" id="sdot">●</span> <span id="slbl">NO SOURCE</span></div>
+  <div id="sbpm">BPM —</div>
+  <div id="sfps">— FPS</div>
+  <div id="sscn">SCN 1/4</div>
+</div>
+
+<!-- Scene selector -->
+<div id="scenes">
+  <button class="sc-btn on" data-s="0">01</button>
+  <button class="sc-btn" data-s="1">02</button>
+  <button class="sc-btn" data-s="2">03</button>
+  <button class="sc-btn" data-s="3">04</button>
+</div>
+
+<div id="ctrl">
+  <div class="cg">
+    <span class="cl">Source</span>
+    <button class="sb" id="bMic">MIC</button>
+    <button class="sb" id="bTab">TAB</button>
+    <button class="sb" id="bFile">FILE</button>
+    <input type="file" id="fAud" style="display:none" accept="audio/*,video/*">
+  </div>
+  <div class="cg">
+    <span class="cl">Video</span>
+    <button class="sb" id="bCam">CAM</button>
+    <button class="sb" id="bVid">CLIP</button>
+    <input type="file" id="fVid" style="display:none" accept="video/*">
+    <button class="sb" id="bVOff">OFF</button>
+  </div>
+  <div class="cg">
+    <span class="cl">Auto</span>
+    <button class="sb on" id="bAuto">SCENE AUTO</button>
+  </div>
+  <div class="cg" id="mwrap">
+    <div class="mr"><span class="ml">BASS</span><div class="mbo"><div class="mbi" id="mB"></div></div><span class="mv" id="vB">0.00</span></div>
+    <div class="mr"><span class="ml">MID</span><div class="mbo"><div class="mbi" id="mM"></div></div><span class="mv" id="vM">0.00</span></div>
+    <div class="mr"><span class="ml">TREB</span><div class="mbo"><div class="mbi" id="mT"></div></div><span class="mv" id="vT">0.00</span></div>
+    <div class="mr"><span class="ml">RMS</span><div class="mbo"><div class="mbi" id="mR"></div></div><span class="mv" id="vR">0.00</span></div>
+  </div>
+  <div class="cg" style="margin-left:auto">
+    <span class="cl">Beat</span>
+    <div id="bdot"></div>
+  </div>
+</div>
+
+<audio id="aEl" crossorigin="anonymous" style="display:none" loop></audio>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+//  WEBGL INIT
+// ═══════════════════════════════════════════════════════════════
+const C = document.getElementById('c');
+const gl = C.getContext('webgl', {antialias:false,alpha:false,preserveDrawingBuffer:false});
+if(!gl){document.body.innerHTML='<p style="color:red;padding:40px">WebGL required</p>'}
+
+const ext = gl.getExtension('OES_texture_float');
+const extHalf = gl.getExtension('OES_texture_half_float');
+const floatType = ext ? gl.FLOAT : (extHalf ? extHalf.HALF_FLOAT_OES : gl.UNSIGNED_BYTE);
+
+function resize(){
+  C.width=innerWidth; C.height=innerHeight;
+  gl.viewport(0,0,C.width,C.height);
+  rebuildFBOs();
+}
+window.addEventListener('resize',resize);
+
+// ═══════════════════════════════════════════════════════════════
+//  SHADER SOURCES
+// ═══════════════════════════════════════════════════════════════
+const VS = `attribute vec2 p; void main(){gl_Position=vec4(p,0,1);}`;
+
+// ── Shared helpers injected into every FS ──────────────────────
+const COMMON = `
+precision highp float;
+uniform vec2  R;       // resolution
+uniform float T;       // time
+uniform float BASS, MID, TREB, RMS, BEAT;
+uniform sampler2D uSpec;   // 256x1 spectrum
+uniform sampler2D uFB;     // previous frame (ping-pong)
+uniform sampler2D uVid;    // video texture (or black)
+uniform float uHasVid;     // 1=video active
+uniform float uScene;      // 0..3
+
+float hash(vec2 p){p=fract(p*vec2(127.1,311.7));p+=dot(p,p+19.19);return fract(p.x*p.y);}
+float noise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);
+  return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);}
+float fbm(vec2 p){float v=0.,a=.5;for(int i=0;i<6;i++){v+=a*noise(p);p=p*2.1+vec2(1.3,7.1);a*=.5;}return v;}
+vec2 warp(vec2 p,float s){float wx=fbm(p+vec2(T*.08,0)),wy=fbm(p+vec2(0,T*.08)+4.5);return p+(vec2(wx,wy)-.5)*s;}
+float spec(float t){return texture2D(uSpec,vec2(clamp(t,0.,1.),.5)).r;}
+vec3 pal(float t){return .5+.5*cos(6.2832*(.6*t+vec3(.0,.33,.67)));}
+vec3 palDark(float t){// deep dark palette with neon accent
+  vec3 a=vec3(.05,.06,.08), b=vec3(.04,.05,.06), c=vec3(1.), d=vec3(.0,.15,.25);
+  vec3 base=a+b*cos(6.2832*(c*t+d));
+  // neon accent: thin bright spike
+  float accent=pow(max(0.,1.-abs(fract(t*3.)-.5)*6.),.5);
+  return base+vec3(.1,.9,.5)*accent*.6;}
+// p already normalized to square coords
+vec2 squareP(vec2 uv){
+  float asp=R.x/R.y, norm=max(asp,1./asp);
+  return (uv-.5)*vec2(asp,1.)/norm*.6;}
+`;
+
+// ─────────────────────────────────────────────────────────────
+// SCENE 0: MEMBRANE — biopunk pulsing skin with video beneath
+// ─────────────────────────────────────────────────────────────
+const FS_MEMBRANE = COMMON + `
+uniform float uTime2;
+void main(){
+  vec2 uv=gl_FragCoord.xy/R;
+  vec2 p=squareP(uv);
+
+  // video layer — warped by bass shockwave
+  float shock=BASS*0.06+BEAT*0.04;
+  vec2 shockUV=uv+(normalize(p+.001)*shock*exp(-length(p)*3.));
+  vec4 vidCol=texture2D(uVid,clamp(shockUV,0.,1.))*uHasVid;
+
+  // spectrum as displacement heightmap
+  float specDisp=spec(length(p)*1.4)*(.3+BASS*.5);
+  vec2 wp=warp(p*2.+T*.06,1.2+BASS*3.);
+  float membrane=fbm(wp+specDisp);
+
+  // surface normals from fbm gradient (faked)
+  float eps=.008;
+  float dx=fbm(wp+vec2(eps,0)+specDisp)-fbm(wp-vec2(eps,0)+specDisp);
+  float dy=fbm(wp+vec2(0,eps)+specDisp)-fbm(wp-vec2(0,eps)+specDisp);
+  vec3 N=normalize(vec3(dx,dy,.15));
+  vec3 L=normalize(vec3(sin(T*.3),cos(T*.2),1.));
+  float diff=max(0.,dot(N,L));
+  float spec2=pow(max(0.,dot(reflect(-L,N),vec3(0,0,1))),12.);
+
+  // deep color
+  vec3 base=palDark(membrane*.7+TREB*.2+T*.008)*(.3+RMS*.8);
+  vec3 lit=base*(0.4+diff*.8)+vec3(.2,1.,.6)*spec2*(.5+RMS);
+
+  // wet membrane sheen — thin neon film
+  float sheen=pow(1.-abs(dot(N,vec3(0,0,1))),3.)*(.6+TREB*.8);
+  lit+=vec3(.05,.8,.4)*sheen*.4;
+
+  // vessel-like veins
+  float vein=pow(abs(sin(membrane*18.+T*.5)),20.)*(.3+MID*.6);
+  lit+=vec3(.6,.05,.1)*vein;
+
+  // composite with video
+  vec3 col=mix(lit, lit*0.4+vidCol.rgb*0.7, uHasVid*.7);
+
+  // feedback ghost (motion trail)
+  vec3 fb=texture2D(uFB,uv+vec2(dx,dy)*0.002).rgb;
+  col=mix(col,fb,.18+BEAT*.08);
+
+  // vignette
+  float vig=1.-smoothstep(.4,.9,length(p)*1.4);
+  col*=vig;
+
+  gl_FragColor=vec4(col,1.);
+}`;
+
+
+// ─────────────────────────────────────────────────────────────
+// SCENE 1: OSCILLATOR — CRT industrial oscilloscope + particles
+// ─────────────────────────────────────────────────────────────
+const FS_OSC = COMMON + `
+void main(){
+  vec2 uv=gl_FragCoord.xy/R;
+  vec2 p=squareP(uv);
+
+  // phosphor green background
+  vec3 col=vec3(0.,.02,.01)*(.5+RMS);
+
+  // CRT grid
+  vec2 grid=fract(p*vec2(14.,10.)+(T*.01));
+  float gline=smoothstep(.04,.03,min(grid.x,grid.y))*.06*(1.+MID*.5);
+  col+=vec3(0.,.4,.15)*gline;
+
+  // Lissajous trace — XY scope figure
+  float best=1e9;
+  for(int i=0;i<180;i++){
+    float fi=float(i)/180.;
+    float fx=fi*6.2832*3.;
+    float fy=fi*6.2832*2.+T*.8;
+    float bx=spec(fi);
+    float by=spec(1.-fi);
+    vec2 lp=vec2(
+      sin(fx+BASS*2.)*(0.28+bx*.18),
+      sin(fy+MID*1.5)*(0.28+by*.18)
+    );
+    best=min(best,length(p-lp));
+  }
+  float trace=exp(-best*80.)*(1.5+RMS*3.);
+  col+=vec3(.1,1.,.5)*trace;
+
+  // waveform line across center
+  float wfx=(uv.x);
+  float wfAmp=spec(wfx)*(.25+BASS*.2);
+  float wfDist=abs(p.y - (wfAmp-.12));
+  float wf=exp(-wfDist*wfDist*1200.)*(1.+MID*2.);
+  col+=vec3(.05,.9,.4)*wf;
+
+  // spectrum bars bottom
+  float bx=uv.x;
+  float bAmp=spec(bx)*(.35+BASS*.3);
+  float bBot=.48, bTop=bBot-bAmp*.4;
+  float inBar=step(bTop,uv.y)*step(uv.y,bBot+.001);
+  col+=vec3(.05,.7,.3)*inBar*(.6+RMS);
+
+  // beat flash scanline
+  float scan=step(.499,uv.y)*step(uv.y,.501)*BEAT;
+  col+=vec3(.2,1.,.5)*scan*3.;
+
+  // video tint underlay
+  vec4 vc=texture2D(uVid,uv)*uHasVid;
+  col=mix(col,col*.3+vc.rgb*.2*vec3(.2,.9,.4),uHasVid*.5);
+
+  // phosphor persistence
+  vec3 fb=texture2D(uFB,uv).rgb;
+  col=mix(col,fb,.25);
+
+  float vig=1.-smoothstep(.45,.95,length(p)*1.6);
+  col*=vig;
+  gl_FragColor=vec4(col,1.);
+}`;
+
+// ─────────────────────────────────────────────────────────────
+// SCENE 2: VOID FIELD — pure abstraction, 3D raymarch feel
+// ─────────────────────────────────────────────────────────────
+const FS_VOID = COMMON + `
+float smin(float a,float b,float k){float h=max(k-abs(a-b),0.)/k;return min(a,b)-h*h*k*.25;}
+
+float map(vec3 q){
+  // spectrum displaces the field radially
+  float ang=atan(q.z,q.x)*.15915+.5;
+  float sAmp=spec(ang)*(.4+BASS*.6);
+  float r=length(q.xz);
+
+  float shell=abs(r-(0.7+sAmp+sin(q.y*4.+T)*MID*.15))-.03;
+  float inner=length(q)-.25-BEAT*.15;
+  float ridges=abs(sin(q.y*12.+T*2.)*sin(ang*28.+T))*.04;
+  return smin(shell-ridges,inner,.1);
+}
+
+vec3 normal(vec3 p){
+  vec2 e=vec2(.002,0);
+  return normalize(vec3(map(p+e.xyy)-map(p-e.xyy),
+                        map(p+e.yxy)-map(p-e.yxy),
+                        map(p+e.yyx)-map(p-e.yyx)));
+}
+void main(){
+  vec2 uv=gl_FragCoord.xy/R;
+  vec2 p=squareP(uv);
+
+  // ray
+  float asp=R.x/R.y,norm2=max(asp,1./asp);
+  vec3 ro=vec3(sin(T*.12)*1.8, cos(T*.07)*.4, cos(T*.12)*1.8);
+  vec3 ta=vec3(0.);
+  vec3 fwd=normalize(ta-ro);
+  vec3 rgt=normalize(cross(fwd,vec3(0,1,0)));
+  vec3 up=cross(rgt,fwd);
+  vec3 rd=normalize(fwd + p.x*rgt + p.y*up);
+
+  // march
+  float d=0., t2=0.;
+  bool hit=false;
+  for(int i=0;i<64;i++){
+    vec3 q=ro+rd*t2;
+    d=map(q);
+    if(d<.002){hit=true;break;}
+    if(t2>6.)break;
+    t2+=d*.6;
+  }
+
+  vec3 col=vec3(0.);
+  if(hit){
+    vec3 hp=ro+rd*t2;
+    vec3 N=normal(hp);
+    float ao=1.;
+    // fake AO
+    for(int k=0;k<4;k++){
+      float s=.05*float(k+1);
+      ao-=(s-map(hp+N*s))*.25;
+    }
+    vec3 L=normalize(vec3(sin(T*.5),1.,cos(T*.3)));
+    float diff=max(0.,dot(N,L));
+    float rim=pow(1.-max(0.,dot(N,-rd)),3.);
+    float ang2=atan(hp.z,hp.x)*.15915+.5+T*.02;
+    vec3 base=palDark(ang2+TREB*.3)*(diff*.6+.2)*ao;
+    base+=vec3(.05,.8,.35)*rim*(0.4+RMS*.8);
+    base+=vec3(.8,.1,.05)*pow(diff,8.)*.3;
+    col=base;
+  }
+
+  // volume scatter / fog glow
+  float glow=0.;
+  float gt=0.;
+  for(int i=0;i<20;i++){
+    vec3 gp=ro+rd*(gt+.1);
+    float gd=abs(map(gp));
+    glow+=exp(-gd*12.)*.05;
+    gt+=.15;
+  }
+  col+=palDark(T*.01+TREB*.2)*glow*(0.5+RMS*1.5);
+
+  // video composite
+  vec4 vc=texture2D(uVid,uv)*uHasVid;
+  col=mix(col,col+vc.rgb*.15,uHasVid*.6);
+
+  // feedback
+  vec3 fb=texture2D(uFB,uv+rd.xy*.001).rgb;
+  col=mix(col,fb,.12+BEAT*.05);
+
+  col=col/(col+1.); // tonemap
+  col=pow(col,vec3(.45));
+  gl_FragColor=vec4(col,1.);
+}`;
+
+// ─────────────────────────────────────────────────────────────
+// SCENE 3: DATAMOSH — cinematic pixel-sort + glitch compositor
+// ─────────────────────────────────────────────────────────────
+const FS_MOSH = COMMON + `
+void main(){
+  vec2 uv=gl_FragCoord.xy/R;
+  vec2 p=squareP(uv);
+
+  // pixel sort: shift rows/cols by spectrum
+  float row=floor(uv.y*R.y);
+  float sortAmt=(spec(uv.y)-.5)*(TREB*0.08+0.01);
+  float col2=floor(uv.x*R.x);
+  float sortY=(spec(uv.x+.5)-.5)*(MID*0.06+0.005);
+  vec2 sortedUV=vec2(uv.x+sortAmt, uv.y+sortY);
+
+  // datamosh: smear previous frame
+  float moshStr=BEAT*0.04+TREB*0.02;
+  vec2 motion=vec2(
+    fbm(p+T*.1)-.5,
+    fbm(p+T*.1+vec2(5.2,1.3))-.5
+  )*moshStr;
+  vec3 moshFB=texture2D(uFB, clamp(uv+motion,.0,1.)).rgb;
+
+  // base: warped video or noise
+  vec2 warpedUV=clamp(sortedUV,0.,1.);
+  vec4 vc=texture2D(uVid,warpedUV);
+  vec3 base=uHasVid>.5 ? vc.rgb : palDark(fbm(p*2.+T*.05)+T*.005)*(0.4+RMS*.8);
+
+  // color grade: crush to dark, isolate highlights
+  base=pow(max(vec3(0.),base),vec3(1.4));
+  // neon channel separation
+  float rr=texture2D(uVid,warpedUV+vec2(TREB*.015,0)).r*uHasVid;
+  float bb=texture2D(uVid,warpedUV-vec2(TREB*.015,0)).b*uHasVid;
+  base.r=mix(base.r,rr,.5+TREB*.5);
+  base.b=mix(base.b,bb,.5+TREB*.5);
+
+  // spectrum overlay as vertical burn lines
+  float burnX=spec(uv.x)*(.15+RMS*.2);
+  vec3 burn=vec3(.03,.8,.35)*burnX;
+
+  // composite
+  vec3 col=mix(base,moshFB,.3+BEAT*.5);
+  col+=burn;
+
+  // horizontal glitch blocks on beat
+  float blockY=floor(uv.y*24.)/24.;
+  float bHash=hash(vec2(blockY,floor(T*8.)));
+  if(bHash>.82&&BEAT>.3){
+    float shift=(bHash-.82)*BEAT*.12;
+    col=mix(col, texture2D(uFB,vec2(uv.x+shift,uv.y)).rgb, .7);
+    col.r=texture2D(uFB,vec2(uv.x+shift+.008,uv.y)).r;
+  }
+
+  // dark vignette
+  float vig=1.-smoothstep(.3,.85,length(p)*1.5);
+  col*=pow(vig,1.5);
+
+  // neon edge detection
+  vec3 nbr=texture2D(uFB,uv+vec2(.002,0)).rgb;
+  vec3 edge=abs(col-nbr)*4.;
+  col+=vec3(.05,.9,.4)*length(edge)*(.1+TREB*.3);
+
+  col=col/(col+1.);
+  col=pow(col,vec3(.42));
+  gl_FragColor=vec4(col,1.);
+}`;
+
+// ─────────────────────────────────────────────────────────────
+// POST PASS: grain + vignette + aberration
+// ─────────────────────────────────────────────────────────────
+const FS_POST = COMMON + `
+void main(){
+  vec2 uv=gl_FragCoord.xy/R;
+  vec2 p=squareP(uv);
+
+  // sample main buffer with slight aberration
+  float ab=TREB*0.004+BEAT*0.006;
+  vec3 col;
+  col.r=texture2D(uFB,uv+vec2(ab,0)).r;
+  col.g=texture2D(uFB,uv).g;
+  col.b=texture2D(uFB,uv-vec2(ab,0)).b;
+
+  // scanlines
+  float scan=sin(uv.y*R.y*1.5+T*3.)*.5+.5;
+  scan=pow(scan,8.)*0.05*(1.+RMS*.3);
+  col-=scan;
+
+  // grain
+  float gr=hash(uv*R+fract(T*197.13))*.045-.02;
+  col+=gr;
+
+  // vignette
+  float vig=1.-smoothstep(.4,.95,length(p)*1.55);
+  col*=pow(vig,1.3);
+
+  // halation glow at bright spots
+  float lum=dot(col,vec3(.299,.587,.114));
+  col+=palDark(T*.005)*pow(max(0.,lum-.6),2.)*1.5*(0.3+RMS*.7);
+
+  gl_FragColor=vec4(clamp(col,0.,1.),1.);
+}`;
+// ═══════════════════════════════════════════════════════════════
+//  COMPILE + LINK
+// ═══════════════════════════════════════════════════════════════
+function mkShader(type,src){
+  const s=gl.createShader(type);
+  gl.shaderSource(s,src); gl.compileShader(s);
+  if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))
+    console.error(gl.getShaderInfoLog(s).substring(0,400));
+  return s;
+}
+function mkProg(fs){
+  const p=gl.createProgram();
+  gl.attachShader(p,mkShader(gl.VERTEX_SHADER,VS));
+  gl.attachShader(p,mkShader(gl.FRAGMENT_SHADER,fs));
+  gl.linkProgram(p);
+  if(!gl.getProgramParameter(p,gl.LINK_STATUS))
+    console.error(gl.getProgramInfoLog(p));
+  return p;
+}
+
+const progs = [
+  mkProg(FS_MEMBRANE),
+  mkProg(FS_OSC),
+  mkProg(FS_VOID),
+  mkProg(FS_MOSH),
+];
+const postProg = mkProg(FS_POST);
+
+// quad
+const qBuf=gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER,qBuf);
+gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
+
+function bindQuad(prog){
+  const loc=gl.getAttribLocation(prog,'p');
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
+}
+// ═══════════════════════════════════════════════════════════════
+//  FRAMEBUFFERS (ping-pong + scene render target)
+// ═══════════════════════════════════════════════════════════════
+let fbPing=null, fbPong=null, fbScene=null;
+
+function mkFBO(w,h){
+  const fb=gl.createFramebuffer();
+  const tx=gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D,tx);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,w,h,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,fb);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.COLOR_ATTACHMENT0,gl.TEXTURE_2D,tx,0);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  return {fb,tx};
+}
+
+function rebuildFBOs(){
+  if(fbPing){gl.deleteTexture(fbPing.tx);gl.deleteFramebuffer(fbPing.fb)}
+  if(fbPong){gl.deleteTexture(fbPong.tx);gl.deleteFramebuffer(fbPong.fb)}
+  if(fbScene){gl.deleteTexture(fbScene.tx);gl.deleteFramebuffer(fbScene.fb)}
+  fbPing=mkFBO(C.width,C.height);
+  fbPong=mkFBO(C.width,C.height);
+  fbScene=mkFBO(C.width,C.height);
+}
+resize();
+
+// ═══════════════════════════════════════════════════════════════
+//  SPECTRUM TEXTURE
+// ═══════════════════════════════════════════════════════════════
+const SPEC_N=256;
+const specTex=gl.createTexture();
+const specData=new Uint8Array(SPEC_N*4);
+gl.bindTexture(gl.TEXTURE_2D,specTex);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,SPEC_N,1,0,gl.RGBA,gl.UNSIGNED_BYTE,specData);
+
+// ═══════════════════════════════════════════════════════════════
+//  VIDEO TEXTURE
+// ═══════════════════════════════════════════════════════════════
+const vidTex=gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D,vidTex);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
+// init with 1x1 black
+gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,1,1,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array([0,0,0,255]));
+
+let hasVideo=false;
+let vidEl=null; // active video element
+
+function uploadVideoFrame(){
+  if(!hasVideo||!vidEl||vidEl.readyState<2)return;
+  gl.bindTexture(gl.TEXTURE_2D,vidTex);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,vidEl);
+}
+// ═══════════════════════════════════════════════════════════════
+//  UNIFORM SETTER
+// ═══════════════════════════════════════════════════════════════
+function setUniforms(prog, extras={}){
+  const u=(n)=>gl.getUniformLocation(prog,n);
+  gl.uniform2f(u('R'),C.width,C.height);
+  gl.uniform1f(u('T'), extras.T||0);
+  gl.uniform1f(u('BASS'),bass);
+  gl.uniform1f(u('MID'),mid);
+  gl.uniform1f(u('TREB'),treble);
+  gl.uniform1f(u('RMS'),rms);
+  gl.uniform1f(u('BEAT'),beat);
+  gl.uniform1f(u('uScene'),currentScene);
+  gl.uniform1f(u('uHasVid'),hasVideo?1:0);
+
+  // spectrum tex → unit 0
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D,specTex);
+  gl.uniform1i(u('uSpec'),0);
+
+  // feedback tex → unit 1
+  gl.activeTexture(gl.TEXTURE1);
+  gl.bindTexture(gl.TEXTURE_2D, (extras.fb||fbPing).tx);
+  gl.uniform1i(u('uFB'),1);
+
+  // video tex → unit 2
+  gl.activeTexture(gl.TEXTURE2);
+  gl.bindTexture(gl.TEXTURE_2D,vidTex);
+  gl.uniform1i(u('uVid'),2);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  WEBAUDIO
+// ═══════════════════════════════════════════════════════════════
+let actx=null, analyser=null, srcNode=null;
+let fftData=new Uint8Array(SPEC_N);
+let bass=0,mid=0,treble=0,rms=0,beat=0;
+let beatHist=new Array(43).fill(0), beatPtr=0;
+let lastBeat=0, bpmBuf=[], bpmVal=0;
+
+function initACtx(){
+  if(!actx){
+    actx=new(window.AudioContext||window.webkitAudioContext)();
+    analyser=actx.createAnalyser();
+    analyser.fftSize=SPEC_N*2;
+    analyser.smoothingTimeConstant=0.82;
+    analyser.connect(actx.destination);
+  }
+}
+function killSrc(){if(srcNode){try{srcNode.disconnect()}catch(e){}srcNode=null;}}
+
+async function startMic(){
+  initACtx(); killSrc();
+  const s=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
+  srcNode=actx.createMediaStreamSource(s);
+  srcNode.connect(analyser); setAudioUI('MIC');
+}
+async function startTab(){
+  initACtx(); killSrc();
+  const s=await navigator.mediaDevices.getDisplayMedia({audio:true,video:true});
+  srcNode=actx.createMediaStreamSource(s);
+  srcNode.connect(analyser); setAudioUI('TAB');
+}
+function startAFile(f){
+  initACtx(); killSrc();
+  const a=document.getElementById('aEl');
+  a.src=URL.createObjectURL(f); a.play();
+  srcNode=actx.createMediaElementSource(a);
+  srcNode.connect(analyser); setAudioUI('FILE');
+}
+
+function setAudioUI(lbl){
+  document.querySelectorAll('#bMic,#bTab,#bFile').forEach(b=>b.classList.remove('on'));
+  document.getElementById('b'+lbl[0]+lbl.slice(1).toLowerCase()).classList.add('on');
+  document.getElementById('sdot').className='live';
+  document.getElementById('slbl').textContent=lbl+' ACTIVE';
+}
+
+function analyzeAudio(){
+  if(!analyser)return;
+  analyser.getByteFrequencyData(fftData);
+  let bS=0,mS=0,tS=0,rS=0;
+  const BE=5,ME=30,TE=100;
+  for(let i=0;i<SPEC_N;i++){
+    const v=fftData[i]/255;
+    if(i<=BE)bS+=v; else if(i<=ME)mS+=v; else if(i<=TE)tS+=v;
+    rS+=v*v;
+  }
+  bass=Math.min(1,bS/BE); mid=Math.min(1,mS/(ME-BE)); treble=Math.min(1,tS/(TE-ME));
+  rms=Math.min(1,Math.sqrt(rS/SPEC_N));
+  // beat
+  beatHist[beatPtr%43]=bS/BE; beatPtr++;
+  const avg=beatHist.reduce((a,b)=>a+b,0)/43;
+  const now=performance.now();
+  if(bass>avg*1.38&&bass>.12&&now-lastBeat>180){
+    beat=1; const dt=now-lastBeat;
+    if(dt<2000){bpmBuf.push(60000/dt);if(bpmBuf.length>8)bpmBuf.shift();
+      bpmVal=Math.round(bpmBuf.reduce((a,b)=>a+b,0)/bpmBuf.length);}
+    lastBeat=now;
+    // trigger auto scene change
+    if(autoScene&&beatCount%32===0) cycleScene();
+    beatCount++;
+    // flash overlay
+    document.getElementById('gfl').style.opacity=(0.08+bass*.12).toFixed(2);
+    setTimeout(()=>document.getElementById('gfl').style.opacity='0',60);
+  }
+  beat=Math.max(0,beat-.038);
+  // upload spectrum
+  for(let i=0;i<SPEC_N;i++){const v=fftData[i];specData[i*4]=v;specData[i*4+1]=v;specData[i*4+2]=v;specData[i*4+3]=255;}
+  gl.bindTexture(gl.TEXTURE_2D,specTex);
+  gl.texSubImage2D(gl.TEXTURE_2D,0,0,0,SPEC_N,1,gl.RGBA,gl.UNSIGNED_BYTE,specData);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SCENE MANAGEMENT
+// ═══════════════════════════════════════════════════════════════
+let currentScene=0, autoScene=true, beatCount=0;
+const sceneNames=['SCN_01 MEMBRANE','SCN_02 OSCILLATOR','SCN_03 VOID FIELD','SCN_04 DATAMOSH'];
+
+function setScene(n){
+  currentScene=n;
+  document.querySelectorAll('.sc-btn').forEach((b,i)=>b.classList.toggle('on',i===n));
+  document.getElementById('sceneTag').textContent='// '+sceneNames[n];
+  document.getElementById('sscn').textContent='SCN '+(n+1)+'/4';
+}
+function cycleScene(){setScene((currentScene+1)%4);}
+
+document.querySelectorAll('.sc-btn').forEach(b=>{
+  b.addEventListener('click',()=>{autoScene=false;document.getElementById('bAuto').classList.remove('on');setScene(+b.dataset.s);});
+});
+document.getElementById('bAuto').addEventListener('click',function(){
+  autoScene=!autoScene; this.classList.toggle('on',autoScene);
+});
+
+// ═══════════════════════════════════════════════════════════════
+//  VIDEO SOURCE MANAGEMENT
+// ═══════════════════════════════════════════════════════════════
+async function startCam(){
+  try{
+    const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'},audio:false});
+    vidEl=document.getElementById('vid');
+    vidEl.srcObject=s; await vidEl.play();
+    hasVideo=true; setVidUI('CAM');
+  }catch(e){alert('Camera: '+e.message);}
+}
+function startVFile(f){
+  vidEl=document.getElementById('vidSrc');
+  vidEl.src=URL.createObjectURL(f); vidEl.play();
+  hasVideo=true; setVidUI('CLIP');
+}
+function stopVideo(){
+  if(vidEl&&vidEl.srcObject)vidEl.srcObject.getTracks().forEach(t=>t.stop());
+  if(vidEl)vidEl.src='';
+  vidEl=null; hasVideo=false; setVidUI('OFF');
+  gl.bindTexture(gl.TEXTURE_2D,vidTex);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,1,1,0,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array([0,0,0,255]));
+}
+function setVidUI(s){
+  ['bCam','bVid','bVOff'].forEach(id=>document.getElementById(id).classList.remove('on'));
+  if(s==='CAM')document.getElementById('bCam').classList.add('on');
+  else if(s==='CLIP')document.getElementById('bVid').classList.add('on');
+  else document.getElementById('bVOff').classList.add('on');
+}
+
+document.getElementById('bMic').addEventListener('click',startMic);
+document.getElementById('bTab').addEventListener('click',startTab);
+document.getElementById('bFile').addEventListener('click',()=>document.getElementById('fAud').click());
+document.getElementById('fAud').addEventListener('change',e=>{if(e.target.files[0])startAFile(e.target.files[0]);});
+document.getElementById('bCam').addEventListener('click',startCam);
+document.getElementById('bVid').addEventListener('click',()=>document.getElementById('fVid').click());
+document.getElementById('fVid').addEventListener('change',e=>{if(e.target.files[0])startVFile(e.target.files[0]);});
+document.getElementById('bVOff').addEventListener('click',stopVideo);
+
+// ═══════════════════════════════════════════════════════════════
+//  MINI SPECTRUM CANVAS
+// ═══════════════════════════════════════════════════════════════
+const sc2=document.getElementById('sc2'), s2=sc2.getContext('2d');
+sc2.width=160; sc2.height=44;
+function drawMiniSpec(){
+  s2.clearRect(0,0,160,44);
+  s2.fillStyle='rgba(0,0,0,.5)'; s2.fillRect(0,0,160,44);
+  for(let i=0;i<64;i++){
+    const v=(fftData[i*2]||0)/255, h=v*42;
+    s2.fillStyle=`rgba(${Math.floor(v*30)},${Math.floor(150+v*105)},${Math.floor(60+v*60)},.9)`;
+    s2.fillRect(i*2.5,44-h,2,h);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  UI METERS
+// ═══════════════════════════════════════════════════════════════
+function updateUI(){
+  const sm=(id,vid,v)=>{document.getElementById(id).style.width=(v*100)+'%';document.getElementById(vid).textContent=v.toFixed(2);};
+  sm('mB','vB',bass); sm('mM','vM',mid); sm('mT','vT',treble); sm('mR','vR',rms);
+  const bd=document.getElementById('bdot');
+  bd.style.background=beat>.3?`rgba(57,255,143,${beat})`:'transparent';
+  bd.style.boxShadow=beat>.3?`0 0 ${beat*16}px rgba(57,255,143,.8)`:'none';
+  bd.style.borderColor=beat>.3?'var(--neon)':'rgba(57,255,143,.2)';
+  if(bpmVal)document.getElementById('sbpm').textContent=bpmVal+' BPM';
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  RENDER LOOP
+// ═══════════════════════════════════════════════════════════════
+let lastFT=performance.now(), fCnt=0;
+
+function render(ts){
+  requestAnimationFrame(render);
+  fCnt++;
+  if(ts-lastFT>500){
+    document.getElementById('sfps').textContent=Math.round(fCnt*1000/(ts-lastFT))+' FPS';
+    fCnt=0; lastFT=ts;
+  }
+
+  analyzeAudio();
+  uploadVideoFrame();
+  drawMiniSpec();
+  updateUI();
+
+  const t=ts*.001;
+
+  // ── SCENE RENDER → fbScene ─────────────────────────────────
+  gl.bindFramebuffer(gl.FRAMEBUFFER,fbScene.fb);
+  gl.viewport(0,0,C.width,C.height);
+  const prog=progs[currentScene];
+  gl.useProgram(prog);
+  gl.bindBuffer(gl.ARRAY_BUFFER,qBuf);
+  bindQuad(prog);
+  setUniforms(prog,{T:t, fb:fbPing});
+  gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+
+  // ── POST PASS → fbPong (output to screen) ──────────────────
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+  gl.viewport(0,0,C.width,C.height);
+  gl.useProgram(postProg);
+  gl.bindBuffer(gl.ARRAY_BUFFER,qBuf);
+  bindQuad(postProg);
+  setUniforms(postProg,{T:t, fb:fbScene});
+  gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+
+  // ── PING-PONG: copy scene output into ping for next frame ──
+  // blit fbScene → fbPing via a simple copy draw
+  gl.bindFramebuffer(gl.FRAMEBUFFER,fbPing.fb);
+  gl.viewport(0,0,C.width,C.height);
+  gl.useProgram(postProg); // reuse post as passthrough (it reads uFB)
+  gl.bindBuffer(gl.ARRAY_BUFFER,qBuf);
+  bindQuad(postProg);
+  setUniforms(postProg,{T:t, fb:fbScene});
+  gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+  gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+}
+requestAnimationFrame(render);
+
+// ═══════════════════════════════════════════════════════════════
+//  CURSOR + KEYS
+// ═══════════════════════════════════════════════════════════════
+const cur=document.getElementById('cur');
+window.addEventListener('mousemove',e=>{cur.style.left=e.clientX+'px';cur.style.top=e.clientY+'px';});
+window.addEventListener('keydown',e=>{
+  if(e.key==='m'||e.key==='M')startMic();
+  if(e.key==='t'||e.key==='T')startTab();
+  if(e.key==='f'||e.key==='F')document.getElementById('fAud').click();
+  if(e.key==='c'||e.key==='C')startCam();
+  if(e.key==='1')setScene(0);
+  if(e.key==='2')setScene(1);
+  if(e.key==='3')setScene(2);
+  if(e.key==='4')setScene(3);
+  if(e.key===' '){autoScene=!autoScene;document.getElementById('bAuto').classList.toggle('on',autoScene);}
+});
+
+setVidUI('OFF');
+</script>
+</body>
+</html>
