@@ -600,6 +600,7 @@ const LAYOUTS = {
 let currentMode = MODE_START;
 let panes = [];
 let selectedPane = -1;
+let bootOverviewTimer = null;
 
 // ═══════════════════════════════════════════════════════════════
 //  PANE CLASS
@@ -699,6 +700,12 @@ class Pane {
       this.frame.geometry.dispose();
       this.frame.geometry = new THREE.BoxGeometry(newW+0.025, newH+0.025, 0.012);
       this.mat.uniforms.uAspect.value = aspect;
+      if(this.index === selectedPane){
+        const focus = solveFocusForPane(this.index, {fill:0.82, minFov:24, maxFov:70});
+        if(focus){
+          tweenRigTo({toPos:focus.camPos, toQuat:focus.camQuat, toFov:focus.fov, durSec:0.35, shotName:'refit', lockBypass:true});
+        }
+      }
     }, {once:true});
     el.addEventListener('canplay', () => {
       // Seek to frame 0 so thumbnail shows without playing
@@ -870,7 +877,12 @@ function buildPanes(mode){
     p.videoTex = null;
     scene.remove(p.group);
   });
-  panes = LAYOUTS[mode].map((pos, i) => new Pane(i, pos));
+  const aspect = camera.aspect || (innerWidth/innerHeight);
+  const panoScale = mode==='panoramic' ? Math.max(0.55, Math.min(1.0, aspect/1.0)) : 1.0;
+  panes = LAYOUTS[mode].map((pos, i) => {
+    const panePos = mode==='panoramic' ? [pos[0]*panoScale, pos[1], pos[2], pos[3]] : pos;
+    return new Pane(i, panePos);
+  });
   currentMode = mode;
   // Restore video state into new pane objects
   panes.forEach((p, i) => {
@@ -914,6 +926,8 @@ const SHOTS = {
   orbit:    {dolly:2.2, yaw:0.00, pitch:-0.03, fov:55},
   overview: {dolly:0.0, yaw:0.00, pitch:0.00,  fov:58, absolute:true,
              pos: new THREE.Vector3(0,0.2,6), lookAt: new THREE.Vector3(0,0,-3)},
+  overviewPano: {dolly:0.0, yaw:0.00, pitch:0.00, fov:66, absolute:true,
+             pos: new THREE.Vector3(0,0.15,8.5), lookAt: new THREE.Vector3(0,0,-5)},
 };
 
 function solveShot(paneMesh, shot){
@@ -943,6 +957,47 @@ function solveShot(paneMesh, shot){
   const camQuat = new THREE.Quaternion().setFromRotationMatrix(mat4);
 
   return {camPos, camQuat, fov: shot.fov};
+}
+
+const clampVal = (v, a, b) => Math.max(a, Math.min(b, v));
+
+function paneContentDims(pane){
+  const planeW = PANE_W;
+  const planeH = PANE_H;
+  const planeAspect = planeW / planeH;
+  let srcAspect = planeAspect;
+  const v = pane && pane.videoEl;
+  if(v && v.videoWidth && v.videoHeight){
+    srcAspect = v.videoWidth / v.videoHeight;
+  }
+  let contentW, contentH;
+  if(srcAspect <= planeAspect){
+    contentH = planeH;
+    contentW = planeH * srcAspect;
+  } else {
+    contentW = planeW;
+    contentH = planeW / srcAspect;
+  }
+  return {contentW, contentH, srcAspect};
+}
+
+function computeFitFovDeg({contentW, contentH, distance, fill=0.8, aspect=camera.aspect}){
+  const safeDist = Math.max(distance, 0.01);
+  const fovH = 2 * Math.atan((contentH / (2 * fill)) / safeDist);
+  const fovW = 2 * Math.atan((contentW / (2 * fill * aspect)) / safeDist);
+  return Math.max(fovH, fovW) * 180 / Math.PI;
+}
+
+function solveFocusForPane(i, {fill=0.8, minFov=26, maxFov=70} = {}){
+  const pane = panes[i];
+  if(!pane) return null;
+  const base = solveShot(pane.mesh, SHOTS.tight);
+  const panePos = new THREE.Vector3();
+  pane.mesh.getWorldPosition(panePos);
+  const distance = base.camPos.distanceTo(panePos);
+  const dims = paneContentDims(pane);
+  const fov = clampVal(computeFitFovDeg({contentW:dims.contentW, contentH:dims.contentH, distance, fill, aspect:camera.aspect}), minFov, maxFov);
+  return {camPos: base.camPos, camQuat: base.camQuat, fov};
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1040,10 +1095,18 @@ async function flyToPane(i, shotName='approach', dur=0.85, lockBypass=false){
 }
 
 async function setSelected(i, {fromAuto=false} = {}){
+  if(bootOverviewTimer){
+    clearTimeout(bootOverviewTimer);
+    bootOverviewTimer = null;
+  }
   if(!fromAuto && autoAdvancing){
     autoAdvancing = false;
     document.getElementById('bAuto').classList.remove('on');
     logEv('AUTO OFF');
+  }
+  if(autoTimer){
+    clearTimeout(autoTimer);
+    autoTimer = null;
   }
 
   // Deselect old
@@ -1056,7 +1119,12 @@ async function setSelected(i, {fromAuto=false} = {}){
   updateStat();
 
   lockCameraFor(1300, i, 'focus');
-  await flyToPane(i, 'approach', 0.8, true);
+  const focus = solveFocusForPane(i, {fill:0.8, minFov:26, maxFov:70});
+  if(focus){
+    await tweenRigTo({toPos:focus.camPos, toQuat:focus.camQuat, toFov:focus.fov, durSec:0.55, shotName:'focus', lockBypass:true});
+  } else {
+    await flyToPane(i, 'tight', 0.55, true);
+  }
   lockCameraToPane(i, 'hold');
   armed = true;
 
@@ -1077,6 +1145,10 @@ async function playSelected(){
   playInFlight = true;
   const i = selectedPane;
   try {
+    if(bootOverviewTimer){
+      clearTimeout(bootOverviewTimer);
+      bootOverviewTimer = null;
+    }
     if(autoAdvancing){
       autoAdvancing = false;
       document.getElementById('bAuto').classList.remove('on');
@@ -1088,8 +1160,13 @@ async function playSelected(){
     lockCameraToPane(i, 'playing');
     document.getElementById('playBtn').classList.add('hidden');
     const playRun = panes[i].playOnce();
-    // Hold on selected pane while video plays
-    await flyToPane(i, 'tight', 0.55, true);
+    // Hold on selected pane with dynamic FOV while video plays
+    const focus = solveFocusForPane(i, {fill:0.84, minFov:24, maxFov:68});
+    if(focus){
+      await tweenRigTo({toPos:focus.camPos, toQuat:focus.camQuat, toFov:focus.fov, durSec:0.35, shotName:'focus', lockBypass:true});
+    } else {
+      await flyToPane(i, 'tight', 0.35, true);
+    }
     await playRun;
     if(panes[i].videoUrl){
       document.getElementById('playBtn').classList.remove('hidden');
@@ -1105,7 +1182,7 @@ async function goOverview(){
   document.getElementById('playBtn').classList.add('hidden');
   document.getElementById('paneInfo').textContent='SELECT A PANE';
   armed=false;
-  const shot=SHOTS.overview;
+  const shot=currentMode==='panoramic' ? SHOTS.overviewPano : SHOTS.overview;
   const m=new THREE.Matrix4().lookAt(shot.pos, shot.lookAt, new THREE.Vector3(0,1,0));
   const q=new THREE.Quaternion().setFromRotationMatrix(m);
   await tweenRigTo({toPos:shot.pos, toQuat:q, toFov:shot.fov, durSec:1.1, shotName:'overview', lockBypass:true});
@@ -1122,7 +1199,7 @@ async function autoAdvanceStep(){
   if(panes[next].videoUrl){
     await playSelected();
   } else {
-    await new Promise(r=>setTimeout(r,4000));
+    await new Promise(r=>{ autoTimer=setTimeout(()=>{autoTimer=null;r();},4000); });
   }
   if(autoAdvancing) autoAdvanceStep();
 }
@@ -1532,7 +1609,7 @@ if(AUTO_ADV){
 }
 
 // Hide load screen
-setTimeout(()=>{
+bootOverviewTimer = setTimeout(()=>{
   document.getElementById('loadOverlay').classList.add('gone');
   goOverview();
   logEv('FLUX.GALLERY v1 READY');
