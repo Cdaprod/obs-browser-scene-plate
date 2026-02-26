@@ -372,6 +372,9 @@ const rig = new THREE.Object3D();
 rig.add(camera);
 scene.add(rig);
 
+let camShakeX = 0;
+let camShakeY = 0;
+
 window.addEventListener('resize', () => {
   camera.aspect = innerWidth/innerHeight;
   camera.updateProjectionMatrix();
@@ -608,7 +611,7 @@ const PANE_W = 1.77, PANE_H = 1.0; // 16:9 aspect
 function createPaneVideoEl(url){
   const el = document.createElement('video');
   el.src = url;
-  el.muted = true;
+  el.muted = false;
   el.playsInline = true;
   el.setAttribute('playsinline', '');
   el.setAttribute('webkit-playsinline', '');
@@ -683,6 +686,7 @@ class Pane {
     // Immediately create video element and show first frame — no play needed.
     const el = createPaneVideoEl(url);
     document.getElementById('vidPool').appendChild(el);
+    attachVideoAudioToContext(el);
     el.load();
     el.addEventListener('loadedmetadata', () => {
       const vw = el.videoWidth  || 1920;
@@ -735,7 +739,8 @@ class Pane {
         this._endedHandler = () => { onEnded(); resolve(); };
         this.videoEl.addEventListener('ended', this._endedHandler, {once:true});
         this.videoEl.currentTime = 0;
-        this.videoEl.muted = true;
+        this.videoEl.muted = false;
+        this.videoEl.volume = 1.0;
         const pp = this.videoEl.play();
         this.playing = true;
         this.mat.uniforms.uPlaying.value = 1.0;
@@ -758,6 +763,7 @@ class Pane {
     return new Promise((resolve) => {
       this.videoEl = createPaneVideoEl(this.videoUrl);
       document.getElementById('vidPool').appendChild(this.videoEl);
+      attachVideoAudioToContext(this.videoEl);
       this.videoEl.load();
       this.videoEl.addEventListener('loadedmetadata', () => {
         // Resize mesh to match actual video aspect ratio
@@ -788,6 +794,8 @@ class Pane {
         }
         this._endedHandler = () => { onEnded(); resolve(); };
         this.videoEl.addEventListener('ended', this._endedHandler, {once:true});
+        this.videoEl.muted = false;
+        this.videoEl.volume = 1.0;
         const pp = this.videoEl.play();
         this.playing = true;
         this.mat.uniforms.uPlaying.value = 1.0;
@@ -943,10 +951,41 @@ function solveShot(paneMesh, shot){
 let tweenActive = false;
 let tweenPromiseResolve = null;
 
+// Prevent unintended camera requests from fighting pane focus/play camera intent.
+let cameraLock = {active:false,paneIndex:-1,reason:'',until:0};
+
+function lockCameraToPane(i, reason=''){
+  cameraLock.active = true;
+  cameraLock.paneIndex = i;
+  cameraLock.reason = reason;
+  cameraLock.until = Infinity;
+}
+
+function lockCameraFor(ms, i, reason=''){
+  cameraLock.active = true;
+  cameraLock.paneIndex = i;
+  cameraLock.reason = reason;
+  cameraLock.until = performance.now() + Math.max(0, ms);
+}
+
+function unlockCamera(reason=''){
+  cameraLock.active = false;
+  cameraLock.paneIndex = -1;
+  cameraLock.reason = reason;
+  cameraLock.until = 0;
+}
+
 function easeInOut(t){ return t<.5 ? 2*t*t : 1-Math.pow(-2*t+2,2)/2; }
 function easeOut(t){ return 1-Math.pow(1-t,3); }
 
-function tweenRigTo({toPos, toQuat, toFov, durSec=0.9, shotName=''}){
+function tweenRigTo({toPos, toQuat, toFov, durSec=0.9, shotName='', lockBypass=false}){
+  if(cameraLock.active && !lockBypass){
+    if(cameraLock.until !== Infinity && performance.now() > cameraLock.until){
+      unlockCamera('timeout');
+    } else {
+      return Promise.resolve();
+    }
+  }
   tweenActive = true;
   if(tweenPromiseResolve) tweenPromiseResolve();
 
@@ -993,14 +1032,20 @@ let playInFlight = false;
 let autoAdvancing = false;
 let autoTimer = null;
 
-async function flyToPane(i, shotName='approach', dur=0.85){
+async function flyToPane(i, shotName='approach', dur=0.85, lockBypass=false){
   if(i<0||i>=NUM_PANES) return;
   const shot = SHOTS[shotName] || SHOTS.approach;
   const sol  = solveShot(panes[i].mesh, shot);
-  await tweenRigTo({toPos:sol.camPos, toQuat:sol.camQuat, toFov:sol.fov, durSec:dur, shotName});
+  await tweenRigTo({toPos:sol.camPos, toQuat:sol.camQuat, toFov:sol.fov, durSec:dur, shotName, lockBypass});
 }
 
-async function setSelected(i){
+async function setSelected(i, {fromAuto=false} = {}){
+  if(!fromAuto && autoAdvancing){
+    autoAdvancing = false;
+    document.getElementById('bAuto').classList.remove('on');
+    logEv('AUTO OFF');
+  }
+
   // Deselect old
   if(selectedPane>=0) panes[selectedPane].setSelected(false);
   selectedPane = i;
@@ -1010,7 +1055,9 @@ async function setSelected(i){
   document.getElementById('playBtn').classList.add('hidden');
   updateStat();
 
-  await flyToPane(i, 'approach', 0.8);
+  lockCameraFor(1300, i, 'focus');
+  await flyToPane(i, 'approach', 0.8, true);
+  lockCameraToPane(i, 'hold');
   armed = true;
 
   // Show play button if video available
@@ -1030,13 +1077,20 @@ async function playSelected(){
   playInFlight = true;
   const i = selectedPane;
   try {
+    if(autoAdvancing){
+      autoAdvancing = false;
+      document.getElementById('bAuto').classList.remove('on');
+      logEv('AUTO OFF');
+    }
+    if(actx && actx.state !== 'running'){
+      try { await actx.resume(); } catch(_e){}
+    }
+    lockCameraToPane(i, 'playing');
     document.getElementById('playBtn').classList.add('hidden');
-    // Fly tighter
-    await flyToPane(i, 'tight', 0.55);
-    // Play the pane
-    await panes[i].playOnce();
-    // Pull back after playback
-    await flyToPane(i, 'approach', 0.7);
+    const playRun = panes[i].playOnce();
+    // Hold on selected pane while video plays
+    await flyToPane(i, 'tight', 0.55, true);
+    await playRun;
     if(panes[i].videoUrl){
       document.getElementById('playBtn').classList.remove('hidden');
     }
@@ -1046,6 +1100,7 @@ async function playSelected(){
 }
 
 async function goOverview(){
+  unlockCamera('overview');
   if(selectedPane>=0){panes[selectedPane].setSelected(false);selectedPane=-1;}
   document.getElementById('playBtn').classList.add('hidden');
   document.getElementById('paneInfo').textContent='SELECT A PANE';
@@ -1053,7 +1108,7 @@ async function goOverview(){
   const shot=SHOTS.overview;
   const m=new THREE.Matrix4().lookAt(shot.pos, shot.lookAt, new THREE.Vector3(0,1,0));
   const q=new THREE.Quaternion().setFromRotationMatrix(m);
-  await tweenRigTo({toPos:shot.pos, toQuat:q, toFov:shot.fov, durSec:1.1, shotName:'overview'});
+  await tweenRigTo({toPos:shot.pos, toQuat:q, toFov:shot.fov, durSec:1.1, shotName:'overview', lockBypass:true});
   updateStat();
 }
 
@@ -1063,7 +1118,7 @@ async function autoAdvanceStep(){
   if(!autoAdvancing) return;
   const next = (autoIdx+1)%NUM_PANES;
   autoIdx=next;
-  await setSelected(next);
+  await setSelected(next, {fromAuto:true});
   if(panes[next].videoUrl){
     await playSelected();
   } else {
@@ -1089,7 +1144,8 @@ function stopOrbit(){ orbitActive=false; orbitTarget=null; }
 // ═══════════════════════════════════════════════════════════════
 //  WEBAUDIO
 // ═══════════════════════════════════════════════════════════════
-let actx,analyser,srcNode,fftData=new Uint8Array(256);
+let actx,analyser,srcNode,videoAudioGain,fftData=new Uint8Array(256);
+const videoAudioNodes = new WeakMap();
 let bass=0,rms=0,beat=0,bpmVal=0;
 let beatHist=new Array(43).fill(0),beatPtr=0,lastBeat=0,bpmBuf=[];
 
@@ -1099,9 +1155,27 @@ function initACtx(){
     analyser=actx.createAnalyser();
     analyser.fftSize=512;analyser.smoothingTimeConstant=.82;
     analyser.connect(actx.destination);
+    videoAudioGain = actx.createGain();
+    videoAudioGain.gain.value = 1.0;
+    videoAudioGain.connect(actx.destination);
+    panes.forEach(p=>{ if(p && p.videoEl) attachVideoAudioToContext(p.videoEl); });
   }
 }
 function killSrc(){if(srcNode){try{srcNode.disconnect()}catch(e){}srcNode=null;}}
+function attachVideoAudioToContext(videoEl){
+  if(!actx || !videoAudioGain || !videoEl) return;
+  if(videoAudioNodes.has(videoEl)) return;
+  try {
+    const src = actx.createMediaElementSource(videoEl);
+    const gain = actx.createGain();
+    gain.gain.value = 1.0;
+    src.connect(gain);
+    gain.connect(videoAudioGain);
+    videoAudioNodes.set(videoEl, {src, gain});
+  } catch(err){
+    logEv('VIDEO AUDIO ERR '+(err && err.name ? err.name : 'Error'));
+  }
+}
 async function startMic(){
   initACtx();killSrc();
   const s=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
@@ -1224,12 +1298,14 @@ function applyAudioToScene(t){
   tunnel.strip.material.opacity = .12+bass*.28+beat*.15;
   // Micro camera shake on beat
   if(beat>.5 && !tweenActive){
-    rig.position.x += (Math.random()-.5)*beat*.008;
-    rig.position.y += (Math.random()-.5)*beat*.006;
+    camShakeX += (Math.random()-.5)*beat*.008;
+    camShakeY += (Math.random()-.5)*beat*.006;
   }
-  // Decay shake
-  rig.position.x *= .92;
-  rig.position.y *= .92;
+  // Decay shake without altering rig anchor (prevents camera drift).
+  camShakeX *= .92;
+  camShakeY *= .92;
+  camera.position.x = camShakeX;
+  camera.position.y = camShakeY;
 }
 
 // Orbit update
@@ -1348,7 +1424,7 @@ document.getElementById('bFly').addEventListener('click',()=>{
   if(selectedPane<0)return;
   const sn=document.getElementById('shotSel').value;
   if(sn==='orbit'){startOrbit(selectedPane);}
-  else{stopOrbit();flyToPane(selectedPane,sn,0.75);}
+  else{stopOrbit();flyToPane(selectedPane,sn,0.75,true);}
   logEv('SHOT: '+sn.toUpperCase());
 });
 
