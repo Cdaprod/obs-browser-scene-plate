@@ -1,0 +1,389 @@
+<!doctype html>
+<!-- Default URL+Parameters:
+  video_gallery_tunnel.html?list=/api/gallery.json&autoplay=0&mute=1&fx=1&hud=1&k=1
+  OR: video_gallery_tunnel.html?u0=/media/P1/clip0.mp4&u1=/media/P1/clip1.mp4&u2=/media/P1/clip2.mp4
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Video Gallery Tunnel</title>
+  <style>
+    html, body { margin:0; height:100%; background:#000; overflow:hidden; }
+    #hud {
+      position:fixed; left:12px; top:12px; color:#bff; font:12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+      background:rgba(0,0,0,.35); padding:10px 12px; border-radius:10px; border:1px solid rgba(140,255,255,.18);
+      pointer-events:auto;
+    }
+    #hud button { font:inherit; padding:6px 10px; margin-right:6px; }
+    #hud .row { margin-top:8px; display:flex; gap:6px; flex-wrap:wrap; }
+    #hud .pill { padding:4px 8px; border:1px solid rgba(140,255,255,.18); border-radius:999px; opacity:.9; }
+    canvas { display:block; }
+  </style>
+</head>
+<body>
+  <div id="hud">
+    <div><b>GALLERY.TUNNEL</b> <span class="pill" id="stat">idle</span></div>
+    <div class="row">
+      <button id="arm">ARM (user gesture)</button>
+      <button id="prev">Prev</button>
+      <button id="next">Next</button>
+      <button id="play">Play Selected</button>
+      <button id="stop">Stop</button>
+    </div>
+    <div class="row">
+      <span class="pill" id="sel">sel: -</span>
+      <span class="pill" id="cam">cam: -</span>
+    </div>
+  </div>
+
+  <script type="module">
+    import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
+
+    // ---- params
+    const qs = new URLSearchParams(location.search);
+    const HUD = (qs.get("hud") ?? "1") !== "0";
+    document.getElementById("hud").style.display = HUD ? "block" : "none";
+
+    const MUTE = (qs.get("mute") ?? "1") !== "0";
+    const AUTOPLAY = (qs.get("autoplay") ?? "0") !== "0";
+    const FX = (qs.get("fx") ?? "1") !== "0";
+
+    // ---- renderer
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setPixelRatio(Math.min(2, devicePixelRatio || 1));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    document.body.appendChild(renderer.domElement);
+
+    // ---- scene/camera
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x000000, 0.08);
+
+    const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.05, 200);
+    const rig = new THREE.Object3D();
+    rig.add(camera);
+    scene.add(rig);
+
+    // lighting (subtle)
+    scene.add(new THREE.AmbientLight(0xffffff, 0.12));
+    const rim = new THREE.DirectionalLight(0xffffff, 0.6);
+    rim.position.set(2, 4, 2);
+    scene.add(rim);
+
+    // ---- gallery data
+    function getUrlsFromQuery() {
+      const urls = [];
+      for (let i = 0; i < 64; i++) {
+        const u = qs.get("u" + i);
+        if (u) urls.push(u);
+      }
+      return urls;
+    }
+
+    async function loadList() {
+      const listUrl = qs.get("list");
+      if (!listUrl) return getUrlsFromQuery();
+      const r = await fetch(listUrl, { cache: "no-store" });
+      const j = await r.json();
+      return Array.isArray(j) ? j : (j.items || []);
+    }
+
+    // ---- shader: screen material (scanlines + glow-ish)
+    const screenVert = `
+      varying vec2 vUv;
+      void main() {
+        vUv = uv;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+      }
+    `;
+
+    const screenFrag = `
+      precision mediump float;
+      varying vec2 vUv;
+      uniform sampler2D uTex;
+      uniform float uTime;
+      uniform float uOn;
+      uniform float uGlow;
+      uniform float uScan;
+
+      float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
+
+      void main(){
+        vec2 uv = vUv;
+
+        // subtle barrel
+        vec2 p = uv * 2.0 - 1.0;
+        float r2 = dot(p,p);
+        uv = uv + p * (r2 * 0.06);
+
+        vec3 col = texture2D(uTex, uv).rgb;
+
+        // scanlines
+        float sl = 0.5 + 0.5*sin((uv.y * 900.0) + uTime*10.0);
+        col *= mix(0.92, 1.08, sl) * (1.0 + uScan*0.20);
+
+        // glow-ish lift
+        col += uGlow * 0.08;
+
+        // noise
+        float n = hash(uv * vec2(1280.0, 720.0) + uTime) - 0.5;
+        col += n * 0.02;
+
+        // if "off", dim
+        col = mix(col * 0.15, col, uOn);
+
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `;
+
+    // ---- pane factory
+    function makePaneMaterial(tex) {
+      return new THREE.ShaderMaterial({
+        uniforms: {
+          uTex:  { value: tex },
+          uTime: { value: 0 },
+          uOn:   { value: 0 },    // off until selected/playing
+          uGlow: { value: 0.0 },
+          uScan: { value: 1.0 },
+        },
+        vertexShader: screenVert,
+        fragmentShader: screenFrag,
+        transparent: false,
+      });
+    }
+
+    function makeFrameMaterial() {
+      return new THREE.MeshStandardMaterial({
+        color: 0x0b0f12,
+        metalness: 0.35,
+        roughness: 0.65,
+        emissive: 0x000000
+      });
+    }
+
+    // ---- pane object structure
+    class Pane {
+      constructor({ url, w=2.3, h=1.3 }) {
+        this.url = url;
+        this.w = w; this.h = h;
+
+        // placeholder texture (1x1 black)
+        const data = new Uint8Array([0,0,0,255]);
+        const tex = new THREE.DataTexture(data, 1, 1);
+        tex.needsUpdate = true;
+
+        this.videoEl = null;
+        this.videoTex = null;
+
+        this.material = makePaneMaterial(tex);
+
+        const geo = new THREE.PlaneGeometry(w, h, 1, 1);
+        this.mesh = new THREE.Mesh(geo, this.material);
+
+        // frame
+        const frame = new THREE.Mesh(new THREE.PlaneGeometry(w*1.05, h*1.08), makeFrameMaterial());
+        frame.position.z = -0.02;
+
+        this.group = new THREE.Group();
+        this.group.add(frame);
+        this.group.add(this.mesh);
+
+        this.state = "idle";
+      }
+
+      prime() {
+        if (this.videoEl) return;
+        const v = document.createElement("video");
+        v.src = this.url;
+        v.crossOrigin = "anonymous";
+        v.playsInline = true;
+        v.loop = false;
+        v.muted = MUTE;
+        v.preload = "none";     // IMPORTANT: don't download until we play
+        v.controls = false;
+        this.videoEl = v;
+        this.state = "primed";
+      }
+
+      async play() {
+        this.prime();
+        if (!this.videoTex) {
+          this.videoTex = new THREE.VideoTexture(this.videoEl);
+          this.videoTex.colorSpace = THREE.SRGBColorSpace;
+          this.videoTex.minFilter = THREE.LinearFilter;
+          this.videoTex.magFilter = THREE.LinearFilter;
+          this.material.uniforms.uTex.value = this.videoTex;
+        }
+
+        this.material.uniforms.uOn.value = 1.0;
+        this.material.uniforms.uGlow.value = 1.0;
+
+        this.videoEl.currentTime = 0;
+        await this.videoEl.play();
+        this.state = "playing";
+
+        this.videoEl.onended = () => {
+          this.state = "ended";
+          this.material.uniforms.uGlow.value = 0.0;
+          // keep last frame on screen (or dim it if you want)
+          // this.material.uniforms.uOn.value = 0.4;
+        };
+      }
+
+      stop(dim=true) {
+        if (this.videoEl) {
+          try { this.videoEl.pause(); } catch {}
+        }
+        this.state = "idle";
+        this.material.uniforms.uGlow.value = 0.0;
+        if (dim) this.material.uniforms.uOn.value = 0.0;
+      }
+
+      tick(t) {
+        this.material.uniforms.uTime.value = t;
+      }
+    }
+
+    // ---- camera keyframes (example)
+    const KEYFRAMES = [
+      { name:"assemble", pos:[0, 0.0, 6.5], rot:[0, 0, 0] },
+      { name:"k1",       pos:[0, 0.0, 4.0], rot:[0, 0, 0] },
+      { name:"k2",       pos:[0, 0.0, 2.0], rot:[0, 0, 0] },
+      { name:"hero",     pos:[0, 0.0, 0.8], rot:[0, 0, 0] },
+    ];
+
+    function easeInOut(t){ return t<0.5 ? 2.0*t*t : 1.0 - Math.pow(-2.0*t+2.0,2.0)/2.0; }
+
+    async function flyTo(kf, dur=0.9) {
+      const t0 = performance.now();
+      const p0 = rig.position.clone();
+      const r0 = rig.rotation.clone();
+      const p1 = new THREE.Vector3(...kf.pos);
+      const r1 = new THREE.Euler(...kf.rot);
+
+      return new Promise(resolve => {
+        function step(now){
+          const u = Math.min(1, (now - t0) / (dur*1000));
+          const e = easeInOut(u);
+          rig.position.lerpVectors(p0, p1, e);
+          rig.rotation.x = THREE.MathUtils.lerp(r0.x, r1.x, e);
+          rig.rotation.y = THREE.MathUtils.lerp(r0.y, r1.y, e);
+          rig.rotation.z = THREE.MathUtils.lerp(r0.z, r1.z, e);
+          if (u >= 1) return resolve();
+          requestAnimationFrame(step);
+        }
+        requestAnimationFrame(step);
+      });
+    }
+
+    // ---- build gallery
+    const panes = [];
+    const gallery = new THREE.Group();
+    scene.add(gallery);
+
+    function layoutTunnel(items) {
+      const gapZ = 1.6;
+      const startZ = 4.8;
+      const y = 0.0;
+
+      items.forEach((url, i) => {
+        const p = new Pane({ url, w:2.2, h:1.25 });
+        panes.push(p);
+
+        const side = (i % 2 === 0) ? -1 : 1;
+        const lane = Math.floor(i / 2);
+
+        p.group.position.set(side * 2.6, y, startZ - lane * gapZ);
+        p.group.rotation.y = side * (Math.PI * 0.18); // inward cant
+        gallery.add(p.group);
+      });
+
+      // center hero screen (optional)
+      // you can also create a dedicated pane for the "selected" video in the center
+    }
+
+    // ---- selection logic
+    let armed = false;
+    let selected = 0;
+
+    function setSelected(i) {
+      selected = (i + panes.length) % panes.length;
+      document.getElementById("sel").textContent = "sel: " + selected;
+      // dim all, light selected (but do not play)
+      panes.forEach((p, idx) => {
+        p.material.uniforms.uOn.value = (idx === selected) ? 1.0 : 0.0;
+        p.material.uniforms.uGlow.value = (idx === selected) ? 0.6 : 0.0;
+      });
+
+      // camera target near selected pane
+      const g = panes[selected].group;
+      const target = new THREE.Vector3().copy(g.position);
+      // move camera slightly toward centerline but aligned with pane depth
+      const kf = { pos:[0, 0.0, target.z + 1.4], rot:[0, 0, 0] };
+      flyTo(kf, 0.7);
+    }
+
+    async function playSelected() {
+      if (!armed) return;
+      // stop others
+      panes.forEach((p, idx) => { if (idx !== selected) p.stop(true); });
+      await panes[selected].play();
+    }
+
+    // ---- UI
+    document.getElementById("arm").onclick = async () => {
+      // user gesture: create AudioContext here later, allow video play
+      armed = true;
+      document.getElementById("stat").textContent = "armed";
+      // prime selected only (no network fetch due to preload=none)
+      panes[selected]?.prime();
+      if (AUTOPLAY) playSelected();
+    };
+
+    document.getElementById("prev").onclick = () => setSelected(selected - 1);
+    document.getElementById("next").onclick = () => setSelected(selected + 1);
+    document.getElementById("play").onclick = () => playSelected();
+    document.getElementById("stop").onclick = () => panes.forEach(p => p.stop(true));
+
+    // keyboard convenience (desktop)
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowLeft") setSelected(selected - 1);
+      if (e.key === "ArrowRight") setSelected(selected + 1);
+      if (e.key === "Enter") playSelected();
+      if (e.key === " ") { e.preventDefault(); panes[selected]?.stop(false); }
+    });
+
+    // ---- resize
+    window.addEventListener("resize", () => {
+      renderer.setSize(innerWidth, innerHeight);
+      camera.aspect = innerWidth/innerHeight;
+      camera.updateProjectionMatrix();
+    });
+
+    // ---- boot
+    const urls = await loadList();
+    layoutTunnel(urls.length ? urls : [
+      // fallback demo placeholders; replace with your media-sync urls
+      "/media/P1/ingest/originals/demo1.mp4",
+      "/media/P1/ingest/originals/demo2.mp4",
+      "/media/P1/ingest/originals/demo3.mp4",
+    ]);
+
+    setSelected(0);
+    rig.position.set(...KEYFRAMES[0].pos);
+
+    // ---- main loop
+    const t0 = performance.now();
+    function loop(now) {
+      const t = (now - t0) / 1000;
+      panes.forEach(p => p.tick(t));
+      document.getElementById("cam").textContent =
+        `cam: ${rig.position.x.toFixed(2)},${rig.position.y.toFixed(2)},${rig.position.z.toFixed(2)}`;
+      renderer.render(scene, camera);
+      requestAnimationFrame(loop);
+    }
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>

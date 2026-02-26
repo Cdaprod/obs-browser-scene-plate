@@ -1,0 +1,940 @@
+<!doctype html>
+<!--
+Default URL+Parameters:
+  svg_diagram_editor_over_shader_vertical.html?dpr=auto&bg=0a0f14&grid=1&vignette=1&scan=0&glow=1&debug=0
+
+Controls (touch-first):
+- Tap empty: create node (or if a node is selected, create node + arrow from selected)
+- Drag node: move
+- Tap node then tap node: create arrow
+- Tap edge: select edge
+- Double-tap node: edit node label
+- Double-tap edge: edit edge label
+- Long-press node: delete node (and connected edges)
+- Long-press edge: delete edge
+- Export/Import: copy/paste JSON
+
+Desktop:
+- Delete/Backspace deletes selected node/edge
+- Escape clears selection
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>SVG Diagram Editor over Shader (Vertical)</title>
+  <style>
+    :root { color-scheme: dark; }
+    html, body {
+      margin: 0; padding: 0;
+      width: 100%; height: 100%;
+      background: #000;
+      overflow: hidden;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+
+    #gl { position: fixed; inset: 0; width: 100vw; height: 100vh; display:block; z-index:0; }
+    #svg {
+      position: fixed; inset: 0; width: 100vw; height: 100vh; display:block; z-index:5;
+      touch-action: none;
+      -webkit-user-select: none; user-select: none;
+    }
+
+    .hud{
+      position: fixed; left:12px; right:12px; top:12px; z-index:20;
+      display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+      padding:10px 10px; border-radius:14px;
+      background: rgba(0,0,0,.35);
+      border: 1px solid rgba(255,255,255,.10);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+    .hud .title{ font-weight:700; margin-right:8px; color: rgba(255,255,255,.92); letter-spacing:.2px; }
+    .hud .meta{ margin-left:auto; color: rgba(255,255,255,.65); font-size:12px; white-space:nowrap; }
+    .btn{
+      pointer-events:auto;
+      appearance:none;
+      border:1px solid rgba(255,255,255,.14);
+      background: rgba(255,255,255,.10);
+      color: rgba(255,255,255,.92);
+      padding:8px 10px;
+      border-radius:12px;
+      font-size:12px; line-height:1;
+      cursor:pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .btn:active{ transform: translateY(1px); }
+    .btn.danger{ border-color: rgba(255,80,80,.25); background: rgba(255,80,80,.12); }
+    .hint{
+      width:100%;
+      margin-top:6px;
+      color: rgba(255,255,255,.70);
+      font-size:12px;
+      line-height:1.3;
+    }
+    .hint b{ color: rgba(255,255,255,.92); }
+
+    .modal{
+      position:fixed; inset:0; display:none; z-index:50;
+      background: rgba(0,0,0,.55);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      padding:14px; box-sizing:border-box;
+    }
+    .modal.open{ display:block; }
+    .panel{
+      position:absolute; left:14px; right:14px; top:14px; bottom:14px;
+      border-radius:16px;
+      background: rgba(8, 12, 16, .92);
+      border: 1px solid rgba(255,255,255,.12);
+      box-shadow: 0 10px 30px rgba(0,0,0,.55);
+      display:flex; flex-direction:column; overflow:hidden;
+    }
+    .panel .bar{
+      padding:12px 12px;
+      display:flex; gap:8px; align-items:center;
+      border-bottom: 1px solid rgba(255,255,255,.10);
+    }
+    .panel .bar .label{ font-weight:700; color: rgba(255,255,255,.92); }
+    .panel .bar .spacer{ margin-left:auto; }
+    .panel textarea{
+      flex:1; width:100%;
+      resize:none; border:0; outline:none;
+      padding:12px; box-sizing:border-box;
+      background: transparent;
+      color: rgba(255,255,255,.90);
+      font-size:12px; line-height:1.35;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+    .panel .foot{
+      padding:10px 12px;
+      border-top: 1px solid rgba(255,255,255,.10);
+      color: rgba(255,255,255,.65);
+      font-size:12px; line-height:1.3;
+    }
+
+    .edge{ stroke: rgba(255,255,255,.45); stroke-width:2; fill:none; vector-effect: non-scaling-stroke; }
+    .edge.selected{ stroke: rgba(160,220,255,.85); stroke-width:3; }
+
+    .node-box{ fill: rgba(255,255,255,.12); stroke: rgba(255,255,255,.75); stroke-width:2; vector-effect: non-scaling-stroke; }
+    .node-box.selected{ fill: rgba(160,220,255,.16); stroke: rgba(160,220,255,.95); stroke-width:3; }
+
+    .node-label{
+      fill: rgba(255,255,255,.92);
+      font-size:12px;
+      dominant-baseline: middle;
+      text-anchor: middle;
+      pointer-events:none;
+      paint-order: stroke;
+      stroke: rgba(0,0,0,.55);
+      stroke-width: 3px;
+    }
+    .edge-label{
+      fill: rgba(255,255,255,.82);
+      font-size:11px;
+      dominant-baseline: middle;
+      text-anchor: middle;
+      pointer-events:none;
+      paint-order: stroke;
+      stroke: rgba(0,0,0,.55);
+      stroke-width: 3px;
+    }
+    .edge-label.selected{ fill: rgba(160,220,255,.95); }
+
+    .toast{
+      position:fixed; left:12px; right:12px; bottom:12px; z-index:30;
+      padding:10px 12px;
+      border-radius:14px;
+      background: rgba(0,0,0,.45);
+      border: 1px solid rgba(255,255,255,.10);
+      color: rgba(255,255,255,.85);
+      font-size:12px; line-height:1.25;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      display:none;
+    }
+    .toast.show{ display:block; }
+  </style>
+</head>
+<body>
+  <canvas id="gl"></canvas>
+
+  <svg id="svg" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="userSpaceOnUse">
+        <path d="M2,2 L10,6 L2,10 Z" fill="rgba(255,255,255,.55)"></path>
+      </marker>
+      <marker id="arrowSel" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="userSpaceOnUse">
+        <path d="M2,2 L10,6 L2,10 Z" fill="rgba(160,220,255,.95)"></path>
+      </marker>
+    </defs>
+
+    <g id="edges"></g>
+    <g id="nodes"></g>
+  </svg>
+
+  <div class="hud">
+    <div class="title">Diagram</div>
+    <button class="btn" id="btnExport">Export</button>
+    <button class="btn" id="btnImport">Import</button>
+    <button class="btn danger" id="btnClear">Clear</button>
+    <button class="btn" id="btnHelp">Help</button>
+    <div class="meta" id="meta">nodes=0 edges=0</div>
+    <div class="hint" id="hint">
+      <b>Tap</b> empty = node · <b>Drag</b> node = move · <b>Tap</b> node then <b>tap</b> node = arrow · <b>Tap</b> edge = select · <b>Double tap</b> node/edge = label · <b>Long press</b> node/edge = delete
+    </div>
+  </div>
+
+  <div class="modal" id="modal">
+    <div class="panel">
+      <div class="bar">
+        <div class="label" id="modalTitle">Export</div>
+        <div class="spacer"></div>
+        <button class="btn" id="btnCopy">Copy</button>
+        <button class="btn" id="btnApply">Apply</button>
+        <button class="btn" id="btnClose">Close</button>
+      </div>
+      <textarea id="modalText" spellcheck="false"></textarea>
+      <div class="foot" id="modalFoot"></div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+(() => {
+  // ------------------------------------------------------------
+  // URL params
+  // ------------------------------------------------------------
+  const qp = new URLSearchParams(location.search);
+  const getInt = (k, d) => qp.has(k) ? parseInt(qp.get(k), 10) : d;
+  const getStr = (k, d) => qp.has(k) ? String(qp.get(k)) : d;
+
+  const CFG = {
+    dpr: getStr("dpr", "auto"),
+    bgHex: getStr("bg", "0a0f14"),
+    grid: getInt("grid", 1) !== 0,
+    vignette: getInt("vignette", 1) !== 0,
+    scan: getInt("scan", 0) !== 0,
+    glow: getInt("glow", 1) !== 0,
+    debug: getInt("debug", 0) !== 0,
+  };
+
+  // ------------------------------------------------------------
+  // Helpers
+  // ------------------------------------------------------------
+  const clamp01 = (v) => Math.max(0, Math.min(1, v));
+  const nowMs = () => performance.now();
+
+  const parseHexRGB = (hex) => {
+    const h = (hex || "").replace("#","").trim();
+    if (h.length !== 6) return [0.04, 0.06, 0.08];
+    const r = parseInt(h.slice(0,2),16) / 255;
+    const g = parseInt(h.slice(2,4),16) / 255;
+    const b = parseInt(h.slice(4,6),16) / 255;
+    return [r,g,b];
+  };
+
+  const toastEl = document.getElementById("toast");
+  let toastTimer = null;
+  const toast = (msg, ms=1200) => {
+    toastEl.textContent = msg;
+    toastEl.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove("show"), ms);
+  };
+
+  // ------------------------------------------------------------
+  // WebGL background (fullscreen quad)
+  // ------------------------------------------------------------
+  const canvas = document.getElementById("gl");
+  let gl = canvas.getContext("webgl2", { antialias:false, alpha:false, preserveDrawingBuffer:false });
+  if (!gl) gl = canvas.getContext("webgl", { antialias:false, alpha:false, preserveDrawingBuffer:false });
+
+  const BG = parseHexRGB(CFG.bgHex);
+
+  const computeDPR = () => {
+    if (CFG.dpr === "auto") return Math.min(3, Math.max(1, window.devicePixelRatio || 1));
+    const n = Number(CFG.dpr);
+    return Number.isFinite(n) ? Math.min(3, Math.max(1, n)) : 1;
+  };
+
+  const svg = document.getElementById("svg");
+  const gEdges = document.getElementById("edges");
+  const gNodes = document.getElementById("nodes");
+
+  const resize = () => {
+    const DPR = computeDPR();
+    const w = Math.floor(window.innerWidth * DPR);
+    const h = Math.floor(window.innerHeight * DPR);
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+      if (gl) gl.viewport(0,0,w,h);
+      renderDiagram();
+    }
+  };
+  window.addEventListener("resize", resize, { passive:true });
+  window.addEventListener("orientationchange", () => setTimeout(resize, 80), { passive:true });
+
+  let prog=null, a_position=null, u_res=null, u_time=null, u_bg=null, u_grid=null, u_vignette=null, u_scan=null, u_focus=null, u_focusOn=null, u_glow=null;
+
+  const VERT = `
+    attribute vec2 a_position;
+    varying vec2 v_uv;
+    void main(){
+      v_uv = a_position*0.5 + 0.5;
+      gl_Position = vec4(a_position, 0.0, 1.0);
+    }
+  `;
+  const FRAG = `
+    precision highp float;
+    varying vec2 v_uv;
+    uniform vec2  u_res;
+    uniform float u_time;
+    uniform vec3  u_bg;
+    uniform float u_grid;
+    uniform float u_vignette;
+    uniform float u_scan;
+    uniform vec2  u_focus;
+    uniform float u_focusOn;
+    uniform float u_glow;
+
+    float hash21(vec2 p){
+      p = fract(p*vec2(234.34,435.345));
+      p += dot(p,p+34.23);
+      return fract(p.x*p.y);
+    }
+
+    void main(){
+      vec2 uv = v_uv;
+      vec3 col = u_bg;
+      float t = u_time;
+
+      col += 0.06 * vec3(
+        sin((uv.y + t*0.05) * 6.2831),
+        sin((uv.x + t*0.03) * 6.2831),
+        sin((uv.x + uv.y + t*0.02) * 6.2831)
+      );
+
+      if (u_grid > 0.5) {
+        vec2 g = abs(fract(uv * vec2(12.0, 24.0)) - 0.5);
+        float line = smoothstep(0.49, 0.50, max(g.x, g.y));
+        col = mix(col, col + vec3(0.10, 0.16, 0.22), line);
+      }
+
+      if (u_scan > 0.5) {
+        float s = sin((uv.y * u_res.y) * 3.14159 * 0.5);
+        col *= 0.92 + 0.08 * s;
+      }
+
+      if (u_vignette > 0.5) {
+        vec2 p = uv - 0.5;
+        p.x *= u_res.x / u_res.y;
+        float v = smoothstep(0.90, 0.22, dot(p,p));
+        col *= v;
+      }
+
+      if (u_glow > 0.5 && u_focusOn > 0.5) {
+        vec2 p = uv - u_focus;
+        p.x *= u_res.x / u_res.y;
+        float d = length(p);
+        float ring = exp(-d * 22.0);
+        float pulse = 0.65 + 0.35 * sin(t * 2.6);
+        col += vec3(0.18,0.28,0.40) * ring * pulse;
+      }
+
+      col += (hash21(uv*u_res + u_time) - 0.5) * 0.018;
+      gl_FragColor = vec4(col, 1.0);
+    }
+  `;
+
+  const compile = (type, src) => {
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+      const info = gl.getShaderInfoLog(sh) || "shader compile error";
+      gl.deleteShader(sh);
+      throw new Error(info);
+    }
+    return sh;
+  };
+  const link = (vs, fs) => {
+    const p = gl.createProgram();
+    gl.attachShader(p, vs);
+    gl.attachShader(p, fs);
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+      const info = gl.getProgramInfoLog(p) || "program link error";
+      gl.deleteProgram(p);
+      throw new Error(info);
+    }
+    return p;
+  };
+
+  const initGL = () => {
+    if (!gl) return;
+    const vs = compile(gl.VERTEX_SHADER, VERT);
+    const fs = compile(gl.FRAGMENT_SHADER, FRAG);
+    prog = link(vs, fs);
+
+    a_position = gl.getAttribLocation(prog, "a_position");
+    u_res      = gl.getUniformLocation(prog, "u_res");
+    u_time     = gl.getUniformLocation(prog, "u_time");
+    u_bg       = gl.getUniformLocation(prog, "u_bg");
+    u_grid     = gl.getUniformLocation(prog, "u_grid");
+    u_vignette = gl.getUniformLocation(prog, "u_vignette");
+    u_scan     = gl.getUniformLocation(prog, "u_scan");
+    u_focus    = gl.getUniformLocation(prog, "u_focus");
+    u_focusOn  = gl.getUniformLocation(prog, "u_focusOn");
+    u_glow     = gl.getUniformLocation(prog, "u_glow");
+
+    const quad = new Float32Array([-1,-1, 1,-1, -1,1,  -1,1, 1,-1, 1,1]);
+    const vbo = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+    gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
+
+    gl.useProgram(prog);
+    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+    gl.enableVertexAttribArray(a_position);
+    gl.vertexAttribPointer(a_position, 2, gl.FLOAT, false, 0, 0);
+
+    resize();
+  };
+
+  const t0 = nowMs();
+  const focus = { x:0.5, y:0.5, on:0 };
+
+  const drawGL = () => {
+    if (!gl || !prog) return;
+    resize();
+    const t = (nowMs() - t0) / 1000;
+
+    gl.useProgram(prog);
+    gl.uniform2f(u_res, canvas.width, canvas.height);
+    gl.uniform1f(u_time, t);
+    gl.uniform3f(u_bg, BG[0], BG[1], BG[2]);
+    gl.uniform1f(u_grid, CFG.grid ? 1.0 : 0.0);
+    gl.uniform1f(u_vignette, CFG.vignette ? 1.0 : 0.0);
+    gl.uniform1f(u_scan, CFG.scan ? 1.0 : 0.0);
+    gl.uniform2f(u_focus, focus.x, focus.y);
+    gl.uniform1f(u_focusOn, focus.on);
+    gl.uniform1f(u_glow, CFG.glow ? 1.0 : 0.0);
+
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+  };
+
+  // ------------------------------------------------------------
+  // Model
+  // ------------------------------------------------------------
+  const state = {
+    nodes: [], // {id,x,y,label}
+    edges: [], // {id,from,to,label}
+    selectedNodeId: null,
+    selectedEdgeId: null,
+    draggingNodeId: null,
+    dragOffset: {x:0,y:0},
+    lastTapMs: 0,
+    lastTapKind: null,
+    lastTapId: null,
+  };
+
+  const uid = (prefix="id") => `${prefix}_${Math.random().toString(16).slice(2)}_${Date.now().toString(16)}`;
+
+  const metaEl = document.getElementById("meta");
+  const updateMeta = () => metaEl.textContent = `nodes=${state.nodes.length} edges=${state.edges.length}`;
+
+  // ------------------------------------------------------------
+  // Geometry + autosize nodes
+  // ------------------------------------------------------------
+  const pxToNorm = (clientX, clientY) => {
+    const rect = svg.getBoundingClientRect();
+    return { x: clamp01((clientX - rect.left)/rect.width), y: clamp01((clientY - rect.top)/rect.height) };
+  };
+  const normToPx = (nx, ny) => {
+    const rect = svg.getBoundingClientRect();
+    return { x: nx * rect.width, y: ny * rect.height };
+  };
+
+  const measCanvas = document.createElement("canvas");
+  const measCtx = measCanvas.getContext("2d");
+  const LABEL_FONT_PX = 12;
+  const LABEL_FONT = `${LABEL_FONT_PX}px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace`;
+
+  const measureLabelPx = (label) => {
+    const text = (label || "").trim() || "node";
+    measCtx.font = LABEL_FONT;
+    const w = measCtx.measureText(text).width;
+    return { text, w, h: LABEL_FONT_PX };
+  };
+
+  const nodeBoxPx = (label) => {
+    const rect = svg.getBoundingClientRect();
+    const base = Math.min(rect.width, rect.height);
+    const padX = Math.max(10, Math.min(16, base * 0.018));
+    const padY = Math.max(8,  Math.min(14, base * 0.015));
+
+    const m = measureLabelPx(label);
+
+    const minW = 44;
+    const minH = 36;
+
+    const w = Math.max(minW, Math.ceil(m.w + padX*2));
+    const h = Math.max(minH, Math.ceil(m.h + padY*2));
+    const rx = Math.min(14, Math.max(10, h * 0.35));
+
+    return { w, h, rx, text: m.text };
+  };
+
+  const nodeBoundsPx = (node) => {
+    const p = normToPx(node.x, node.y);
+    const box = nodeBoxPx(node.label);
+    return { x1: p.x - box.w/2, y1: p.y - box.h/2, x2: p.x + box.w/2, y2: p.y + box.h/2, w: box.w, h: box.h, rx: box.rx, cx: p.x, cy: p.y, text: box.text };
+  };
+
+  const findNodeAt = (nx, ny) => {
+    const rect = svg.getBoundingClientRect();
+    const px = { x: nx * rect.width, y: ny * rect.height };
+    for (let i = state.nodes.length - 1; i >= 0; i--) {
+      const b = nodeBoundsPx(state.nodes[i]);
+      if (px.x >= b.x1 && px.x <= b.x2 && px.y >= b.y1 && px.y <= b.y2) return state.nodes[i];
+    }
+    return null;
+  };
+
+  // ------------------------------------------------------------
+  // Ops
+  // ------------------------------------------------------------
+  const addNode = (nx, ny, label=null) => {
+    const n = { id: uid("n"), x: nx, y: ny, label: label ?? `N${state.nodes.length + 1}` };
+    state.nodes.push(n);
+    return n;
+  };
+
+  const addEdge = (fromId, toId) => {
+    if (fromId === toId) return null;
+    if (state.edges.some(e => e.from === fromId && e.to === toId)) return null;
+    const e = { id: uid("e"), from: fromId, to: toId, label: "" };
+    state.edges.push(e);
+    return e;
+  };
+
+  const clearSelection = () => { state.selectedNodeId = null; state.selectedEdgeId = null; };
+  const selectNode = (id) => { state.selectedNodeId = id; state.selectedEdgeId = null; };
+  const selectEdge = (id) => { state.selectedEdgeId = id; state.selectedNodeId = null; };
+
+  const deleteNode = (nodeId) => {
+    state.nodes = state.nodes.filter(n => n.id !== nodeId);
+    state.edges = state.edges.filter(e => e.from !== nodeId && e.to !== nodeId);
+    if (state.selectedNodeId === nodeId) state.selectedNodeId = null;
+    renderDiagram();
+  };
+
+  const deleteEdge = (edgeId) => {
+    state.edges = state.edges.filter(e => e.id !== edgeId);
+    if (state.selectedEdgeId === edgeId) state.selectedEdgeId = null;
+    renderDiagram();
+  };
+
+  const deleteSelected = () => {
+    if (state.selectedEdgeId) { const id = state.selectedEdgeId; state.selectedEdgeId = null; deleteEdge(id); toast("Edge deleted"); return; }
+    if (state.selectedNodeId) { const id = state.selectedNodeId; state.selectedNodeId = null; deleteNode(id); toast("Node deleted"); return; }
+  };
+
+  const editNodeLabel = (nodeId) => {
+    const n = state.nodes.find(x => x.id === nodeId);
+    if (!n) return;
+    const next = prompt("Node label:", n.label || "");
+    if (next === null) return;
+    n.label = String(next).slice(0, 64);
+    renderDiagram();
+  };
+
+  const editEdgeLabel = (edgeId) => {
+    const e = state.edges.find(x => x.id === edgeId);
+    if (!e) return;
+    const next = prompt("Edge label:", e.label || "");
+    if (next === null) return;
+    e.label = String(next).slice(0, 64);
+    renderDiagram();
+  };
+
+  // ------------------------------------------------------------
+  // Render
+  // ------------------------------------------------------------
+  const renderDiagram = () => {
+    gEdges.innerHTML = "";
+    gNodes.innerHTML = "";
+
+    // edges
+    for (const e of state.edges) {
+      const from = state.nodes.find(n => n.id === e.from);
+      const to   = state.nodes.find(n => n.id === e.to);
+      if (!from || !to) continue;
+
+      const a = normToPx(from.x, from.y);
+      const b = normToPx(to.x, to.y);
+      const isSel = e.id === state.selectedEdgeId;
+
+      const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      line.setAttribute("x1", a.x); line.setAttribute("y1", a.y);
+      line.setAttribute("x2", b.x); line.setAttribute("y2", b.y);
+      line.setAttribute("class", isSel ? "edge selected" : "edge");
+      line.setAttribute("marker-end", isSel ? "url(#arrowSel)" : "url(#arrow)");
+      line.dataset.edgeId = e.id;
+
+      const hit = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      hit.setAttribute("x1", a.x); hit.setAttribute("y1", a.y);
+      hit.setAttribute("x2", b.x); hit.setAttribute("y2", b.y);
+      hit.setAttribute("stroke", "rgba(0,0,0,0)");
+      hit.setAttribute("stroke-width", "22");
+      hit.setAttribute("vector-effect", "non-scaling-stroke");
+      hit.style.pointerEvents = "stroke";
+      hit.dataset.edgeId = e.id;
+
+      gEdges.appendChild(line);
+      gEdges.appendChild(hit);
+
+      const lbl = (e.label || "").trim();
+      if (lbl) {
+        const mx = (a.x + b.x) * 0.5;
+        const my = (a.y + b.y) * 0.5;
+
+        const vx = (b.x - a.x), vy = (b.y - a.y);
+        const len = Math.max(1, Math.hypot(vx, vy));
+        const nx = -vy / len, ny = vx / len;
+        const off = 10;
+
+        const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        text.setAttribute("x", mx + nx*off);
+        text.setAttribute("y", my + ny*off);
+        text.setAttribute("class", isSel ? "edge-label selected" : "edge-label");
+        text.textContent = lbl.length > 64 ? lbl.slice(0, 64) : lbl;
+        gEdges.appendChild(text);
+      }
+    }
+
+    // nodes
+    for (const n of state.nodes) {
+      const b = nodeBoundsPx(n);
+      const isSel = n.id === state.selectedNodeId;
+
+      const grp = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      grp.dataset.nodeId = n.id;
+
+      const r = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      r.setAttribute("x", b.x1);
+      r.setAttribute("y", b.y1);
+      r.setAttribute("width", b.w);
+      r.setAttribute("height", b.h);
+      r.setAttribute("rx", b.rx);
+      r.setAttribute("ry", b.rx);
+      r.setAttribute("class", isSel ? "node-box selected" : "node-box");
+      r.dataset.nodeId = n.id;
+
+      const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      t.setAttribute("x", b.cx);
+      t.setAttribute("y", b.cy);
+      t.setAttribute("class", "node-label");
+      t.textContent = b.text;
+
+      grp.appendChild(r);
+      grp.appendChild(t);
+      gNodes.appendChild(grp);
+    }
+
+    // shader focus
+    const sel = state.nodes.find(n => n.id === state.selectedNodeId);
+    if (sel) { focus.x = sel.x; focus.y = sel.y; focus.on = 1; }
+    else { focus.on = 0; }
+
+    updateMeta();
+  };
+
+  // ------------------------------------------------------------
+  // Pointer interactions + long-press delete
+  // ------------------------------------------------------------
+  const DOUBLE_TAP_MS = 320;
+  const TAP_MOVE_PX = 10;
+  const LONG_PRESS_MS = 520;
+
+  let pointerDown = false;
+  let downClient = {x:0,y:0};
+  let downPt = {x:0,y:0};
+  let downPrevSelectedNodeId = null;
+  let downOnNodeId = null;
+  let downOnEdgeId = null;
+
+  let longPressTimer = null;
+  let longPressFired = false;
+
+  const cancelLongPress = () => {
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
+  };
+
+  const armLongPress = () => {
+    cancelLongPress();
+    longPressFired = false;
+    longPressTimer = setTimeout(() => {
+      if (!pointerDown) return;
+      longPressFired = true;
+
+      if (downOnNodeId) {
+        if (confirm("Delete node?")) { deleteNode(downOnNodeId); toast("Node deleted"); }
+        return;
+      }
+      if (downOnEdgeId) {
+        if (confirm("Delete edge?")) { deleteEdge(downOnEdgeId); toast("Edge deleted"); }
+        return;
+      }
+    }, LONG_PRESS_MS);
+  };
+
+  const onPointerDown = (ev) => {
+    if (ev.pointerType === "touch" && ev.isPrimary === false) return;
+
+    pointerDown = true;
+    svg.setPointerCapture(ev.pointerId);
+
+    downClient = { x: ev.clientX, y: ev.clientY };
+    downPt = pxToNorm(ev.clientX, ev.clientY);
+
+    downPrevSelectedNodeId = state.selectedNodeId;
+
+    downOnNodeId = (ev.target && ev.target.dataset && ev.target.dataset.nodeId) ? ev.target.dataset.nodeId : null;
+    if (!downOnNodeId) {
+      const n = findNodeAt(downPt.x, downPt.y);
+      downOnNodeId = n ? n.id : null;
+    }
+
+    downOnEdgeId = (ev.target && ev.target.dataset && ev.target.dataset.edgeId) ? ev.target.dataset.edgeId : null;
+
+    // arm long-press delete if down on node/edge
+    if (downOnNodeId || downOnEdgeId) armLongPress();
+
+    if (downOnNodeId) {
+      state.draggingNodeId = downOnNodeId;
+      const node = state.nodes.find(nn => nn.id === downOnNodeId);
+      if (node) state.dragOffset = { x: node.x - downPt.x, y: node.y - downPt.y };
+      ev.preventDefault();
+      return;
+    }
+
+    ev.preventDefault();
+  };
+
+  const onPointerMove = (ev) => {
+    if (!pointerDown) return;
+
+    const dx = ev.clientX - downClient.x;
+    const dy = ev.clientY - downClient.y;
+    if (Math.hypot(dx, dy) > TAP_MOVE_PX) cancelLongPress();
+
+    if (state.draggingNodeId) {
+      const pt = pxToNorm(ev.clientX, ev.clientY);
+      const node = state.nodes.find(nn => nn.id === state.draggingNodeId);
+      if (!node) return;
+
+      node.x = clamp01(pt.x + state.dragOffset.x);
+      node.y = clamp01(pt.y + state.dragOffset.y);
+
+      selectNode(node.id);
+      renderDiagram();
+      ev.preventDefault();
+    }
+  };
+
+  const onPointerUp = (ev) => {
+    if (!pointerDown) return;
+    pointerDown = false;
+
+    cancelLongPress();
+
+    // If long-press fired, do nothing else on release
+    if (longPressFired) {
+      state.draggingNodeId = null;
+      ev.preventDefault();
+      return;
+    }
+
+    const dx = ev.clientX - downClient.x;
+    const dy = ev.clientY - downClient.y;
+    const moved = Math.hypot(dx, dy);
+    const isTap = moved <= TAP_MOVE_PX;
+
+    const upPt = pxToNorm(ev.clientX, ev.clientY);
+    const upNode = findNodeAt(upPt.x, upPt.y);
+    const upNodeId = upNode ? upNode.id : null;
+
+    const upEdgeId = (ev.target && ev.target.dataset && ev.target.dataset.edgeId) ? ev.target.dataset.edgeId : null;
+
+    state.draggingNodeId = null;
+
+    if (!isTap) {
+      renderDiagram();
+      ev.preventDefault();
+      return;
+    }
+
+    // double-tap detect (node/edge)
+    const t = nowMs();
+    const kind = upNodeId ? "node" : (upEdgeId ? "edge" : null);
+    const id = upNodeId || upEdgeId || null;
+    const isDouble = kind && id && state.lastTapKind === kind && state.lastTapId === id && (t - state.lastTapMs) <= DOUBLE_TAP_MS;
+
+    state.lastTapMs = t;
+    state.lastTapKind = kind;
+    state.lastTapId = id;
+
+    if (isDouble) {
+      if (kind === "node") editNodeLabel(id);
+      else if (kind === "edge") editEdgeLabel(id);
+      ev.preventDefault();
+      return;
+    }
+
+    // tap behaviors
+    if (upNodeId) {
+      if (downPrevSelectedNodeId && downPrevSelectedNodeId !== upNodeId) {
+        const created = addEdge(downPrevSelectedNodeId, upNodeId);
+        toast(created ? "Arrow created" : "Arrow already exists");
+      }
+      selectNode(upNodeId);
+      renderDiagram();
+      ev.preventDefault();
+      return;
+    }
+
+    if (upEdgeId) {
+      selectEdge(upEdgeId);
+      renderDiagram();
+      toast("Edge selected");
+      ev.preventDefault();
+      return;
+    }
+
+    // tap empty
+    if (downPrevSelectedNodeId) {
+      const n = addNode(upPt.x, upPt.y);
+      addEdge(downPrevSelectedNodeId, n.id);
+      selectNode(n.id);
+      renderDiagram();
+      toast("Node + arrow created");
+      ev.preventDefault();
+      return;
+    }
+
+    const n = addNode(upPt.x, upPt.y);
+    selectNode(n.id);
+    renderDiagram();
+    toast("Node created");
+    ev.preventDefault();
+  };
+
+  const onKeyDown = (ev) => {
+    if (ev.key === "Backspace" || ev.key === "Delete") deleteSelected();
+    if (ev.key === "Escape") { clearSelection(); renderDiagram(); }
+  };
+
+  svg.addEventListener("pointerdown", onPointerDown, { passive:false });
+  svg.addEventListener("pointermove", onPointerMove, { passive:false });
+  svg.addEventListener("pointerup", onPointerUp, { passive:false });
+  window.addEventListener("keydown", onKeyDown);
+
+  // ------------------------------------------------------------
+  // Modal export/import
+  // ------------------------------------------------------------
+  const modal = document.getElementById("modal");
+  const modalTitle = document.getElementById("modalTitle");
+  const modalText = document.getElementById("modalText");
+  const modalFoot = document.getElementById("modalFoot");
+  const btnClose = document.getElementById("btnClose");
+  const btnCopy = document.getElementById("btnCopy");
+  const btnApply = document.getElementById("btnApply");
+
+  const openModal = (mode) => {
+    modal.classList.add("open");
+    if (mode === "export") {
+      modalTitle.textContent = "Export JSON";
+      btnApply.style.display = "none";
+      btnCopy.style.display = "inline-block";
+      modalFoot.textContent = "Copy JSON anywhere. Nodes+edges have normalized coords (0..1).";
+      modalText.value = JSON.stringify({ nodes: state.nodes, edges: state.edges }, null, 2);
+      setTimeout(() => { modalText.focus(); modalText.select(); }, 30);
+    } else {
+      modalTitle.textContent = "Import JSON";
+      btnApply.style.display = "inline-block";
+      btnCopy.style.display = "none";
+      modalFoot.textContent = "Paste JSON then Apply. Invalid JSON won’t be applied.";
+      modalText.value = "";
+      setTimeout(() => modalText.focus(), 30);
+    }
+  };
+
+  const closeModal = () => modal.classList.remove("open");
+
+  btnClose.addEventListener("click", closeModal);
+  modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
+
+  btnCopy.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(modalText.value); toast("Copied"); }
+    catch { modalText.focus(); modalText.select(); toast("Select + copy"); }
+  });
+
+  btnApply.addEventListener("click", () => {
+    try {
+      const obj = JSON.parse(modalText.value);
+      if (!obj || !Array.isArray(obj.nodes) || !Array.isArray(obj.edges)) throw new Error("Need {nodes:[], edges:[]}");
+      const nodes = obj.nodes.map(n => ({ id: String(n.id || uid("n")), x: clamp01(Number(n.x)), y: clamp01(Number(n.y)), label: String(n.label || "node").slice(0,64) }));
+      const nodeIds = new Set(nodes.map(n => n.id));
+      const edges = obj.edges.map(e => ({ id: String(e.id || uid("e")), from: String(e.from), to: String(e.to), label: String(e.label || "").slice(0,64) }))
+        .filter(e => nodeIds.has(e.from) && nodeIds.has(e.to) && e.from !== e.to);
+
+      state.nodes = nodes;
+      state.edges = edges;
+      clearSelection();
+      renderDiagram();
+      closeModal();
+      toast("Imported");
+    } catch (err) {
+      toast("Import failed: " + (err && err.message ? err.message : String(err)), 1800);
+    }
+  });
+
+  document.getElementById("btnExport").addEventListener("click", () => openModal("export"));
+  document.getElementById("btnImport").addEventListener("click", () => openModal("import"));
+  document.getElementById("btnClear").addEventListener("click", () => {
+    if (!confirm("Clear all nodes/edges?")) return;
+    state.nodes = []; state.edges = [];
+    clearSelection();
+    renderDiagram();
+    toast("Cleared");
+  });
+  document.getElementById("btnHelp").addEventListener("click", () => {
+    toast("Long-press node/edge to delete. Double-tap node/edge to label. Delete key works on desktop.", 2400);
+  });
+
+  // ------------------------------------------------------------
+  // Start
+  // ------------------------------------------------------------
+  if (gl) { try { initGL(); } catch {} }
+
+  const seed = () => {
+    const a = addNode(0.30, 0.30, "Ingest");
+    const b = addNode(0.72, 0.32, "Index");
+    const c = addNode(0.50, 0.68, "Explorer");
+    addEdge(a.id, b.id);
+    addEdge(b.id, c.id);
+    state.selectedNodeId = a.id;
+    renderDiagram();
+  };
+  seed();
+
+  const frame = () => { drawGL(); requestAnimationFrame(frame); };
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
