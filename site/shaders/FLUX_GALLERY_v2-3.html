@@ -1140,7 +1140,7 @@ async function setSelected(i, {fromAuto=false} = {}){
   logEv('SEL P'+(i+1));
 }
 
-async function playSelected(){
+async function playSelected({fromAuto=false} = {}){
   if(!armed||selectedPane<0||playInFlight) return;
   playInFlight = true;
   const i = selectedPane;
@@ -1149,7 +1149,7 @@ async function playSelected(){
       clearTimeout(bootOverviewTimer);
       bootOverviewTimer = null;
     }
-    if(autoAdvancing){
+    if(!fromAuto && autoAdvancing){
       autoAdvancing = false;
       document.getElementById('bAuto').classList.remove('on');
       logEv('AUTO OFF');
@@ -1191,17 +1191,29 @@ async function goOverview(){
 
 // Auto advance
 let autoIdx = 0;
-async function autoAdvanceStep(){
-  if(!autoAdvancing) return;
-  const next = (autoIdx+1)%NUM_PANES;
-  autoIdx=next;
-  await setSelected(next, {fromAuto:true});
-  if(panes[next].videoUrl){
-    await playSelected();
-  } else {
-    await new Promise(r=>{ autoTimer=setTimeout(()=>{autoTimer=null;r();},4000); });
+let autoQueue = [];
+let autoRunId = 0;
+
+function buildAutoQueue(){
+  return panes
+    .map((pane, idx) => pane && pane.videoUrl ? idx : -1)
+    .filter(idx => idx >= 0);
+}
+
+async function autoAdvanceStep(runId){
+  while(autoAdvancing && runId === autoRunId && autoIdx < autoQueue.length){
+    const next = autoQueue[autoIdx++];
+    await setSelected(next, {fromAuto:true});
+    await playSelected({fromAuto:true});
   }
-  if(autoAdvancing) autoAdvanceStep();
+  if(runId !== autoRunId) return;
+  if(autoAdvancing){
+    autoAdvancing = false;
+    autoQueue = [];
+    autoIdx = 0;
+    document.getElementById('bAuto').classList.remove('on');
+    logEv('AUTO COMPLETE');
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1523,9 +1535,30 @@ document.getElementById('bModeP').addEventListener('click',()=>{
 });
 
 document.getElementById('bAuto').addEventListener('click',function(){
-  autoAdvancing=!autoAdvancing;this.classList.toggle('on',autoAdvancing);
-  if(autoAdvancing){autoIdx=selectedPane>=0?selectedPane:-1;autoAdvanceStep();}
-  logEv(autoAdvancing?'AUTO ON':'AUTO OFF');
+  autoAdvancing = !autoAdvancing;
+  this.classList.toggle('on', autoAdvancing);
+  if(autoAdvancing){
+    autoQueue = buildAutoQueue();
+    autoIdx = 0;
+    autoRunId += 1;
+    if(autoQueue.length === 0){
+      autoAdvancing = false;
+      this.classList.remove('on');
+      logEv('AUTO: NO VIDEOS');
+      return;
+    }
+    autoAdvanceStep(autoRunId);
+    logEv('AUTO ON');
+    return;
+  }
+  autoRunId += 1;
+  autoQueue = [];
+  autoIdx = 0;
+  if(autoTimer){
+    clearTimeout(autoTimer);
+    autoTimer = null;
+  }
+  logEv('AUTO OFF');
 });
 
 document.getElementById('bOverview').addEventListener('click',()=>{stopOrbit();goOverview();});
@@ -1603,8 +1636,17 @@ PANE_URLS.forEach((url,i)=>{if(url&&panes[i])panes[i].loadVideo(url);});
 // Auto-start
 if(AUTO_ADV){
   setTimeout(()=>{
-    document.getElementById('bAuto').classList.add('on');
-    autoAdvancing=true;autoAdvanceStep();
+    const bAuto = document.getElementById('bAuto');
+    autoQueue = buildAutoQueue();
+    autoIdx = 0;
+    autoRunId += 1;
+    if(autoQueue.length === 0){
+      logEv('AUTO: NO VIDEOS');
+      return;
+    }
+    bAuto.classList.add('on');
+    autoAdvancing = true;
+    autoAdvanceStep(autoRunId);
   },1200);
 }
 
