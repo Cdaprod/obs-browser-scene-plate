@@ -365,12 +365,18 @@ if(ALPHA_MODE){
 scene.fog = new THREE.FogExp2(0x03030a, 0.14);
 
 const camera = new THREE.PerspectiveCamera(58, innerWidth/innerHeight, 0.1, 60);
-camera.position.set(0, 0, 6);
+// IMPORTANT: camera stays at local origin; rig drives world movement.
+camera.position.set(0, 0, 0);
 
 // Camera rig — we tween this, not the camera directly
 const rig = new THREE.Object3D();
-rig.add(camera);
+const shake = new THREE.Object3D();
+rig.add(shake);
+shake.add(camera);
 scene.add(rig);
+
+let camShakeX = 0;
+let camShakeY = 0;
 
 window.addEventListener('resize', () => {
   camera.aspect = innerWidth/innerHeight;
@@ -597,11 +603,41 @@ const LAYOUTS = {
 let currentMode = MODE_START;
 let panes = [];
 let selectedPane = -1;
+let bootOverviewTimer = null;
+
+// Full-frame play framing targets (pane fills ~85-90% viewport while playing).
+let PLAY_TARGET_FILL = 0.92;
+let PLAY_FIT_MODE = 'cover'; // cover | contain | height | width
+let PLAY_FOV_BASE = 58;
+let PLAY_FOV_MIN = 34;
+let PLAY_FOV_MAX = 72;
+let PLAY_DOLLY_MIN = 0.9;
+let PLAY_DOLLY_MAX = 8.0;
 
 // ═══════════════════════════════════════════════════════════════
 //  PANE CLASS
 // ═══════════════════════════════════════════════════════════════
 const PANE_W = 1.77, PANE_H = 1.0; // 16:9 aspect
+
+// In-pane video texture playback helper.
+// Keeps playback inside each pane and avoids native fullscreen takeover on mobile browsers.
+function createPaneVideoEl(url){
+  const el = document.createElement('video');
+  el.src = url;
+  el.muted = false;
+  el.playsInline = true;
+  el.setAttribute('playsinline', '');
+  el.setAttribute('webkit-playsinline', '');
+  el.setAttribute('x5-playsinline', '');
+  el.controls = false;
+  el.disablePictureInPicture = true;
+  el.setAttribute('controlsList', 'nodownload noplaybackrate noremoteplayback');
+  el.setAttribute('noremoteplayback', '');
+  el.autoplay = false;
+  el.preload = 'auto';
+  el.style.display = 'none';
+  return el;
+}
 
 class Pane {
   constructor(index, layoutPos){
@@ -611,6 +647,7 @@ class Pane {
     this.videoUrl = PANE_URLS[index] || null;
     this.videoEl  = null;
     this.videoTex = null;
+    this._endedHandler = null;
 
     // Mesh
     const geo = new THREE.PlaneGeometry(PANE_W, PANE_H);
@@ -655,21 +692,14 @@ class Pane {
   }
 
   loadVideo(url){
+    this._stopVideo();
     this.videoUrl = url;
     this._thumbPushed = false;
     logEv('VIDEO LOADED -> P'+(this.index+1));
-    // Immediately create video element and show first frame — no play needed
-    // Use muted+playsInline+autoplay to prevent fullscreen API from triggering
-    const el = document.createElement('video');
-    el.src = url;
-    el.muted = true;
-    el.playsInline = true;
-    el.setAttribute('playsinline', '');
-    el.setAttribute('webkit-playsinline', '');
-    el.autoplay = false;     // we control play manually
-    el.preload = 'auto';
-    el.style.display = 'none';
+    // Immediately create video element and show first frame — no play needed.
+    const el = createPaneVideoEl(url);
     document.getElementById('vidPool').appendChild(el);
+    attachVideoAudioToContext(el);
     el.load();
     el.addEventListener('loadedmetadata', () => {
       const vw = el.videoWidth  || 1920;
@@ -682,6 +712,12 @@ class Pane {
       this.frame.geometry.dispose();
       this.frame.geometry = new THREE.BoxGeometry(newW+0.025, newH+0.025, 0.012);
       this.mat.uniforms.uAspect.value = aspect;
+      if(this.index === selectedPane){
+        const focus = solveFocusForPane(this.index, {fill:0.82, minFov:24, maxFov:70});
+        if(focus){
+          tweenRigTo({toPos:focus.camPos, toQuat:focus.camQuat, toFov:focus.fov, durSec:0.35, shotName:'refit', lockBypass:true});
+        }
+      }
     }, {once:true});
     el.addEventListener('canplay', () => {
       // Seek to frame 0 so thumbnail shows without playing
@@ -704,39 +740,49 @@ class Pane {
   playOnce(){
     if(this.playing) return Promise.resolve();
     if(!this.videoUrl){ logEv('NO VIDEO ON P'+(this.index+1)); return Promise.resolve(); }
+    const onEnded = () => {
+      this.playing = false;
+      this.mat.uniforms.uPlaying.value = 0.0;
+      this._endedHandler = null;
+      updatePaneNavUI();
+      logEv('P'+(this.index+1)+' ENDED - FROZEN');
+    };
+
     // If video element already exists (from loadVideo or previous play), reuse it
     if(this.videoEl && this.videoTex){
-      return new Promise(resolve => {
+      return new Promise((resolve) => {
+        if(this._endedHandler){
+          this.videoEl.removeEventListener('ended', this._endedHandler);
+          this._endedHandler = null;
+        }
+        this._endedHandler = () => { onEnded(); resolve(); };
+        this.videoEl.addEventListener('ended', this._endedHandler, {once:true});
         this.videoEl.currentTime = 0;
-        this.videoEl.muted = true;
-        this.videoEl.playsInline = true;
-        this.videoEl.setAttribute('playsinline','');
-        this.videoEl.setAttribute('webkit-playsinline','');
+        this.videoEl.muted = false;
+        this.videoEl.volume = 1.0;
         const pp = this.videoEl.play();
-        if(pp && pp.catch) pp.catch(()=>{});
         this.playing = true;
         this.mat.uniforms.uPlaying.value = 1.0;
         updatePaneNavUI();
         logEv('PLAYING P'+(this.index+1));
-        this.videoEl.addEventListener('ended', () => {
+        if(pp && pp.catch) pp.catch((err) => {
           this.playing = false;
           this.mat.uniforms.uPlaying.value = 0.0;
+          if(this._endedHandler){
+            this.videoEl.removeEventListener('ended', this._endedHandler);
+            this._endedHandler = null;
+          }
           updatePaneNavUI();
+          logEv('PLAY FAIL P'+(this.index+1)+' '+(err && err.name ? err.name : 'Error'));
+          this.playing = false;
           resolve();
-          logEv('P'+(this.index+1)+' ENDED - FROZEN');
-        }, {once:true});
+        });
       });
     }
-    return new Promise(resolve => {
-      this.videoEl = document.createElement('video');
-      this.videoEl.src = this.videoUrl;
-      this.videoEl.muted = true;
-      this.videoEl.playsInline = true;
-      this.videoEl.setAttribute('playsinline','');
-      this.videoEl.setAttribute('webkit-playsinline','');
-      this.videoEl.preload = 'auto';
-      this.videoEl.style.display = 'none';
+    return new Promise((resolve) => {
+      this.videoEl = createPaneVideoEl(this.videoUrl);
       document.getElementById('vidPool').appendChild(this.videoEl);
+      attachVideoAudioToContext(this.videoEl);
       this.videoEl.load();
       this.videoEl.addEventListener('loadedmetadata', () => {
         // Resize mesh to match actual video aspect ratio
@@ -761,20 +807,30 @@ class Pane {
         this.videoTex.generateMipmaps = false;
         this.mat.uniforms.uTex.value = this.videoTex;
         this.mat.uniforms.uHasTex.value = 1.0;
+        if(this._endedHandler){
+          this.videoEl.removeEventListener('ended', this._endedHandler);
+          this._endedHandler = null;
+        }
+        this._endedHandler = () => { onEnded(); resolve(); };
+        this.videoEl.addEventListener('ended', this._endedHandler, {once:true});
+        this.videoEl.muted = false;
+        this.videoEl.volume = 1.0;
         const pp = this.videoEl.play();
-        if(pp && pp.catch) pp.catch(()=>{});
         this.playing = true;
         this.mat.uniforms.uPlaying.value = 1.0;
         updatePaneNavUI();
         logEv('PLAYING P'+(this.index+1));
-      }, {once:true});
-      this.videoEl.addEventListener('ended', () => {
-        // Keep last frame visible — just mark not playing, don't destroy texture
-        this.playing = false;
-        this.mat.uniforms.uPlaying.value = 0.0;
-        updatePaneNavUI();
-        resolve();
-        logEv('P'+(this.index+1)+' ENDED - FROZEN');
+        if(pp && pp.catch) pp.catch((err) => {
+          this.playing = false;
+          this.mat.uniforms.uPlaying.value = 0.0;
+          if(this._endedHandler){
+            this.videoEl.removeEventListener('ended', this._endedHandler);
+            this._endedHandler = null;
+          }
+          updatePaneNavUI();
+          logEv('PLAY FAIL P'+(this.index+1)+' '+(err && err.name ? err.name : 'Error'));
+          resolve();
+        });
       }, {once:true});
     });
   }
@@ -782,7 +838,18 @@ class Pane {
   _stopVideo(){
     this.playing = false;
     this.mat.uniforms.uPlaying.value = 0.0;
-    if(this.videoEl){ this.videoEl.pause(); this.videoEl.src=''; }
+    if(this.videoEl){
+      if(this._endedHandler){
+        this.videoEl.removeEventListener('ended', this._endedHandler);
+        this._endedHandler = null;
+      }
+      this.videoEl.pause();
+      this.videoEl.src='';
+      this.videoEl.load();
+      if(this.videoEl.parentNode){
+        this.videoEl.parentNode.removeChild(this.videoEl);
+      }
+    }
     if(this.videoTex){ this.videoTex.dispose(); this.videoTex=null; }
     this.videoEl = null;
     this.mat.uniforms.uTex.value = null;
@@ -822,8 +889,14 @@ function buildPanes(mode){
     p.videoTex = null;
     scene.remove(p.group);
   });
-  panes = LAYOUTS[mode].map((pos, i) => new Pane(i, pos));
+  const aspect = camera.aspect || (innerWidth/innerHeight);
+  const panoScale = mode==='panoramic' ? Math.max(0.55, Math.min(1.0, aspect/1.0)) : 1.0;
+  panes = LAYOUTS[mode].map((pos, i) => {
+    const panePos = mode==='panoramic' ? [pos[0]*panoScale, pos[1], pos[2], pos[3]] : pos;
+    return new Pane(i, panePos);
+  });
   currentMode = mode;
+  ensureWorld();
   // Restore video state into new pane objects
   panes.forEach((p, i) => {
     const s = savedState[i];
@@ -866,9 +939,11 @@ const SHOTS = {
   orbit:    {dolly:2.2, yaw:0.00, pitch:-0.03, fov:55},
   overview: {dolly:0.0, yaw:0.00, pitch:0.00,  fov:58, absolute:true,
              pos: new THREE.Vector3(0,0.2,6), lookAt: new THREE.Vector3(0,0,-3)},
+  overviewPano: {dolly:0.0, yaw:0.00, pitch:0.00, fov:66, absolute:true,
+             pos: new THREE.Vector3(0,0.15,8.5), lookAt: new THREE.Vector3(0,0,-5)},
 };
 
-function solveShot(paneMesh, shot){
+function solveShot(paneObj, shot){
   if(shot.absolute){
     const m = new THREE.Matrix4().lookAt(shot.pos, shot.lookAt, new THREE.Vector3(0,1,0));
     const q = new THREE.Quaternion().setFromRotationMatrix(m);
@@ -878,7 +953,7 @@ function solveShot(paneMesh, shot){
   const panePos = new THREE.Vector3();
   const paneQuat = new THREE.Quaternion();
   const paneScale = new THREE.Vector3();
-  paneMesh.matrixWorld.decompose(panePos, paneQuat, paneScale);
+  paneObj.matrixWorld.decompose(panePos, paneQuat, paneScale);
 
   const forward = new THREE.Vector3(0,0,1).applyQuaternion(paneQuat).normalize();
   const right   = new THREE.Vector3(1,0,0).applyQuaternion(paneQuat).normalize();
@@ -897,16 +972,155 @@ function solveShot(paneMesh, shot){
   return {camPos, camQuat, fov: shot.fov};
 }
 
+function ensureWorld(){
+  // Keep pane/group world transforms current before solving camera shots.
+  scene.updateMatrixWorld(true);
+}
+
+const clampVal = (v, a, b) => Math.max(a, Math.min(b, v));
+
+function paneContentDims(pane){
+  const planeW = PANE_W;
+  const planeH = PANE_H;
+  const planeAspect = planeW / planeH;
+  let srcAspect = planeAspect;
+  const v = pane && pane.videoEl;
+  if(v && v.videoWidth && v.videoHeight){
+    srcAspect = v.videoWidth / v.videoHeight;
+  }
+  let contentW, contentH;
+  if(srcAspect <= planeAspect){
+    contentH = planeH;
+    contentW = planeH * srcAspect;
+  } else {
+    contentW = planeW;
+    contentH = planeW / srcAspect;
+  }
+  return {contentW, contentH, srcAspect};
+}
+
+function computeFitFovDeg({contentW, contentH, distance, fill=0.8, aspect=camera.aspect}){
+  const safeDist = Math.max(distance, 0.01);
+  const fovH = 2 * Math.atan((contentH / (2 * fill)) / safeDist);
+  const fovW = 2 * Math.atan((contentW / (2 * fill * aspect)) / safeDist);
+  return Math.max(fovH, fovW) * 180 / Math.PI;
+}
+
+function requiredViewHeightForWidth(contentW, fill, aspect){
+  const safeAspect = Math.max(aspect, 0.1);
+  return contentW / (Math.max(fill, 0.01) * safeAspect);
+}
+
+function distanceForViewHeight(viewH, fovRad){
+  return viewH / (2 * Math.tan(fovRad / 2));
+}
+
+function solvePlayFrame(i, {
+  fill = PLAY_TARGET_FILL,
+  fovBaseDeg = PLAY_FOV_BASE,
+  fovMinDeg = PLAY_FOV_MIN,
+  fovMaxDeg = PLAY_FOV_MAX,
+  dollyMin = PLAY_DOLLY_MIN,
+  dollyMax = PLAY_DOLLY_MAX,
+  baseShot = SHOTS.tight,
+} = {}){
+  const pane = panes[i];
+  if(!pane) return null;
+
+  ensureWorld();
+  const base = solveShot(pane.group, baseShot);
+  const camQuat = base.camQuat.clone();
+
+  const panePos = new THREE.Vector3();
+  pane.mesh.getWorldPosition(panePos);
+  const dims = paneContentDims(pane);
+  const aspect = camera.aspect || (innerWidth / innerHeight);
+
+  const fovDeg = clampVal(fovBaseDeg, fovMinDeg, fovMaxDeg);
+  const fovRad = fovDeg * Math.PI / 180;
+
+  const viewHfromH = dims.contentH / Math.max(fill, 0.01);
+  const viewHfromW = requiredViewHeightForWidth(dims.contentW, fill, aspect);
+  let viewH;
+  switch(PLAY_FIT_MODE){
+    case 'height':
+      viewH = viewHfromH;
+      break;
+    case 'width':
+      viewH = viewHfromW;
+      break;
+    case 'cover':
+      viewH = Math.min(viewHfromH, viewHfromW);
+      break;
+    case 'contain':
+    default:
+      viewH = Math.max(viewHfromH, viewHfromW);
+      break;
+  }
+
+  let dist = distanceForViewHeight(viewH, fovRad);
+  dist = clampVal(dist, dollyMin, dollyMax);
+
+  const forward = new THREE.Vector3(0,0,-1).applyQuaternion(camQuat).normalize();
+  const camPos = panePos.clone().sub(forward.multiplyScalar(dist));
+
+  return {camPos, camQuat, fov: fovDeg};
+}
+
+function solveFocusForPane(i, {fill=0.8, minFov=26, maxFov=70} = {}){
+  const pane = panes[i];
+  if(!pane) return null;
+  ensureWorld();
+  const base = solveShot(pane.group, SHOTS.tight);
+  const panePos = new THREE.Vector3();
+  pane.mesh.getWorldPosition(panePos);
+  const distance = base.camPos.distanceTo(panePos);
+  const dims = paneContentDims(pane);
+  const fov = clampVal(computeFitFovDeg({contentW:dims.contentW, contentH:dims.contentH, distance, fill, aspect:camera.aspect}), minFov, maxFov);
+  return {camPos: base.camPos, camQuat: base.camQuat, fov};
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  CAMERA TWEEN
 // ═══════════════════════════════════════════════════════════════
 let tweenActive = false;
 let tweenPromiseResolve = null;
 
+// Prevent unintended camera requests from fighting pane focus/play camera intent.
+let cameraLock = {active:false,paneIndex:-1,reason:'',until:0};
+
+function lockCameraToPane(i, reason=''){
+  cameraLock.active = true;
+  cameraLock.paneIndex = i;
+  cameraLock.reason = reason;
+  cameraLock.until = Infinity;
+}
+
+function lockCameraFor(ms, i, reason=''){
+  cameraLock.active = true;
+  cameraLock.paneIndex = i;
+  cameraLock.reason = reason;
+  cameraLock.until = performance.now() + Math.max(0, ms);
+}
+
+function unlockCamera(reason=''){
+  cameraLock.active = false;
+  cameraLock.paneIndex = -1;
+  cameraLock.reason = reason;
+  cameraLock.until = 0;
+}
+
 function easeInOut(t){ return t<.5 ? 2*t*t : 1-Math.pow(-2*t+2,2)/2; }
 function easeOut(t){ return 1-Math.pow(1-t,3); }
 
-function tweenRigTo({toPos, toQuat, toFov, durSec=0.9, shotName=''}){
+function tweenRigTo({toPos, toQuat, toFov, durSec=0.9, shotName='', lockBypass=false}){
+  if(cameraLock.active && !lockBypass){
+    if(cameraLock.until !== Infinity && performance.now() > cameraLock.until){
+      unlockCamera('timeout');
+    } else {
+      return Promise.resolve();
+    }
+  }
   tweenActive = true;
   if(tweenPromiseResolve) tweenPromiseResolve();
 
@@ -949,17 +1163,33 @@ function tweenRigTo({toPos, toQuat, toFov, durSec=0.9, shotName=''}){
 // ═══════════════════════════════════════════════════════════════
 selectedPane = -1;
 let armed = false; // set to true after fly completes
+let playInFlight = false;
 let autoAdvancing = false;
 let autoTimer = null;
 
-async function flyToPane(i, shotName='approach', dur=0.85){
+async function flyToPane(i, shotName='approach', dur=0.85, lockBypass=false){
   if(i<0||i>=NUM_PANES) return;
+  ensureWorld();
   const shot = SHOTS[shotName] || SHOTS.approach;
-  const sol  = solveShot(panes[i].mesh, shot);
-  await tweenRigTo({toPos:sol.camPos, toQuat:sol.camQuat, toFov:sol.fov, durSec:dur, shotName});
+  const sol  = solveShot(panes[i].group, shot);
+  await tweenRigTo({toPos:sol.camPos, toQuat:sol.camQuat, toFov:sol.fov, durSec:dur, shotName, lockBypass});
 }
 
-async function setSelected(i){
+async function setSelected(i, {fromAuto=false} = {}){
+  if(bootOverviewTimer){
+    clearTimeout(bootOverviewTimer);
+    bootOverviewTimer = null;
+  }
+  if(!fromAuto && autoAdvancing){
+    autoAdvancing = false;
+    document.getElementById('bAuto').classList.remove('on');
+    logEv('AUTO OFF');
+  }
+  if(autoTimer){
+    clearTimeout(autoTimer);
+    autoTimer = null;
+  }
+
   // Deselect old
   if(selectedPane>=0) panes[selectedPane].setSelected(false);
   selectedPane = i;
@@ -969,7 +1199,15 @@ async function setSelected(i){
   document.getElementById('playBtn').classList.add('hidden');
   updateStat();
 
-  await flyToPane(i, 'approach', 0.8);
+  lockCameraFor(1300, i, 'focus');
+  ensureWorld();
+  const focus = solveFocusForPane(i, {fill:0.8, minFov:26, maxFov:70});
+  if(focus){
+    await tweenRigTo({toPos:focus.camPos, toQuat:focus.camQuat, toFov:focus.fov, durSec:0.55, shotName:'focus', lockBypass:true});
+  } else {
+    await flyToPane(i, 'tight', 0.55, true);
+  }
+  lockCameraToPane(i, 'hold');
   armed = true;
 
   // Show play button if video available
@@ -984,46 +1222,87 @@ async function setSelected(i){
   logEv('SEL P'+(i+1));
 }
 
-async function playSelected(){
-  if(!armed||selectedPane<0) return;
+async function playSelected({fromAuto=false} = {}){
+  if(!armed||selectedPane<0||playInFlight) return;
+  playInFlight = true;
   const i = selectedPane;
-  document.getElementById('playBtn').classList.add('hidden');
-  // Fly tighter
-  await flyToPane(i, 'tight', 0.55);
-  // Play the pane
-  await panes[i].playOnce();
-  // Pull back after playback
-  await flyToPane(i, 'approach', 0.7);
-  if(panes[i].videoUrl){
-    document.getElementById('playBtn').classList.remove('hidden');
+  try {
+    if(bootOverviewTimer){
+      clearTimeout(bootOverviewTimer);
+      bootOverviewTimer = null;
+    }
+    if(!fromAuto && autoAdvancing){
+      autoAdvancing = false;
+      document.getElementById('bAuto').classList.remove('on');
+      logEv('AUTO OFF');
+    }
+    initACtx();
+    if(actx && actx.state !== 'running'){
+      try { await actx.resume(); } catch(_e){}
+    }
+    lockCameraToPane(i, 'playing');
+    document.getElementById('playBtn').classList.add('hidden');
+    const playRun = panes[i].playOnce();
+    if(panes[i] && panes[i].videoEl){
+      attachVideoAudioToContext(panes[i].videoEl);
+      document.getElementById('sdot').className = 's-live';
+      document.getElementById('slbl').textContent = 'VIDEO';
+    }
+    // Push in for play so selected pane fills most of the viewport.
+    ensureWorld();
+    const playFrame = solvePlayFrame(i, {fill:PLAY_TARGET_FILL});
+    if(playFrame){
+      await tweenRigTo({toPos:playFrame.camPos, toQuat:playFrame.camQuat, toFov:playFrame.fov, durSec:0.35, shotName:'play-full', lockBypass:true});
+    } else {
+      await flyToPane(i, 'tight', 0.35, true);
+    }
+    await playRun;
+    if(panes[i].videoUrl){
+      document.getElementById('playBtn').classList.remove('hidden');
+    }
+  } finally {
+    playInFlight = false;
   }
 }
 
 async function goOverview(){
+  unlockCamera('overview');
   if(selectedPane>=0){panes[selectedPane].setSelected(false);selectedPane=-1;}
   document.getElementById('playBtn').classList.add('hidden');
   document.getElementById('paneInfo').textContent='SELECT A PANE';
   armed=false;
-  const shot=SHOTS.overview;
+  const shot=currentMode==='panoramic' ? SHOTS.overviewPano : SHOTS.overview;
   const m=new THREE.Matrix4().lookAt(shot.pos, shot.lookAt, new THREE.Vector3(0,1,0));
   const q=new THREE.Quaternion().setFromRotationMatrix(m);
-  await tweenRigTo({toPos:shot.pos, toQuat:q, toFov:shot.fov, durSec:1.1, shotName:'overview'});
+  await tweenRigTo({toPos:shot.pos, toQuat:q, toFov:shot.fov, durSec:1.1, shotName:'overview', lockBypass:true});
   updateStat();
 }
 
 // Auto advance
 let autoIdx = 0;
-async function autoAdvanceStep(){
-  if(!autoAdvancing) return;
-  const next = (autoIdx+1)%NUM_PANES;
-  autoIdx=next;
-  await setSelected(next);
-  if(panes[next].videoUrl){
-    await playSelected();
-  } else {
-    await new Promise(r=>setTimeout(r,4000));
+let autoQueue = [];
+let autoRunId = 0;
+
+function buildAutoQueue(){
+  return panes
+    .map((pane, idx) => pane && pane.videoUrl ? idx : -1)
+    .filter(idx => idx >= 0);
+}
+
+async function autoAdvanceStep(runId){
+  while(autoAdvancing && runId === autoRunId && autoIdx < autoQueue.length){
+    const next = autoQueue[autoIdx++];
+    await setSelected(next, {fromAuto:true});
+    await playSelected({fromAuto:true});
   }
-  if(autoAdvancing) autoAdvanceStep();
+  if(runId !== autoRunId) return;
+  if(autoAdvancing){
+    autoAdvancing = false;
+    autoQueue = [];
+    autoIdx = 0;
+    document.getElementById('bAuto').classList.remove('on');
+    logEv('AUTO COMPLETE');
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1043,7 +1322,8 @@ function stopOrbit(){ orbitActive=false; orbitTarget=null; }
 // ═══════════════════════════════════════════════════════════════
 //  WEBAUDIO
 // ═══════════════════════════════════════════════════════════════
-let actx,analyser,srcNode,fftData=new Uint8Array(256);
+let actx,analyser,srcNode,videoAudioGain,fftData=new Uint8Array(256);
+const videoAudioNodes = new WeakMap();
 let bass=0,rms=0,beat=0,bpmVal=0;
 let beatHist=new Array(43).fill(0),beatPtr=0,lastBeat=0,bpmBuf=[];
 
@@ -1053,9 +1333,27 @@ function initACtx(){
     analyser=actx.createAnalyser();
     analyser.fftSize=512;analyser.smoothingTimeConstant=.82;
     analyser.connect(actx.destination);
+    videoAudioGain = actx.createGain();
+    videoAudioGain.gain.value = 1.0;
+    videoAudioGain.connect(actx.destination);
+    panes.forEach(p=>{ if(p && p.videoEl) attachVideoAudioToContext(p.videoEl); });
   }
 }
 function killSrc(){if(srcNode){try{srcNode.disconnect()}catch(e){}srcNode=null;}}
+function attachVideoAudioToContext(videoEl){
+  if(!actx || !videoAudioGain || !videoEl) return;
+  if(videoAudioNodes.has(videoEl)) return;
+  try {
+    const src = actx.createMediaElementSource(videoEl);
+    const gain = actx.createGain();
+    gain.gain.value = 1.0;
+    src.connect(gain);
+    gain.connect(videoAudioGain);
+    videoAudioNodes.set(videoEl, {src, gain});
+  } catch(err){
+    logEv('VIDEO AUDIO ERR '+(err && err.name ? err.name : 'Error'));
+  }
+}
 async function startMic(){
   initACtx();killSrc();
   const s=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
@@ -1178,12 +1476,14 @@ function applyAudioToScene(t){
   tunnel.strip.material.opacity = .12+bass*.28+beat*.15;
   // Micro camera shake on beat
   if(beat>.5 && !tweenActive){
-    rig.position.x += (Math.random()-.5)*beat*.008;
-    rig.position.y += (Math.random()-.5)*beat*.006;
+    camShakeX += (Math.random()-.5)*beat*.008;
+    camShakeY += (Math.random()-.5)*beat*.006;
   }
-  // Decay shake
-  rig.position.x *= .92;
-  rig.position.y *= .92;
+  // Decay shake without altering rig anchor (prevents camera drift).
+  camShakeX *= .92;
+  camShakeY *= .92;
+  shake.position.x = camShakeX;
+  shake.position.y = camShakeY;
 }
 
 // Orbit update
@@ -1192,7 +1492,8 @@ function updateOrbit(t){
   orbitAngle += .008;
   const i=orbitTarget;
   const shot={dolly:2.2, yaw:orbitAngle, pitch:-0.05, fov:55};
-  const sol=solveShot(panes[i].mesh, shot);
+  ensureWorld();
+  const sol=solveShot(panes[i].group, shot);
   rig.position.copy(sol.camPos);
   rig.quaternion.copy(sol.camQuat);
   camera.fov=sol.fov;
@@ -1208,7 +1509,13 @@ function buildPaneNavUI(){
   panes.forEach((p,i)=>{
     const b=document.createElement('button');
     b.className='pn-btn';b.dataset.i=i;b.textContent='P'+(i+1);
-    b.addEventListener('click',()=>setSelected(i));
+    b.addEventListener('click',()=>{
+      if(i===selectedPane && panes[i] && panes[i].videoUrl && !panes[i].playing){
+        playSelected();
+        return;
+      }
+      setSelected(i);
+    });
     nav.appendChild(b);
   });
 }
@@ -1296,7 +1603,7 @@ document.getElementById('bFly').addEventListener('click',()=>{
   if(selectedPane<0)return;
   const sn=document.getElementById('shotSel').value;
   if(sn==='orbit'){startOrbit(selectedPane);}
-  else{stopOrbit();flyToPane(selectedPane,sn,0.75);}
+  else{stopOrbit();flyToPane(selectedPane,sn,0.75,true);}
   logEv('SHOT: '+sn.toUpperCase());
 });
 
@@ -1318,9 +1625,30 @@ document.getElementById('bModeP').addEventListener('click',()=>{
 });
 
 document.getElementById('bAuto').addEventListener('click',function(){
-  autoAdvancing=!autoAdvancing;this.classList.toggle('on',autoAdvancing);
-  if(autoAdvancing){autoIdx=selectedPane>=0?selectedPane:-1;autoAdvanceStep();}
-  logEv(autoAdvancing?'AUTO ON':'AUTO OFF');
+  autoAdvancing = !autoAdvancing;
+  this.classList.toggle('on', autoAdvancing);
+  if(autoAdvancing){
+    autoQueue = buildAutoQueue();
+    autoIdx = 0;
+    autoRunId += 1;
+    if(autoQueue.length === 0){
+      autoAdvancing = false;
+      this.classList.remove('on');
+      logEv('AUTO: NO VIDEOS');
+      return;
+    }
+    autoAdvanceStep(autoRunId);
+    logEv('AUTO ON');
+    return;
+  }
+  autoRunId += 1;
+  autoQueue = [];
+  autoIdx = 0;
+  if(autoTimer){
+    clearTimeout(autoTimer);
+    autoTimer = null;
+  }
+  logEv('AUTO OFF');
 });
 
 document.getElementById('bOverview').addEventListener('click',()=>{stopOrbit();goOverview();});
@@ -1348,7 +1676,14 @@ function onCanvasClick(e){
   if(hits.length > 0){
     const hitMesh = hits[0].object;
     const idx = panes.findIndex(p => p.mesh === hitMesh);
-    if(idx >= 0) setSelected(idx);
+    if(idx < 0) return;
+    if(idx !== selectedPane){
+      setSelected(idx);
+      return;
+    }
+    if(panes[idx] && panes[idx].videoUrl && !panes[idx].playing){
+      playSelected();
+    }
   }
 }
 canvas.addEventListener('click', onCanvasClick);
@@ -1391,13 +1726,22 @@ PANE_URLS.forEach((url,i)=>{if(url&&panes[i])panes[i].loadVideo(url);});
 // Auto-start
 if(AUTO_ADV){
   setTimeout(()=>{
-    document.getElementById('bAuto').classList.add('on');
-    autoAdvancing=true;autoAdvanceStep();
+    const bAuto = document.getElementById('bAuto');
+    autoQueue = buildAutoQueue();
+    autoIdx = 0;
+    autoRunId += 1;
+    if(autoQueue.length === 0){
+      logEv('AUTO: NO VIDEOS');
+      return;
+    }
+    bAuto.classList.add('on');
+    autoAdvancing = true;
+    autoAdvanceStep(autoRunId);
   },1200);
 }
 
 // Hide load screen
-setTimeout(()=>{
+bootOverviewTimer = setTimeout(()=>{
   document.getElementById('loadOverlay').classList.add('gone');
   goOverview();
   logEv('FLUX.GALLERY v1 READY');
