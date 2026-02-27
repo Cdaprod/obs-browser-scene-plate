@@ -365,11 +365,14 @@ if(ALPHA_MODE){
 scene.fog = new THREE.FogExp2(0x03030a, 0.14);
 
 const camera = new THREE.PerspectiveCamera(58, innerWidth/innerHeight, 0.1, 60);
-camera.position.set(0, 0, 6);
+// IMPORTANT: camera stays at local origin; rig drives world movement.
+camera.position.set(0, 0, 0);
 
 // Camera rig — we tween this, not the camera directly
 const rig = new THREE.Object3D();
-rig.add(camera);
+const shake = new THREE.Object3D();
+rig.add(shake);
+shake.add(camera);
 scene.add(rig);
 
 let camShakeX = 0;
@@ -893,6 +896,7 @@ function buildPanes(mode){
     return new Pane(i, panePos);
   });
   currentMode = mode;
+  ensureWorld();
   // Restore video state into new pane objects
   panes.forEach((p, i) => {
     const s = savedState[i];
@@ -939,7 +943,7 @@ const SHOTS = {
              pos: new THREE.Vector3(0,0.15,8.5), lookAt: new THREE.Vector3(0,0,-5)},
 };
 
-function solveShot(paneMesh, shot){
+function solveShot(paneObj, shot){
   if(shot.absolute){
     const m = new THREE.Matrix4().lookAt(shot.pos, shot.lookAt, new THREE.Vector3(0,1,0));
     const q = new THREE.Quaternion().setFromRotationMatrix(m);
@@ -949,7 +953,7 @@ function solveShot(paneMesh, shot){
   const panePos = new THREE.Vector3();
   const paneQuat = new THREE.Quaternion();
   const paneScale = new THREE.Vector3();
-  paneMesh.matrixWorld.decompose(panePos, paneQuat, paneScale);
+  paneObj.matrixWorld.decompose(panePos, paneQuat, paneScale);
 
   const forward = new THREE.Vector3(0,0,1).applyQuaternion(paneQuat).normalize();
   const right   = new THREE.Vector3(1,0,0).applyQuaternion(paneQuat).normalize();
@@ -966,6 +970,11 @@ function solveShot(paneMesh, shot){
   const camQuat = new THREE.Quaternion().setFromRotationMatrix(mat4);
 
   return {camPos, camQuat, fov: shot.fov};
+}
+
+function ensureWorld(){
+  // Keep pane/group world transforms current before solving camera shots.
+  scene.updateMatrixWorld(true);
 }
 
 const clampVal = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -1018,7 +1027,8 @@ function solvePlayFrame(i, {
   const pane = panes[i];
   if(!pane) return null;
 
-  const base = solveShot(pane.mesh, baseShot);
+  ensureWorld();
+  const base = solveShot(pane.group, baseShot);
   const camQuat = base.camQuat.clone();
 
   const panePos = new THREE.Vector3();
@@ -1060,7 +1070,8 @@ function solvePlayFrame(i, {
 function solveFocusForPane(i, {fill=0.8, minFov=26, maxFov=70} = {}){
   const pane = panes[i];
   if(!pane) return null;
-  const base = solveShot(pane.mesh, SHOTS.tight);
+  ensureWorld();
+  const base = solveShot(pane.group, SHOTS.tight);
   const panePos = new THREE.Vector3();
   pane.mesh.getWorldPosition(panePos);
   const distance = base.camPos.distanceTo(panePos);
@@ -1158,8 +1169,9 @@ let autoTimer = null;
 
 async function flyToPane(i, shotName='approach', dur=0.85, lockBypass=false){
   if(i<0||i>=NUM_PANES) return;
+  ensureWorld();
   const shot = SHOTS[shotName] || SHOTS.approach;
-  const sol  = solveShot(panes[i].mesh, shot);
+  const sol  = solveShot(panes[i].group, shot);
   await tweenRigTo({toPos:sol.camPos, toQuat:sol.camQuat, toFov:sol.fov, durSec:dur, shotName, lockBypass});
 }
 
@@ -1188,6 +1200,7 @@ async function setSelected(i, {fromAuto=false} = {}){
   updateStat();
 
   lockCameraFor(1300, i, 'focus');
+  ensureWorld();
   const focus = solveFocusForPane(i, {fill:0.8, minFov:26, maxFov:70});
   if(focus){
     await tweenRigTo({toPos:focus.camPos, toQuat:focus.camQuat, toFov:focus.fov, durSec:0.55, shotName:'focus', lockBypass:true});
@@ -1236,6 +1249,7 @@ async function playSelected({fromAuto=false} = {}){
       document.getElementById('slbl').textContent = 'VIDEO';
     }
     // Push in for play so selected pane fills most of the viewport.
+    ensureWorld();
     const playFrame = solvePlayFrame(i, {fill:PLAY_TARGET_FILL});
     if(playFrame){
       await tweenRigTo({toPos:playFrame.camPos, toQuat:playFrame.camQuat, toFov:playFrame.fov, durSec:0.35, shotName:'play-full', lockBypass:true});
@@ -1468,8 +1482,8 @@ function applyAudioToScene(t){
   // Decay shake without altering rig anchor (prevents camera drift).
   camShakeX *= .92;
   camShakeY *= .92;
-  camera.position.x = camShakeX;
-  camera.position.y = camShakeY;
+  shake.position.x = camShakeX;
+  shake.position.y = camShakeY;
 }
 
 // Orbit update
@@ -1478,7 +1492,8 @@ function updateOrbit(t){
   orbitAngle += .008;
   const i=orbitTarget;
   const shot={dolly:2.2, yaw:orbitAngle, pitch:-0.05, fov:55};
-  const sol=solveShot(panes[i].mesh, shot);
+  ensureWorld();
+  const sol=solveShot(panes[i].group, shot);
   rig.position.copy(sol.camPos);
   rig.quaternion.copy(sol.camQuat);
   camera.fov=sol.fov;
