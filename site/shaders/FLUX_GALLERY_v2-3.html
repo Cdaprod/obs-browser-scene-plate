@@ -603,7 +603,8 @@ let selectedPane = -1;
 let bootOverviewTimer = null;
 
 // Full-frame play framing targets (pane fills ~85-90% viewport while playing).
-let PLAY_TARGET_FILL = 0.90;
+let PLAY_TARGET_FILL = 0.92;
+let PLAY_FIT_MODE = 'cover'; // cover | contain | height | width
 let PLAY_FOV_BASE = 58;
 let PLAY_FOV_MIN = 34;
 let PLAY_FOV_MAX = 72;
@@ -1030,7 +1031,22 @@ function solvePlayFrame(i, {
 
   const viewHfromH = dims.contentH / Math.max(fill, 0.01);
   const viewHfromW = requiredViewHeightForWidth(dims.contentW, fill, aspect);
-  const viewH = Math.max(viewHfromH, viewHfromW);
+  let viewH;
+  switch(PLAY_FIT_MODE){
+    case 'height':
+      viewH = viewHfromH;
+      break;
+    case 'width':
+      viewH = viewHfromW;
+      break;
+    case 'cover':
+      viewH = Math.min(viewHfromH, viewHfromW);
+      break;
+    case 'contain':
+    default:
+      viewH = Math.max(viewHfromH, viewHfromW);
+      break;
+  }
 
   let dist = distanceForViewHeight(viewH, fovRad);
   dist = clampVal(dist, dollyMin, dollyMax);
@@ -1207,12 +1223,18 @@ async function playSelected({fromAuto=false} = {}){
       document.getElementById('bAuto').classList.remove('on');
       logEv('AUTO OFF');
     }
+    initACtx();
     if(actx && actx.state !== 'running'){
       try { await actx.resume(); } catch(_e){}
     }
     lockCameraToPane(i, 'playing');
     document.getElementById('playBtn').classList.add('hidden');
     const playRun = panes[i].playOnce();
+    if(panes[i] && panes[i].videoEl){
+      attachVideoAudioToContext(panes[i].videoEl);
+      document.getElementById('sdot').className = 's-live';
+      document.getElementById('slbl').textContent = 'VIDEO';
+    }
     // Push in for play so selected pane fills most of the viewport.
     const playFrame = solvePlayFrame(i, {fill:PLAY_TARGET_FILL});
     if(playFrame){
