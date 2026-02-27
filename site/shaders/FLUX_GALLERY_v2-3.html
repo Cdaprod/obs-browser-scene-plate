@@ -602,6 +602,14 @@ let panes = [];
 let selectedPane = -1;
 let bootOverviewTimer = null;
 
+// Full-frame play framing targets (pane fills ~85-90% viewport while playing).
+let PLAY_TARGET_FILL = 0.90;
+let PLAY_FOV_BASE = 58;
+let PLAY_FOV_MIN = 34;
+let PLAY_FOV_MAX = 72;
+let PLAY_DOLLY_MIN = 0.9;
+let PLAY_DOLLY_MAX = 8.0;
+
 // ═══════════════════════════════════════════════════════════════
 //  PANE CLASS
 // ═══════════════════════════════════════════════════════════════
@@ -988,6 +996,51 @@ function computeFitFovDeg({contentW, contentH, distance, fill=0.8, aspect=camera
   return Math.max(fovH, fovW) * 180 / Math.PI;
 }
 
+function requiredViewHeightForWidth(contentW, fill, aspect){
+  const safeAspect = Math.max(aspect, 0.1);
+  return contentW / (Math.max(fill, 0.01) * safeAspect);
+}
+
+function distanceForViewHeight(viewH, fovRad){
+  return viewH / (2 * Math.tan(fovRad / 2));
+}
+
+function solvePlayFrame(i, {
+  fill = PLAY_TARGET_FILL,
+  fovBaseDeg = PLAY_FOV_BASE,
+  fovMinDeg = PLAY_FOV_MIN,
+  fovMaxDeg = PLAY_FOV_MAX,
+  dollyMin = PLAY_DOLLY_MIN,
+  dollyMax = PLAY_DOLLY_MAX,
+  baseShot = SHOTS.tight,
+} = {}){
+  const pane = panes[i];
+  if(!pane) return null;
+
+  const base = solveShot(pane.mesh, baseShot);
+  const camQuat = base.camQuat.clone();
+
+  const panePos = new THREE.Vector3();
+  pane.mesh.getWorldPosition(panePos);
+  const dims = paneContentDims(pane);
+  const aspect = camera.aspect || (innerWidth / innerHeight);
+
+  const fovDeg = clampVal(fovBaseDeg, fovMinDeg, fovMaxDeg);
+  const fovRad = fovDeg * Math.PI / 180;
+
+  const viewHfromH = dims.contentH / Math.max(fill, 0.01);
+  const viewHfromW = requiredViewHeightForWidth(dims.contentW, fill, aspect);
+  const viewH = Math.max(viewHfromH, viewHfromW);
+
+  let dist = distanceForViewHeight(viewH, fovRad);
+  dist = clampVal(dist, dollyMin, dollyMax);
+
+  const forward = new THREE.Vector3(0,0,-1).applyQuaternion(camQuat).normalize();
+  const camPos = panePos.clone().sub(forward.multiplyScalar(dist));
+
+  return {camPos, camQuat, fov: fovDeg};
+}
+
 function solveFocusForPane(i, {fill=0.8, minFov=26, maxFov=70} = {}){
   const pane = panes[i];
   if(!pane) return null;
@@ -1160,10 +1213,10 @@ async function playSelected({fromAuto=false} = {}){
     lockCameraToPane(i, 'playing');
     document.getElementById('playBtn').classList.add('hidden');
     const playRun = panes[i].playOnce();
-    // Hold on selected pane with dynamic FOV while video plays
-    const focus = solveFocusForPane(i, {fill:0.84, minFov:24, maxFov:68});
-    if(focus){
-      await tweenRigTo({toPos:focus.camPos, toQuat:focus.camQuat, toFov:focus.fov, durSec:0.35, shotName:'focus', lockBypass:true});
+    // Push in for play so selected pane fills most of the viewport.
+    const playFrame = solvePlayFrame(i, {fill:PLAY_TARGET_FILL});
+    if(playFrame){
+      await tweenRigTo({toPos:playFrame.camPos, toQuat:playFrame.camQuat, toFov:playFrame.fov, durSec:0.35, shotName:'play-full', lockBypass:true});
     } else {
       await flyToPane(i, 'tight', 0.35, true);
     }
