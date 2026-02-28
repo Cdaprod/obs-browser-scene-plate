@@ -1,0 +1,425 @@
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>Stream Starting Soon — Tunnel Shader</title>
+  <style>
+    html, body { margin:0; height:100%; background:#000; overflow:hidden; }
+    canvas { width:100%; height:100%; display:block; }
+
+    .title {
+      position:fixed; inset:0;
+      display:flex; align-items:center; justify-content:center;
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+      font-weight:900; letter-spacing:.24em; text-transform:uppercase;
+      color:rgba(255,255,255,.92);
+      font-size:clamp(24px, 4.2vw, 72px);
+      pointer-events:none;
+      text-shadow: 0 0 18px rgba(255,255,255,.35),
+                   0 0 64px rgba(255,120,40,.18);
+      mix-blend-mode: screen;
+    }
+
+    .sub {
+      position:fixed; left:0; right:0; bottom:7%;
+      text-align:center;
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+      font-weight:650;
+      color:rgba(255,255,255,.7);
+      letter-spacing:.12em;
+      font-size:clamp(12px, 1.4vw, 22px);
+      pointer-events:none;
+      text-shadow: 0 0 24px rgba(0,0,0,.6);
+    }
+
+    .debug {
+      position:fixed; left:10px; top:10px; z-index:5;
+      color:#fff; font:12px ui-monospace, SFMono-Regular, Menlo, monospace;
+      background:rgba(0,0,0,.35); padding:6px 8px; border-radius:8px;
+      pointer-events:none;
+      display:none;
+    }
+    body.debug .debug { display:block; }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div class="title">Stream Starting Soon</div>
+  <div class="sub">Stand by…</div>
+  <div class="debug" id="dbg">boot</div>
+
+<script>
+/**
+ * URL params:
+ *  - dpr=1.0            (clamped to <=2.0, default <=1.5)
+ *  - scale=0.75         (render scale)
+ *  - q=1                (0=low 1=med 2=high; controls loop count)
+ *  - fps=60             (cap)
+ *  - debug=1            (show stats)
+ *
+ * Example:
+ *  /stream_starting_tunnel.html?q=0&scale=0.6&dpr=1.0
+ */
+const params = new URLSearchParams(location.search);
+const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+const num = (k,def)=>{ const v=parseFloat(params.get(k)); return Number.isFinite(v)?v:def; };
+const int = (k,def)=>{ const v=parseInt(params.get(k),10); return Number.isFinite(v)?v:def; };
+
+const DEBUG = int('debug', 0) === 1;
+if (DEBUG) document.body.classList.add('debug');
+
+const MAX_DPR = clamp(num('dpr', Math.min(1.5, window.devicePixelRatio || 1)), 0.5, 2.0);
+const SCALE   = clamp(num('scale', 0.75), 0.25, 1.0);
+const Q       = clamp(int('q', 1), 0, 2);
+const FPS_CAP = clamp(int('fps', 60), 10, 60);
+
+const canvas = document.getElementById('c');
+const dbg = document.getElementById('dbg');
+
+const gl = canvas.getContext('webgl', {
+  antialias:false, alpha:false, depth:false, stencil:false,
+  preserveDrawingBuffer:false, premultipliedAlpha:false
+});
+if (!gl) { alert('WebGL not supported'); throw new Error('WebGL not supported'); }
+
+let dpr = MAX_DPR;
+let lastW = 0, lastH = 0;
+
+function resize(){
+  const cssW = Math.max(1, innerWidth);
+  const cssH = Math.max(1, innerHeight);
+  const w = Math.max(1, Math.floor(cssW * dpr * SCALE));
+  const h = Math.max(1, Math.floor(cssH * dpr * SCALE));
+  if (w === lastW && h === lastH) return;
+  lastW = w; lastH = h;
+  canvas.width = w; canvas.height = h;
+  gl.viewport(0,0,w,h);
+}
+addEventListener('resize', resize, { passive:true });
+
+const VERT = `
+attribute vec2 a_pos;
+varying vec2 v_uv;
+void main(){
+  v_uv = a_pos * 0.5 + 0.5;
+  gl_Position = vec4(a_pos, 0.0, 1.0);
+}
+`;
+
+const FRAG = `
+precision highp float;
+
+varying vec2 v_uv;
+
+uniform vec3  iResolution;
+uniform float iTime;
+uniform float iTimeDelta;
+uniform int   iFrame;
+
+uniform int   u_steps;
+
+// ----------------------------
+// Tuning knobs
+// ----------------------------
+const float SPEED    = 0.10;   // slow
+const float SWAY_X   = 0.04;
+const float SWAY_Y   = 0.02;
+
+const float EXPOSURE = 0.95;
+const float GLOW_K   = 0.005;
+const float FOG_K    = 0.022;
+
+// ----------------------------
+// Helpers (WebGL1 safe)
+// ----------------------------
+vec3 fastTanh3(vec3 x){
+  vec3 x2 = x*x;
+  return x * (27.0 + x2) / (27.0 + 9.0*x2);
+}
+
+float hash21(vec2 p){
+  p = fract(p*vec2(123.34, 345.45));
+  p += dot(p, p+34.345);
+  return fract(p.x*p.y);
+}
+
+mat2 rot(float a){
+  float c = cos(a), s = sin(a);
+  return mat2(c,-s,s,c);
+}
+
+float safeInv(float x){ return 1.0/max(x, 1e-3); }
+
+float sdBox(vec3 p, vec3 b){
+  vec3 q = abs(p) - b;
+  return length(max(q, 0.0)) + min(max(q.x, max(q.y,q.z)), 0.0);
+}
+
+vec3 rep(vec3 p, vec3 c){
+  return mod(p + 0.5*c, c) - 0.5*c;
+}
+
+// ----------------------------
+// Scene SDF (NO CENTER CYLINDER SOLID)
+// returns: (distance, materialId 0..1)
+// ----------------------------
+vec2 mapScene(vec3 p, float t){
+
+  // Tiny wobble (do not over-warp)
+  float wob = 0.03*sin(t*0.45) + 0.02*sin(p.z*0.14);
+  p.xy *= rot(wob);
+
+  // Corridor half-size (rectangular)
+  vec3 halfC = vec3(3.8, 2.1, 999.0);
+
+  // Rectangular frame rings repeating along Z
+  vec3 q = p;
+  q.z = mod(q.z, 7.5) - 3.75;
+  float frame = sdBox(q, vec3(3.45, 1.95, 0.14));
+  frame = abs(frame) - 0.05; // ring thickness
+
+  // Wall-only blocks (explicit wall mask)
+  float wallX = abs(p.x) - (halfC.x - 0.10);
+  float wallY = abs(p.y) - (halfC.y - 0.08);
+
+  float bandX = smoothstep(0.55, 0.03, abs(wallX));
+  float bandY = smoothstep(0.45, 0.03, abs(wallY));
+  float wallBand = max(bandX, 0.55*bandY);
+
+  vec3 w = p;
+  w.x = wallX;
+  w = rep(w, vec3(0.85, 0.65, 1.25));
+  float blocks = sdBox(w, vec3(0.16, 0.20, 0.22));
+  blocks = mix(1e4, blocks, wallBand);
+
+  float d = 1e9;
+  float m = 0.0;
+
+  if (frame < d) { d = frame;  m = 0.25; }
+  if (blocks < d){ d = blocks; m = 0.55; }
+
+  return vec2(d, m);
+}
+
+// ----------------------------
+// Normal
+// ----------------------------
+vec3 calcNormal(vec3 p, float t){
+  vec2 e = vec2(0.0012, 0.0);
+  float d = mapScene(p, t).x;
+  vec3 n = d - vec3(
+    mapScene(p - e.xyy, t).x,
+    mapScene(p - e.yxy, t).x,
+    mapScene(p - e.yyx, t).x
+  );
+  return normalize(n);
+}
+
+// ----------------------------
+// Main
+// ----------------------------
+void mainImage(out vec4 fragColor, in vec2 fragCoord){
+  vec2 uv = (fragCoord - 0.5*iResolution.xy) / iResolution.y;
+  float t = iTime;
+
+  // Camera (rect corridor, stay centered)
+  vec3 ro = vec3(0.0, 0.0, -12.0);
+  ro.z += t * SPEED;
+
+  ro.x += SWAY_X * sin(t*0.55);
+  ro.y += SWAY_Y * sin(t*0.63);
+  ro.x = clamp(ro.x, -0.18, 0.18);
+  ro.y = clamp(ro.y, -0.12, 0.12);
+
+  vec3 rd = normalize(vec3(uv, 1.35));
+  rd.xz *= rot(0.02*sin(t*0.21));
+  rd.yz *= rot(0.015*sin(t*0.28));
+
+  float dist = 0.0;
+  float mat  = 0.0;
+  float glow = 0.0;
+
+  int STEPS = 72;
+  if (u_steps > 0) STEPS = int(clamp(float(u_steps), 24.0, 140.0));
+
+  for (int i=0; i<160; i++){
+    if (i >= STEPS) break;
+
+    vec3 p = ro + rd * dist;
+    vec2 h = mapScene(p, t);
+
+    // Centerline glow FIELD (non-solid!) — no circles from geometry anymore
+    float center = exp(-6.0 * dot(p.xy, p.xy)); // bright at center, fades out
+    float frameProx = safeInv(abs(h.x) + 0.06);
+
+    glow += GLOW_K * frameProx * (0.55 + 0.85*center);
+    glow = min(glow, 2.0);
+
+    // safer steps
+    float stepLen = clamp(h.x, 0.03, 0.9);
+    dist += stepLen * 0.52;
+
+    mat = h.y;
+    if (abs(h.x) < 0.0013 || dist > 150.0) break;
+  }
+
+  vec3 col = vec3(0.0);
+
+  if (dist < 150.0){
+    vec3 p = ro + rd * dist;
+    vec3 n = calcNormal(p, t);
+
+    vec3 lightDir = normalize(vec3(-0.45, 0.72, -0.35));
+    float diff = clamp(dot(n, lightDir), 0.0, 1.0);
+
+    vec3 h = normalize(lightDir - rd);
+    float spec = pow(clamp(dot(n, h), 0.0, 1.0), 26.0);
+
+    vec3 baseA = vec3(0.07, 0.22, 0.55);
+    vec3 baseB = vec3(0.85, 0.36, 0.12);
+
+    vec3 base = mix(baseA, baseB, smoothstep(0.18, 0.70, mat));
+    col = base * (0.18 + 1.10*diff) + 0.35*spec;
+
+    float fog = exp(-dist * FOG_K);
+    col *= fog;
+  }
+
+  // Glow contribution (gentle)
+  col += glow * vec3(0.10, 0.18, 0.40);
+  col += (glow*glow) * vec3(0.10, 0.05, 0.04);
+
+  // One exposure + one tonemap (no double)
+  col *= EXPOSURE;
+  col = fastTanh3(col);
+
+  // Dither to kill banding/rings (esp iOS)
+  float dither = (hash21(fragCoord + vec2(float(iFrame), 19.0)) - 0.5) / 255.0;
+  col += dither;
+
+  // Vignette (soft)
+  float vig = smoothstep(1.25, 0.30, length(uv));
+  col *= vig;
+
+  col = clamp(col, 0.0, 1.0);
+  fragColor = vec4(col, 1.0);
+}
+
+void main(){
+  vec2 fragCoord = vec2(v_uv.x * iResolution.x, v_uv.y * iResolution.y);
+  vec4 col = vec4(0.0);
+  mainImage(col, fragCoord);
+  gl_FragColor = col;
+}
+`;
+
+function compile(type, src){
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)){
+    const log = gl.getShaderInfoLog(s) || 'unknown';
+    console.error(log);
+    throw new Error(log);
+  }
+  return s;
+}
+function link(vs, fs){
+  const p = gl.createProgram();
+  gl.attachShader(p, vs);
+  gl.attachShader(p, fs);
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)){
+    const log = gl.getProgramInfoLog(p) || 'unknown';
+    console.error(log);
+    throw new Error(log);
+  }
+  return p;
+}
+
+const prog = link(
+  compile(gl.VERTEX_SHADER, VERT),
+  compile(gl.FRAGMENT_SHADER, FRAG)
+);
+gl.useProgram(prog);
+
+// fullscreen quad
+const buf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+  -1,-1,  1,-1, -1, 1,
+  -1, 1,  1,-1,  1, 1
+]), gl.STATIC_DRAW);
+
+const aPos = gl.getAttribLocation(prog, 'a_pos');
+gl.enableVertexAttribArray(aPos);
+gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+// uniforms
+const uRes   = gl.getUniformLocation(prog, 'iResolution');
+const uTime  = gl.getUniformLocation(prog, 'iTime');
+const uDt    = gl.getUniformLocation(prog, 'iTimeDelta');
+const uFrame = gl.getUniformLocation(prog, 'iFrame');
+const uSteps = gl.getUniformLocation(prog, 'u_steps');
+
+function stepsForQuality(){
+  // original iters ~77
+  if (Q === 0) return 44;
+  if (Q === 1) return 64;
+  return 77;
+}
+const STEPS = stepsForQuality();
+
+let t0 = performance.now();
+let last = t0;
+let frame = 0;
+
+let fpsAccT = 0, fpsAccN = 0, fps = 0;
+let lastRAF = 0;
+
+function loop(now){
+  const minFrameMs = 1000 / FPS_CAP;
+  if (now - lastRAF < minFrameMs){
+    requestAnimationFrame(loop);
+    return;
+  }
+  lastRAF = now;
+
+  resize();
+
+  const t = (now - t0) / 1000;
+  const dt = Math.min(0.1, (now - last) / 1000);
+  last = now;
+
+  gl.uniform3f(uRes, canvas.width, canvas.height, 1.0);
+  gl.uniform1f(uTime, t);
+  gl.uniform1f(uDt, dt);
+  gl.uniform1i(uFrame, frame++);
+  gl.uniform1i(uSteps, STEPS);
+
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+  if (DEBUG){
+    fpsAccT += dt; fpsAccN++;
+    if (fpsAccT >= 0.5){
+      fps = fpsAccN / fpsAccT;
+      fpsAccT = 0; fpsAccN = 0;
+      dbg.textContent = `${canvas.width}x${canvas.height} scale=${SCALE} dpr=${dpr} q=${Q} fps≈${fps.toFixed(1)} steps=${STEPS}`;
+    }
+  }
+
+  requestAnimationFrame(loop);
+}
+
+canvas.addEventListener('webglcontextlost', (e)=>{
+  e.preventDefault();
+  if (DEBUG) dbg.textContent = 'WebGL context lost — try ?q=0&scale=0.6&dpr=1.0';
+}, false);
+
+resize();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

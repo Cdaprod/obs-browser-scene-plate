@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Stream Starting Soon Shader</title>
+
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: black;
+    overflow: hidden;
+  }
+
+  canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+
+  .overlay-text {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: system-ui, sans-serif;
+    font-weight: 700;
+    font-size: 4vw;
+    color: white;
+    letter-spacing: 0.2em;
+    pointer-events: none;
+    text-shadow: 0 0 40px rgba(255,255,255,0.4);
+  }
+</style>
+</head>
+<body>
+
+<canvas id="gl"></canvas>
+<div class="overlay-text">STREAM STARTING SOON</div>
+
+<script>
+/* ============================================================
+   CONFIG
+============================================================ */
+
+const MAX_DPR = 1.5;  // prevents iOS GPU crash
+const FPS_CAP = 60;   // OBS safe
+
+/* ============================================================
+   VERTEX SHADER
+   Replace if you want custom vertex logic
+============================================================ */
+
+const VERT = `
+attribute vec2 a_pos;
+varying vec2 v_uv;
+
+void main() {
+    v_uv = a_pos * 0.5 + 0.5;
+    gl_Position = vec4(a_pos, 0.0, 1.0);
+}
+`;
+
+/* ============================================================
+   FRAGMENT SHADER
+   PASTE YOUR SHADERTOY CODE INSIDE mainImage()
+============================================================ */
+
+const FRAG = `
+precision highp float;
+
+varying vec2 v_uv;
+
+uniform vec3  iResolution;
+uniform float iTime;
+uniform float iTimeDelta;
+uniform int   iFrame;
+uniform vec4  iMouse;
+
+/* -----------------------------
+   PASTE SHADERTOY mainImage HERE
+----------------------------- */
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    // Example placeholder:
+    vec2 uv = fragCoord / iResolution.xy;
+    vec3 col = 0.5 + 0.5 * cos(iTime + uv.xyx + vec3(0,2,4));
+    fragColor = vec4(col, 1.0);
+}
+
+/* ----------------------------- */
+
+void main() {
+    vec4 color = vec4(0.0);
+    vec2 fragCoord = vec2(v_uv.x * iResolution.x,
+                          v_uv.y * iResolution.y);
+    mainImage(color, fragCoord);
+    gl_FragColor = color;
+}
+`;
+
+/* ============================================================
+   WEBGL ENGINE
+============================================================ */
+
+const canvas = document.getElementById("gl");
+const gl = canvas.getContext("webgl", {
+    antialias: false,
+    alpha: false,
+    depth: false,
+    stencil: false
+});
+
+if (!gl) {
+    alert("WebGL not supported");
+}
+
+let dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR);
+
+function resize() {
+    const w = Math.floor(innerWidth * dpr);
+    const h = Math.floor(innerHeight * dpr);
+    canvas.width = Math.max(1, w);
+    canvas.height = Math.max(1, h);
+    gl.viewport(0, 0, canvas.width, canvas.height);
+}
+window.addEventListener("resize", resize);
+resize();
+
+function compile(type, source) {
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        console.error(gl.getShaderInfoLog(shader));
+        throw new Error("Shader compile failed");
+    }
+
+    return shader;
+}
+
+const program = gl.createProgram();
+gl.attachShader(program, compile(gl.VERTEX_SHADER, VERT));
+gl.attachShader(program, compile(gl.FRAGMENT_SHADER, FRAG));
+gl.linkProgram(program);
+
+if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    throw new Error("Program link failed");
+}
+
+gl.useProgram(program);
+
+/* Fullscreen quad */
+
+const buffer = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+    -1,-1, 1,-1, -1,1,
+    -1,1, 1,-1, 1,1
+]), gl.STATIC_DRAW);
+
+const a_pos = gl.getAttribLocation(program, "a_pos");
+gl.enableVertexAttribArray(a_pos);
+gl.vertexAttribPointer(a_pos, 2, gl.FLOAT, false, 0, 0);
+
+/* Uniforms */
+
+const uResolution = gl.getUniformLocation(program, "iResolution");
+const uTime = gl.getUniformLocation(program, "iTime");
+const uTimeDelta = gl.getUniformLocation(program, "iTimeDelta");
+const uFrame = gl.getUniformLocation(program, "iFrame");
+const uMouse = gl.getUniformLocation(program, "iMouse");
+
+let start = performance.now();
+let last = start;
+let frame = 0;
+
+/* Render loop */
+
+function render() {
+
+    const now = performance.now();
+    const t = (now - start) / 1000;
+    const dt = (now - last) / 1000;
+    last = now;
+
+    gl.uniform3f(uResolution, canvas.width, canvas.height, 1.0);
+    gl.uniform1f(uTime, t);
+    gl.uniform1f(uTimeDelta, dt);
+    gl.uniform1i(uFrame, frame++);
+    gl.uniform4f(uMouse, 0,0,0,0);
+
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+    requestAnimationFrame(render);
+}
+
+requestAnimationFrame(render);
+
+/* WebGL crash detection */
+
+canvas.addEventListener("webglcontextlost", function(e){
+    e.preventDefault();
+    console.warn("WebGL context lost — shader too heavy");
+});
+</script>
+
+</body>
+</html>

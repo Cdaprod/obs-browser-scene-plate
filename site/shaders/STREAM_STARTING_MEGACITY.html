@@ -1,0 +1,337 @@
+/path/overlays/stream_starting_megacity.html
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>Stream Starting Soon — Shader</title>
+  <style>
+    html, body { margin:0; height:100%; background:#000; overflow:hidden; }
+    canvas { width:100%; height:100%; display:block; }
+    .title {
+      position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+      font-weight:800; letter-spacing:.25em; text-transform:uppercase;
+      color:rgba(255,255,255,.92);
+      font-size:clamp(24px, 4.2vw, 72px);
+      pointer-events:none;
+      text-shadow: 0 0 18px rgba(255,255,255,.35),
+                   0 0 64px rgba(110,180,255,.20);
+      mix-blend-mode: screen;
+    }
+    .sub {
+      position:fixed; left:0; right:0; bottom:7%;
+      text-align:center;
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+      font-weight:600;
+      color:rgba(255,255,255,.7);
+      letter-spacing:.12em;
+      font-size:clamp(12px, 1.4vw, 22px);
+      pointer-events:none;
+      text-shadow: 0 0 24px rgba(0,0,0,.6);
+    }
+    .debug {
+      position:fixed; left:10px; top:10px; z-index:5;
+      color:#fff; font:12px ui-monospace, SFMono-Regular, Menlo, monospace;
+      background:rgba(0,0,0,.35); padding:6px 8px; border-radius:8px;
+      pointer-events:none; display:none;
+    }
+    body.debug .debug { display:block; }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div class="title">Stream Starting Soon</div>
+  <div class="sub">Stand by…</div>
+  <div class="debug" id="dbg">boot</div>
+
+<script>
+/**
+ * URL params:
+ *  - dpr=1.0            (default clamps to <=1.5)
+ *  - scale=1.0          (render scale; 0.5 = half res; default 0.75)
+ *  - q=1                (quality preset: 0=low 1=med 2=high; default 1)
+ *  - fps=60             (cap loop; default 60)
+ *  - debug=1            (show fps/res)
+ *
+ * Examples:
+ *  /stream_starting_megacity.html?scale=0.6&q=0&dpr=1.0
+ *  /stream_starting_megacity.html?scale=0.85&q=2
+ */
+
+const params = new URLSearchParams(location.search);
+
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const num = (k, def) => {
+  const v = parseFloat(params.get(k));
+  return Number.isFinite(v) ? v : def;
+};
+const int = (k, def) => {
+  const v = parseInt(params.get(k), 10);
+  return Number.isFinite(v) ? v : def;
+};
+
+const DEBUG = int('debug', 0) === 1;
+if (DEBUG) document.body.classList.add('debug');
+
+const MAX_DPR = clamp(num('dpr', Math.min(1.5, window.devicePixelRatio || 1)), 0.5, 2.0);
+const SCALE   = clamp(num('scale', 0.75), 0.25, 1.0);
+const Q       = clamp(int('q', 1), 0, 2);         // affects iteration counts
+const FPS_CAP = clamp(int('fps', 60), 10, 60);
+
+const canvas = document.getElementById('c');
+const dbg = document.getElementById('dbg');
+
+const gl = canvas.getContext('webgl', {
+  antialias: false,
+  alpha: false,
+  depth: false,
+  stencil: false,
+  preserveDrawingBuffer: false,
+  premultipliedAlpha: false,
+});
+
+if (!gl) {
+  alert('WebGL not supported in this browser/context.');
+  throw new Error('WebGL not supported');
+}
+
+let dpr = MAX_DPR;
+let lastW = 0, lastH = 0;
+
+function resize() {
+  // OBS Browser Source sometimes resizes without firing resize events reliably,
+  // so we also call this from render().
+  const cssW = Math.max(1, window.innerWidth);
+  const cssH = Math.max(1, window.innerHeight);
+
+  const w = Math.max(1, Math.floor(cssW * dpr * SCALE));
+  const h = Math.max(1, Math.floor(cssH * dpr * SCALE));
+
+  if (w === lastW && h === lastH) return;
+
+  lastW = w; lastH = h;
+  canvas.width = w;
+  canvas.height = h;
+  gl.viewport(0, 0, w, h);
+}
+window.addEventListener('resize', resize, { passive:true });
+
+const VERT = `
+attribute vec2 a_pos;
+varying vec2 v_uv;
+void main(){
+  v_uv = a_pos * 0.5 + 0.5;
+  gl_Position = vec4(a_pos, 0.0, 1.0);
+}
+`;
+
+// iOS safety notes:
+// - clamp singularities
+// - cap iterations via uniform
+// - keep precision highp
+const FRAG = `
+precision highp float;
+
+varying vec2 v_uv;
+
+uniform vec3  iResolution;
+uniform float iTime;
+uniform float iTimeDelta;
+uniform int   iFrame;
+uniform int   u_outerIters;
+uniform int   u_innerIters;
+
+// ----------------------------
+// Portable tanh approximation
+// ----------------------------
+vec4 fastTanh(vec4 x){
+    vec4 x2 = x*x;
+    return x * (27.0 + x2) / (27.0 + 9.0*x2);
+}
+
+// Prevent singular beam explosion
+float safeInvLen(vec2 v){
+    float L = length(v);
+    return 1.0 / max(L, 0.02);
+}
+
+void mainImage(out vec4 o, vec2 u){
+
+    float c, d, s, k;
+    float i = 0.0;
+
+    vec3 q, p = iResolution;
+    u = (u + u - p.xy) / p.y;
+
+    o = vec4(0.0);
+    d = 0.0;
+    s = 0.0;
+
+    for(int I = 0; I < 256; I++){
+        if(I >= u_outerIters) break;
+        i = float(I) + 1.0;
+
+        // inner structure
+        q = p = normalize(vec3(u, 1.0)) * d;
+        q.z = p.z += iTime * 4.0;
+
+        c = 60.0;
+        float ss = 0.0;
+
+        for(int J = 0; J < 64; J++){
+            if(J >= u_innerIters) break;
+            if(c <= 1.5) break;
+
+            p.xz *= mat2(cos(c), -sin(c),
+                         sin(c),  cos(c));
+
+            p = abs(fract(p/c)*c - c/2.0) - c*0.15;
+            ss = max(ss, min(p.x, min(p.y, p.z)));
+            p = q;
+
+            c *= 0.4;
+        }
+
+        s = ss;
+
+        p += abs(dot(sin(0.3*p.z + 16.0*p), vec3(0.1)));
+
+        k = 0.02 + 0.8 * abs(p.y + 6.0);
+        float mx = max(0.7*s, 8.0 - abs(q.x));
+        float mn = min(mx, k);
+        d += s = mn;
+
+        float beam = safeInvLen(vec2(u.x, u.y - 0.5));
+
+        o += 6.0*vec4(1.0,1.0,2.0,0.0)*s
+           + 0.004/max(s, 0.001)
+           + vec4(0.5,1.3,1.0,0.0)/k
+           + 0.2*vec4(6.0,2.0,3.0,0.0)*beam;
+    }
+
+    // Replace tanh(o/3e3) with portable version
+    o = fastTanh(o/3000.0);
+}
+
+void main(){
+    vec2 fragCoord = vec2(v_uv.x * iResolution.x,
+                          v_uv.y * iResolution.y);
+    vec4 col = vec4(0.0);
+    mainImage(col, fragCoord);
+    gl_FragColor = col;
+}
+`;
+
+function compile(type, src){
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)){
+    const log = gl.getShaderInfoLog(s) || 'unknown';
+    console.error(log);
+    throw new Error(log);
+  }
+  return s;
+}
+function link(vs, fs){
+  const p = gl.createProgram();
+  gl.attachShader(p, vs);
+  gl.attachShader(p, fs);
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)){
+    const log = gl.getProgramInfoLog(p) || 'unknown';
+    console.error(log);
+    throw new Error(log);
+  }
+  return p;
+}
+
+const prog = link(
+  compile(gl.VERTEX_SHADER, VERT),
+  compile(gl.FRAGMENT_SHADER, FRAG)
+);
+
+gl.useProgram(prog);
+
+// fullscreen quad
+const buf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+  -1,-1,  1,-1, -1, 1,
+  -1, 1,  1,-1,  1, 1
+]), gl.STATIC_DRAW);
+
+const aPos = gl.getAttribLocation(prog, 'a_pos');
+gl.enableVertexAttribArray(aPos);
+gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+// uniforms
+const uRes   = gl.getUniformLocation(prog, 'iResolution');
+const uTime  = gl.getUniformLocation(prog, 'iTime');
+const uDt    = gl.getUniformLocation(prog, 'iTimeDelta');
+const uFrame = gl.getUniformLocation(prog, 'iFrame');
+const uOuter = gl.getUniformLocation(prog, 'u_outerIters');
+const uInner = gl.getUniformLocation(prog, 'u_innerIters');
+
+let t0 = performance.now();
+let last = t0;
+let frame = 0;
+
+let fpsAccT = 0, fpsAccN = 0, fps = 0;
+let lastRAF = 0;
+
+function chooseQuality(){
+  // Q=0 low (mobile safe), Q=1 medium, Q=2 high (desktop)
+  // Outer loop is the killer; inner loop also expensive.
+  if (Q === 0) return { outer: 48, inner: 10 };
+  if (Q === 1) return { outer: 72, inner: 12 };
+  return { outer: 96, inner: 14 };
+}
+const quality = chooseQuality();
+
+function loop(now){
+  // fps cap
+  const minFrameMs = 1000 / FPS_CAP;
+  if (now - lastRAF < minFrameMs){
+    requestAnimationFrame(loop);
+    return;
+  }
+  lastRAF = now;
+
+  resize();
+
+  const t = (now - t0) / 1000;
+  const dt = Math.min(0.1, (now - last) / 1000);
+  last = now;
+
+  gl.uniform3f(uRes, canvas.width, canvas.height, 1.0);
+  gl.uniform1f(uTime, t);
+  gl.uniform1f(uDt, dt);
+  gl.uniform1i(uFrame, frame++);
+  gl.uniform1i(uOuter, quality.outer);
+  gl.uniform1i(uInner, quality.inner);
+
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+  // debug HUD
+  fpsAccT += dt; fpsAccN++;
+  if (fpsAccT >= 0.5){
+    fps = fpsAccN / fpsAccT;
+    fpsAccT = 0; fpsAccN = 0;
+    if (DEBUG) dbg.textContent = `${canvas.width}x${canvas.height} scale=${SCALE} dpr=${dpr} q=${Q} fps≈${fps.toFixed(1)} outer=${quality.outer} inner=${quality.inner}`;
+  }
+
+  requestAnimationFrame(loop);
+}
+
+canvas.addEventListener('webglcontextlost', (e)=>{
+  e.preventDefault();
+  if (DEBUG) dbg.textContent = 'WebGL context lost (too heavy). Try ?q=0&scale=0.6&dpr=1.0';
+}, false);
+
+resize();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

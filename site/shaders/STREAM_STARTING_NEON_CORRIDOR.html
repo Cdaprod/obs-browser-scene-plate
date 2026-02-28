@@ -1,0 +1,449 @@
+/path/overlays/stream_starting_tunnel.html
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>Stream Starting Soon — Tunnel Shader</title>
+  <style>
+    html, body { margin:0; height:100%; background:#000; overflow:hidden; }
+    canvas { width:100%; height:100%; display:block; }
+
+    .title {
+      position:fixed; inset:0;
+      display:flex; align-items:center; justify-content:center;
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+      font-weight:900; letter-spacing:.24em; text-transform:uppercase;
+      color:rgba(255,255,255,.92);
+      font-size:clamp(24px, 4.2vw, 72px);
+      pointer-events:none;
+      text-shadow: 0 0 18px rgba(255,255,255,.35),
+                   0 0 64px rgba(255,120,40,.18);
+      mix-blend-mode: screen;
+    }
+
+    .sub {
+      position:fixed; left:0; right:0; bottom:7%;
+      text-align:center;
+      font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+      font-weight:650;
+      color:rgba(255,255,255,.7);
+      letter-spacing:.12em;
+      font-size:clamp(12px, 1.4vw, 22px);
+      pointer-events:none;
+      text-shadow: 0 0 24px rgba(0,0,0,.6);
+    }
+
+    .debug {
+      position:fixed; left:10px; top:10px; z-index:5;
+      color:#fff; font:12px ui-monospace, SFMono-Regular, Menlo, monospace;
+      background:rgba(0,0,0,.35); padding:6px 8px; border-radius:8px;
+      pointer-events:none;
+      display:none;
+    }
+    body.debug .debug { display:block; }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <div class="title">Stream Starting Soon</div>
+  <div class="sub">Stand by…</div>
+  <div class="debug" id="dbg">boot</div>
+
+<script>
+/**
+ * URL params:
+ *  - dpr=1.0            (clamped to <=2.0, default <=1.5)
+ *  - scale=0.75         (render scale)
+ *  - q=1                (0=low 1=med 2=high; controls loop count)
+ *  - fps=60             (cap)
+ *  - debug=1            (show stats)
+ *
+ * Example:
+ *  /stream_starting_tunnel.html?q=0&scale=0.6&dpr=1.0
+ */
+const params = new URLSearchParams(location.search);
+const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+const num = (k,def)=>{ const v=parseFloat(params.get(k)); return Number.isFinite(v)?v:def; };
+const int = (k,def)=>{ const v=parseInt(params.get(k),10); return Number.isFinite(v)?v:def; };
+
+const DEBUG = int('debug', 0) === 1;
+if (DEBUG) document.body.classList.add('debug');
+
+const MAX_DPR = clamp(num('dpr', Math.min(1.5, window.devicePixelRatio || 1)), 0.5, 2.0);
+const SCALE   = clamp(num('scale', 0.75), 0.25, 1.0);
+const Q       = clamp(int('q', 1), 0, 2);
+const FPS_CAP = clamp(int('fps', 60), 10, 60);
+
+const canvas = document.getElementById('c');
+const dbg = document.getElementById('dbg');
+
+const gl = canvas.getContext('webgl', {
+  antialias:false, alpha:false, depth:false, stencil:false,
+  preserveDrawingBuffer:false, premultipliedAlpha:false
+});
+if (!gl) { alert('WebGL not supported'); throw new Error('WebGL not supported'); }
+
+let dpr = MAX_DPR;
+let lastW = 0, lastH = 0;
+
+function resize(){
+  const cssW = Math.max(1, innerWidth);
+  const cssH = Math.max(1, innerHeight);
+  const w = Math.max(1, Math.floor(cssW * dpr * SCALE));
+  const h = Math.max(1, Math.floor(cssH * dpr * SCALE));
+  if (w === lastW && h === lastH) return;
+  lastW = w; lastH = h;
+  canvas.width = w; canvas.height = h;
+  gl.viewport(0,0,w,h);
+}
+addEventListener('resize', resize, { passive:true });
+
+const VERT = `
+attribute vec2 a_pos;
+varying vec2 v_uv;
+void main(){
+  v_uv = a_pos * 0.5 + 0.5;
+  gl_Position = vec4(a_pos, 0.0, 1.0);
+}
+`;
+
+const FRAG = `
+precision highp float;
+
+varying vec2 v_uv;
+
+uniform vec3  iResolution;
+uniform float iTime;
+uniform float iTimeDelta;
+uniform int   iFrame;
+
+uniform int   u_steps; // quality-controlled loop count
+
+const float SPEED    = 2.2;   // was ~6.0 (too fast)
+const float SWAY_X   = 0.10;  // was 0.35
+const float SWAY_Y   = 0.06;  // was 0.20
+const float EXPOSURE = 0.55;  // lower = darker
+const float GLOW_K   = 0.006; // was ~0.02 (too bright)
+
+// Portable tanh approximation (WebGL1-safe)
+vec4 fastTanh(vec4 x){
+  vec4 x2 = x*x;
+  return x * (27.0 + x2) / (27.0 + 9.0*x2);
+}
+
+// =============================
+// 0) PORTABLE HELPERS (WebGL1)
+// =============================
+
+// Tanh-ish tone curve (portable)
+vec3 fastTanh3(vec3 x){
+  vec3 x2 = x*x;
+  return x * (27.0 + x2) / (27.0 + 9.0*x2);
+}
+
+// Hash (cheap randomness)
+float hash21(vec2 p){
+  p = fract(p*vec2(123.34, 345.45));
+  p += dot(p, p+34.345);
+  return fract(p.x*p.y);
+}
+
+// 2D rotation
+mat2 rot(float a){
+  float c = cos(a), s = sin(a);
+  return mat2(c,-s,s,c);
+}
+
+// Safe reciprocal length
+float safeInv(float x){ return 1.0/max(x, 1e-3); }
+
+// =============================
+// 1) SIGNED DISTANCE FUNCTIONS
+// =============================
+
+float sdBox(vec3 p, vec3 b){
+  vec3 q = abs(p) - b;
+  return length(max(q, 0.0)) + min(max(q.x, max(q.y,q.z)), 0.0);
+}
+
+float sdCylY(vec3 p, float r){
+  return length(p.xz) - r;
+}
+
+// Repeat space every 'c' units
+vec3 rep(vec3 p, vec3 c){
+  return mod(p + 0.5*c, c) - 0.5*c;   // avoids round()
+}
+
+// =============================
+// 2) SCENE: corridor frames + blocks
+// =============================
+
+// Returns distance, and a material id packed in y (0..1)
+vec2 mapScene(vec3 p, float t){
+  // Camera-forward direction is +Z. We build corridor along Z.
+
+  // Add subtle “wiggle” so it feels alive
+  p.xy *= rot(0.12*sin(t*0.6) + 0.08*sin(p.z*0.2));
+
+  // Corridor walls: big box shell (inside)
+  float corridor = -sdBox(p, vec3(3.5, 2.0, 999.0)); // negative inside
+
+  // Frames repeating down Z
+  vec3 q = p;
+  q.z = mod(q.z, 6.0) - 3.0;
+  float frame = sdBox(q, vec3(3.2, 1.7, 0.18)); // thin ring
+  frame = abs(frame) - 0.05; // hollow out (ring feel)
+
+  // City-ish block details on walls: repeated boxes
+  vec3 w = p;
+  // push to walls by looking at abs x
+  float side = sign(p.x);
+  w.x = abs(w.x) - 3.2;         // near wall plane
+  w = rep(w, vec3(0.9, 0.7, 1.2));
+  float blocks = sdBox(w, vec3(0.18, 0.22, 0.22));
+
+  // Vertical beam down center
+  float beam = sdCylY(p, 0.06);
+  beam = max(beam, abs(p.z) - 120.0); // finite length
+
+  // Combine: corridor interior is empty; frame/blocks/beam are solid-ish
+  float d = 1e9;
+  float m = 0.0;
+
+  // Frames
+  if (frame < d){ d = frame; m = 0.25; }
+
+  // Blocks (slightly inset into walls)
+  blocks = max(blocks, -corridor - 0.03);
+  if (blocks < d){ d = blocks; m = 0.55; }
+
+  // Beam “solid” for glow sampling
+  if (beam < d){ d = beam; m = 0.95; }
+
+  return vec2(d, m);
+}
+
+// =============================
+// 3) NORMAL + LIGHTING
+// =============================
+
+vec3 calcNormal(vec3 p, float t){
+  // small epsilon
+  vec2 e = vec2(0.001, 0.0);
+  float d = mapScene(p, t).x;
+  vec3 n = d - vec3(
+    mapScene(p - e.xyy, t).x,
+    mapScene(p - e.yxy, t).x,
+    mapScene(p - e.yyx, t).x
+  );
+  return normalize(n);
+}
+
+// =============================
+// 4) MAIN RAYMARCH
+// =============================
+
+void mainImage(out vec4 fragColor, in vec2 fragCoord){
+  // Normalize coordinates, keep aspect correct
+  vec2 uv = (fragCoord - 0.5*iResolution.xy) / iResolution.y;
+
+  float t = iTime;
+
+  // --- Camera setup (origin + direction)
+  vec3 ro = vec3(0.0, 0.0, -8.0);
+  ro.z += t * 6.0;                      // move forward
+
+  // slight camera sway
+  ro.x += 0.35*sin(t*0.7);
+  ro.y += 0.20*sin(t*0.9);
+
+  vec3 rd = normalize(vec3(uv, 1.2));
+  // aim and roll a bit
+  rd.xz *= rot(0.10*sin(t*0.25));
+  rd.yz *= rot(0.08*sin(t*0.31));
+
+  // --- Raymarch loop (quality-scaled)
+  float dist = 0.0;
+  float mat  = 0.0;
+  float glow = 0.0;
+
+  // You can wire this to your JS quality param if you want later,
+  // but for now just keep it safe.
+  const int STEPS = 72;
+
+  for (int i=0; i<STEPS; i++){
+    vec3 p = ro + rd * dist;
+    vec2 h = mapScene(p, t);
+
+    // glow gather (beam + frames)
+    // smaller distance -> more glow
+    glow += 0.02 * safeInv(abs(h.x) + 0.02) * smoothstep(0.2, 1.0, h.y);
+
+    dist += h.x * 0.7; // understep for stability
+    mat = h.y;
+
+    if (abs(h.x) < 0.001 || dist > 120.0) break;
+  }
+
+  vec3 col = vec3(0.0);
+
+  if (dist < 120.0){
+    vec3 p = ro + rd * dist;
+    vec3 n = calcNormal(p, t);
+
+    // Light directions
+    vec3 lightDir = normalize(vec3(-0.6, 0.8, -0.4));
+    float diff = clamp(dot(n, lightDir), 0.0, 1.0);
+
+    // Spec
+    vec3 h = normalize(lightDir - rd);
+    float spec = pow(clamp(dot(n, h), 0.0, 1.0), 32.0);
+
+    // Material palette
+    vec3 baseA = vec3(0.10, 0.35, 0.75); // neon blue
+    vec3 baseB = vec3(1.10, 0.45, 0.15); // neon orange
+    vec3 baseC = vec3(0.85, 0.92, 1.20); // beam white-blue
+
+    vec3 base = mix(baseA, baseB, smoothstep(0.2, 0.8, mat));
+    base = mix(base, baseC, smoothstep(0.9, 1.0, mat));
+
+    // Ambient + diffuse + spec
+    col = base * (0.18 + 1.2*diff) + 0.6*spec;
+
+    // Fog (distance-based)
+    float fog = exp(-dist * 0.035);
+    col *= fog;
+  }
+
+  // Add glow (bloom-ish)
+  col += glow * vec3(0.25, 0.55, 1.1);
+  col += glow * glow * vec3(0.8, 0.25, 0.10);
+
+  // Filmic-ish tone curve (portable)
+  col = fastTanh3(col * 0.9);
+
+  // Vignette
+  float vig = smoothstep(1.2, 0.2, length(uv));
+  col *= vig;
+
+  fragColor = vec4(col, 1.0);
+}
+
+void main(){
+  vec2 fragCoord = vec2(v_uv.x * iResolution.x, v_uv.y * iResolution.y);
+  vec4 col = vec4(0.0);
+  mainImage(col, fragCoord);
+  gl_FragColor = col;
+}
+`;
+
+function compile(type, src){
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)){
+    const log = gl.getShaderInfoLog(s) || 'unknown';
+    console.error(log);
+    throw new Error(log);
+  }
+  return s;
+}
+function link(vs, fs){
+  const p = gl.createProgram();
+  gl.attachShader(p, vs);
+  gl.attachShader(p, fs);
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)){
+    const log = gl.getProgramInfoLog(p) || 'unknown';
+    console.error(log);
+    throw new Error(log);
+  }
+  return p;
+}
+
+const prog = link(
+  compile(gl.VERTEX_SHADER, VERT),
+  compile(gl.FRAGMENT_SHADER, FRAG)
+);
+gl.useProgram(prog);
+
+// fullscreen quad
+const buf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+  -1,-1,  1,-1, -1, 1,
+  -1, 1,  1,-1,  1, 1
+]), gl.STATIC_DRAW);
+
+const aPos = gl.getAttribLocation(prog, 'a_pos');
+gl.enableVertexAttribArray(aPos);
+gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+// uniforms
+const uRes   = gl.getUniformLocation(prog, 'iResolution');
+const uTime  = gl.getUniformLocation(prog, 'iTime');
+const uDt    = gl.getUniformLocation(prog, 'iTimeDelta');
+const uFrame = gl.getUniformLocation(prog, 'iFrame');
+const uSteps = gl.getUniformLocation(prog, 'u_steps');
+
+function stepsForQuality(){
+  // original iters ~77
+  if (Q === 0) return 44;
+  if (Q === 1) return 64;
+  return 77;
+}
+const STEPS = stepsForQuality();
+
+let t0 = performance.now();
+let last = t0;
+let frame = 0;
+
+let fpsAccT = 0, fpsAccN = 0, fps = 0;
+let lastRAF = 0;
+
+function loop(now){
+  const minFrameMs = 1000 / FPS_CAP;
+  if (now - lastRAF < minFrameMs){
+    requestAnimationFrame(loop);
+    return;
+  }
+  lastRAF = now;
+
+  resize();
+
+  const t = (now - t0) / 1000;
+  const dt = Math.min(0.1, (now - last) / 1000);
+  last = now;
+
+  gl.uniform3f(uRes, canvas.width, canvas.height, 1.0);
+  gl.uniform1f(uTime, t);
+  gl.uniform1f(uDt, dt);
+  gl.uniform1i(uFrame, frame++);
+  gl.uniform1i(uSteps, STEPS);
+
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+  if (DEBUG){
+    fpsAccT += dt; fpsAccN++;
+    if (fpsAccT >= 0.5){
+      fps = fpsAccN / fpsAccT;
+      fpsAccT = 0; fpsAccN = 0;
+      dbg.textContent = `${canvas.width}x${canvas.height} scale=${SCALE} dpr=${dpr} q=${Q} fps≈${fps.toFixed(1)} steps=${STEPS}`;
+    }
+  }
+
+  requestAnimationFrame(loop);
+}
+
+canvas.addEventListener('webglcontextlost', (e)=>{
+  e.preventDefault();
+  if (DEBUG) dbg.textContent = 'WebGL context lost — try ?q=0&scale=0.6&dpr=1.0';
+}, false);
+
+resize();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

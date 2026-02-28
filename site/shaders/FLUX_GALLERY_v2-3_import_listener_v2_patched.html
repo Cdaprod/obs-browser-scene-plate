@@ -1,0 +1,2245 @@
+<!DOCTYPE html>
+
+<!--
+  FLUX.GALLERY v1
+  ═══════════════════════════════════════════════════════════════
+  Vertical tunnel cinematic gallery — Option B (camera moves, panes stay)
+  
+  ARCHITECTURE
+  ─────────────────────────────────────────────────────────────
+  Panes (4–5)  Fixed PlaneGeometry meshes at alternating Z/X offsets
+  Camera Rig   Object3D parent of PerspectiveCamera; tweened on selection
+  Shot Solver  Computes cam pos/quat from pane worldMatrix + shot recipe
+  VideoTex     Created on-demand per pane, destroyed on end (poster reverts)
+  Post Pass    EffectComposer: grain + vignette + streak (motion blur lite)
+  Audio        WebAudio analyser → bass/rms/beat → drives glow + shake
+
+  URL PARAMS
+  ─────────────────────────────────────────────────────────────
+  ?u0=url&u1=url...   Video URLs for panes 0–4
+  ?hud=0              Hide HUD
+  ?react=0            Disable audio reactivity
+  ?auto=1             Auto-advance through panes every 6s
+  ?mode=v             vertical (default) | p = panoramic
+
+  KEYBOARD
+  ─────────────────────────────────────────────────────────────
+  ← →   Select prev/next pane
+  Space  Play selected pane (once)
+  M      Start microphone
+  H      Toggle HUD
+  R      Reset camera to overview
+  1–5    Jump to pane directly
+
+  window.FLUXGALLERY (state bus)
+  ─────────────────────────────────────────────────────────────
+  .selected, .playing, .bass, .rms, .beat, .bpmVal
+  .flyToPane(i, shotName, dur)
+  .playSelected()
+  ═══════════════════════════════════════════════════════════════
+-->
+
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>FLUX.GALLERY</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Share+Tech+Mono&display=swap');
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --ink:#03030a;
+  --neon:#ff6a00;
+  --cold:#e0e8ff;
+  --chrome:#556;
+  --panel:rgba(3,3,10,0.82);
+}
+html,body{
+  width:100%;height:100%;overflow:hidden;
+  background:var(--ink);cursor:none;
+  font-family:'Share Tech Mono',monospace;color:var(--cold);
+}
+#c{position:fixed;inset:0;width:100%;height:100%}
+
+/* CURSOR */
+#cur{
+position:fixed;pointer-events:none;z-index:9999;
+width:18px;height:18px;
+border:1px solid var(–neon);border-radius:50%;
+transform:translate(-50%,-50%);
+mix-blend-mode:screen;
+transition:transform .08s,border-color .1s;
+}
+#cur.active{transform:translate(-50%,-50%) scale(1.6);border-color:#fff;}
+
+/* TOPBAR */
+#topbar{
+position:fixed;top:0;left:0;right:0;height:44px;
+background:linear-gradient(to bottom,rgba(0,0,0,.9),transparent);
+display:flex;align-items:center;padding:0 18px;gap:16px;
+z-index:200;pointer-events:none;
+}
+#logo{
+font-family:'Bebas Neue',sans-serif;font-size:1.55rem;letter-spacing:.3em;
+color:#fff;text-shadow:0 0 20px var(–neon),0 0 50px rgba(255,106,0,.4);
+}
+#logo em{color:var(–neon);font-style:normal}
+#shotTag{font-size:.6rem;letter-spacing:.22em;color:rgba(224,232,255,.45);margin-left:4px}
+
+/* STAT */
+#stat{
+position:fixed;top:10px;right:14px;z-index:200;pointer-events:none;
+font-size:.5rem;letter-spacing:.16em;color:var(–chrome);
+text-align:right;line-height:2;
+}
+.s-live{color:var(–neon)!important}
+.s-dead{color:#ff3355!important}
+
+/* PANE SELECTOR (left side) */
+#paneNav{
+position:fixed;top:50%;left:10px;transform:translateY(-50%);
+z-index:200;display:flex;flex-direction:column;gap:6px;pointer-events:all;
+}
+.pn-btn{
+background:transparent;border:1px solid rgba(255,106,0,.15);
+color:rgba(255,106,0,.3);font-family:'Bebas Neue',sans-serif;font-size:.9rem;
+letter-spacing:.15em;padding:5px 9px;cursor:pointer;transition:all .18s;
+width:40px;text-align:center;
+}
+.pn-btn:hover,.pn-btn.on{
+border-color:var(–neon);color:var(–neon);
+background:rgba(255,106,0,.08);box-shadow:0 0 10px rgba(255,106,0,.2);
+}
+.pn-btn.on{background:rgba(255,106,0,.12);}
+.pn-btn.playing{
+border-color:#fff;color:#fff;
+box-shadow:0 0 14px rgba(255,106,0,.5);
+animation:pnPulse .5s ease-in-out infinite alternate;
+}
+@keyframes pnPulse{to{box-shadow:0 0 22px rgba(255,106,0,.9);}}
+
+/* BOTTOM CONTROLS */
+#ctrl{
+position:fixed;bottom:0;left:0;right:0;z-index:200;
+background:linear-gradient(to top,rgba(0,0,0,.95) 55%,transparent);
+padding:12px 16px 16px;
+display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;
+}
+.cg{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.cl{font-size:.46rem;letter-spacing:.2em;color:rgba(255,106,0,.4);text-transform:uppercase;white-space:nowrap}
+.sb{
+background:transparent;border:1px solid rgba(255,106,0,.22);
+color:rgba(255,106,0,.5);font-family:'Share Tech Mono',monospace;font-size:.58rem;
+letter-spacing:.1em;padding:4px 11px;cursor:pointer;transition:all .12s;text-transform:uppercase;
+}
+.sb:hover,.sb.on{
+border-color:var(–neon);color:var(–neon);
+background:rgba(255,106,0,.08);box-shadow:0 0 8px rgba(255,106,0,.18);
+}
+
+/* SHOT SELECTOR */
+#shotSel{
+background:transparent;border:1px solid rgba(255,106,0,.22);
+color:rgba(255,106,0,.55);font-family:'Share Tech Mono',monospace;
+font-size:.58rem;letter-spacing:.08em;padding:4px 6px;cursor:pointer;
+text-transform:uppercase;
+}
+
+/* METERS */
+#mwrap{display:flex;flex-direction:column;gap:3px;min-width:90px}
+.mr{display:flex;align-items:center;gap:5px;font-size:.46rem}
+.ml{width:26px;color:rgba(255,106,0,.4);flex-shrink:0}
+.mbo{flex:1;height:2px;background:rgba(255,106,0,.08);overflow:hidden}
+.mbi{height:100%;width:0%;background:var(–neon);box-shadow:0 0 4px var(–neon);transition:width .04s}
+.mv{width:26px;text-align:right;color:rgba(255,106,0,.5);font-size:.44rem}
+
+/* BEAT DOT */
+#bdot{width:10px;height:10px;border-radius:50%;border:1px solid rgba(255,106,0,.22);transition:all .05s}
+
+/* PLAY BUTTON (center overlay) */
+#playBtn{
+position:fixed;bottom:90px;left:50%;transform:translateX(-50%);
+z-index:200;
+background:transparent;border:1px solid rgba(255,106,0,.35);
+color:rgba(255,106,0,.6);font-family:'Bebas Neue',sans-serif;
+font-size:1.1rem;letter-spacing:.35em;padding:8px 28px;
+cursor:pointer;transition:all .15s;
+text-transform:uppercase;
+}
+#playBtn:hover{
+border-color:var(–neon);color:#fff;
+background:rgba(255,106,0,.14);box-shadow:0 0 20px rgba(255,106,0,.4);
+}
+#playBtn.hidden{opacity:0;pointer-events:none}
+
+/* PANE INFO */
+#paneInfo{
+position:fixed;bottom:145px;left:50%;transform:translateX(-50%);
+z-index:200;pointer-events:none;text-align:center;
+font-size:.55rem;letter-spacing:.2em;color:rgba(224,232,255,.4);
+transition:opacity .3s;
+}
+
+/* CORNERS */
+.cr{position:fixed;width:26px;height:26px;z-index:200;pointer-events:none;opacity:.25}
+.cr::before,.cr::after{content:'';position:absolute;background:var(–neon)}
+.cr::before{width:1px;height:100%}.cr::after{width:100%;height:1px}
+.tl{top:12px;left:12px}.tr{top:12px;right:12px;transform:scaleX(-1)}
+.bl{bottom:12px;left:12px;transform:scaleY(-1)}.br{bottom:12px;right:12px;transform:scale(-1)}
+
+/* SCANLINES */
+#sl{
+position:fixed;inset:0;pointer-events:none;z-index:155;
+background:repeating-linear-gradient(
+0deg,transparent,transparent 2px,rgba(0,0,0,.025) 2px,rgba(0,0,0,.025) 4px);
+}
+
+/* TRANSIT FLASH */
+#flash{
+position:fixed;inset:0;z-index:150;pointer-events:none;opacity:0;
+background:radial-gradient(ellipse at 50% 50%,rgba(255,106,0,.15),transparent 70%);
+transition:opacity .06s;
+}
+
+/* EVENT LOG */
+#evlog{
+position:fixed;left:58px;top:52px;z-index:200;pointer-events:none;
+font-size:.66rem;letter-spacing:.1em;color:rgba(255,106,0,.5);
+line-height:1.7;max-width:220px;
+}
+.ev-line{animation:evfade 2.5s forwards}
+@keyframes evfade{0%{opacity:1}65%{opacity:.5}100%{opacity:0}}
+
+/* VIDEO UPLOAD INPUTS */
+input[type=file]{display:none}
+
+/* LOADING */
+#loadOverlay{
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  background: #03030a;
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(10px, 2vh, 18px);
+
+  /* iPhone notch / home bar safe area */
+  padding-top: max(16px, env(safe-area-inset-top));
+  padding-right: max(16px, env(safe-area-inset-right));
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+  padding-left: max(16px, env(safe-area-inset-left));
+
+  transition: opacity .6s;
+}
+
+/* Optional: lock overlay height to "stable" viewport on iOS */
+@supports (height: 100svh){
+  #loadOverlay{ min-height: 100svh; }
+}
+@supports (height: 100dvh){
+  #loadOverlay{ min-height: 100dvh; }
+}
+
+#loadOverlay.gone{ opacity: 0; pointer-events: none; }
+
+#loadTitle{
+  font-family: 'Bebas Neue', sans-serif;
+
+  /* scales nicely in portrait + landscape */
+  font-size: clamp(1.6rem, 6.5vw, 2.6rem);
+
+  /* letter spacing that doesn't explode on narrow screens */
+  letter-spacing: clamp(0.16em, 1.6vw, 0.45em);
+
+  color: #fff;
+  text-shadow: 0 0 30px var(--neon);
+  text-align: center;
+  line-height: 0.95;
+  padding: 0 2vw; /* prevent edge clipping on portrait */
+}
+
+#loadTitle em{
+  color: var(--neon);
+  font-style: normal;
+}
+
+#loadSub{
+  font-size: clamp(0.55rem, 2.4vw, 0.8rem);
+  letter-spacing: clamp(0.18em, 1.2vw, 0.35em);
+  color: rgba(255,106,0,.45);
+  text-align: center;
+  padding: 0 3vw;
+}
+
+/* Portrait-specific tightening (optional but nice) */
+@media (orientation: portrait){
+  #loadOverlay{ gap: clamp(12px, 2.6vh, 22px); }
+  #loadTitle{ font-size: clamp(1.8rem, 8vw, 2.7rem); }
+  #loadSub{ font-size: clamp(0.6rem, 3vw, 0.9rem); }
+}
+</style>
+
+</head>
+<body>
+
+<div id="loadOverlay">
+  <div id="loadTitle">FLUX<em>.</em>GALLERY</div>
+  <div id="loadSub">INITIALIZING RENDER PIPELINE</div>
+</div>
+
+<canvas id="c"></canvas>
+
+<div id="cur"></div>
+<div id="sl"></div>
+<div id="flash"></div>
+<div class="cr tl"></div><div class="cr tr"></div>
+<div class="cr bl"></div><div class="cr br"></div>
+<div id="evlog"></div>
+
+<div id="topbar">
+  <div id="logo">FLUX<em>.</em>GALLERY</div>
+  <div id="shotTag">// OVERVIEW</div>
+</div>
+
+<div id="stat">
+  <div><span class="s-dead" id="sdot">●</span> <span id="slbl">NO AUDIO</span></div>
+  <div id="sbpm">BPM —</div>
+  <div id="sfps">— FPS</div>
+  <div id="sPane">PANE — / 5</div>
+</div>
+
+<div id="paneNav">
+  <!-- populated by JS -->
+</div>
+
+<div id="paneInfo">SELECT A PANE</div>
+<button id="playBtn" class="hidden">PLAY ONCE</button>
+
+<div id="ctrl">
+  <!-- AUDIO -->
+  <div class="cg">
+    <span class="cl">Audio</span>
+    <button class="sb" id="bMic">MIC</button>
+    <button class="sb" id="bTab">TAB</button>
+  </div>
+  <!-- VIDEO LOAD -->
+  <div class="cg">
+    <span class="cl">Pane</span>
+    <select class="sb" id="paneSelDrop" style="padding:4px 6px">
+      <option value="0">P1</option>
+      <option value="1">P2</option>
+      <option value="2">P3</option>
+      <option value="3">P4</option>
+      <option value="4">P5</option>
+    </select>
+    <button class="sb" id="bLoadVid">LOAD VIDEO</button>
+    <input type="file" id="fVid" accept="video/*">
+  </div>
+  <!-- SHOT -->
+  <div class="cg">
+    <span class="cl">Shot</span>
+    <select id="shotSel" class="sb">
+      <option value="approach">APPROACH</option>
+      <option value="tight">TIGHT</option>
+      <option value="angle">ANGLE</option>
+      <option value="low">LOW</option>
+      <option value="orbit">ORBIT</option>
+    </select>
+    <button class="sb" id="bFly">FLY</button>
+  </div>
+  <!-- LAYOUT -->
+  <div class="cg">
+    <span class="cl">Layout</span>
+    <button class="sb on" id="bModeV">VERTICAL</button>
+    <button class="sb" id="bModeP">PANORAMIC</button>
+  </div>
+  <!-- AUTO -->
+  <div class="cg">
+    <span class="cl">Auto</span>
+    <button class="sb" id="bAuto">AUTO ADV</button>
+    <button class="sb" id="bOverview">OVERVIEW</button>
+  </div>
+  <!-- METERS -->
+  <div class="cg" id="mwrap">
+    <div class="mr"><span class="ml">BASS</span><div class="mbo"><div class="mbi" id="mB"></div></div><span class="mv" id="vB">0.00</span></div>
+    <div class="mr"><span class="ml">RMS</span><div class="mbo"><div class="mbi" id="mR"></div></div><span class="mv" id="vR">0.00</span></div>
+  </div>
+  <div class="cg" style="margin-left:auto">
+    <span class="cl">Beat</span>
+    <div id="bdot"></div>
+  </div>
+</div>
+
+<div id="vidPool" style="position:absolute;width:0;height:0;overflow:hidden;pointer-events:none;visibility:hidden"></div>
+
+<!-- Three.js from CDN -->
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" onerror="document.body.innerHTML='<p style=color:red;padding:40px>Failed to load Three.js. Check network connection.</p>'"></script>
+
+<script>
+// Guard: ensure THREE loaded before running anything
+if(typeof THREE === 'undefined'){
+  document.body.innerHTML='<p style="color:red;padding:40px;font-family:monospace">THREE.js failed to load from CDN.</p>';
+  throw new Error('THREE not loaded');
+}
+'use strict';
+// ═══════════════════════════════════════════════════════════════
+//  URL PARAMS
+// ═══════════════════════════════════════════════════════════════
+const P = new URLSearchParams(location.search);
+const PANE_URLS  = [0,1,2,3,4].map(i => P.get('u'+i)||null);
+const HUD_ON     = P.get('hud')  !== '0';
+const REACT_ON   = P.get('react')!== '0';
+const AUTO_ADV   = P.get('auto') === '1';
+const MODE_START = P.get('mode') === 'p' ? 'panoramic' : 'vertical';
+const ALPHA_MODE = P.get('alpha')=== '1'; // transparent background for OBS overlay
+const NUM_PANES  = 5;
+
+// ═══════════════════════════════════════════════════════════════
+//  THREE.JS SCENE
+// ═══════════════════════════════════════════════════════════════
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({canvas, antialias:true, alpha:true, premultipliedAlpha:false});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = false;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.1;
+
+const scene = new THREE.Scene();
+if(ALPHA_MODE){
+  scene.background = null; // transparent — OBS will composite
+  document.body.style.background = 'transparent';
+} else {
+  scene.background = new THREE.Color(0x03030a);
+}
+scene.fog = new THREE.FogExp2(0x03030a, 0.14);
+
+const camera = new THREE.PerspectiveCamera(58, innerWidth/innerHeight, 0.1, 60);
+// IMPORTANT: camera stays at local origin; rig drives world movement.
+camera.position.set(0, 0, 0);
+
+// Camera rig — we tween this, not the camera directly
+const rig = new THREE.Object3D();
+const shake = new THREE.Object3D();
+rig.add(shake);
+shake.add(camera);
+scene.add(rig);
+
+let camShakeX = 0;
+let camShakeY = 0;
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// ═══════════════════════════════════════════════════════════════
+//  LIGHTING
+// ═══════════════════════════════════════════════════════════════
+const ambient = new THREE.AmbientLight(0x0a0a18, 2.2);
+scene.add(ambient);
+
+const keyLight = new THREE.PointLight(0xff6a00, 0, 18);
+keyLight.position.set(0, 2, 4);
+scene.add(keyLight);
+
+const rimLight = new THREE.PointLight(0x3060ff, 1.2, 22);
+rimLight.position.set(-3, 1, -2);
+scene.add(rimLight);
+
+// ═══════════════════════════════════════════════════════════════
+//  ENVIRONMENT: TUNNEL WALLS + FLOOR
+// ═══════════════════════════════════════════════════════════════
+// Tunnel corridor geometry (box open at both ends)
+function makeTunnel(){
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0x06060e,
+    roughness: 0.95,
+    metalness: 0.05,
+    side: THREE.BackSide,
+  });
+  const geo = new THREE.BoxGeometry(8, 12, 28);
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.set(0, 0.5, -7);
+  scene.add(mesh);
+
+  // Floor glow strip
+  const stripGeo = new THREE.PlaneGeometry(0.04, 22);
+  const stripMat = new THREE.MeshBasicMaterial({color:0xff6a00, transparent:true, opacity:.18});
+  const strip = new THREE.Mesh(stripGeo, stripMat);
+  strip.rotation.x = -Math.PI/2;
+  strip.position.set(0, -5.45, -5);
+  scene.add(strip);
+  return {mesh, strip, mat};
+}
+const tunnel = makeTunnel();
+
+// Particle field (streaks)
+function makeParticles(){
+  const N = 600;
+  const pos = new Float32Array(N*3);
+  const sizes = new Float32Array(N);
+  for(let i=0;i<N;i++){
+    pos[i*3]   = (Math.random()-.5)*12;
+    pos[i*3+1] = (Math.random()-.5)*11;
+    pos[i*3+2] = (Math.random()-.5)*26 - 6;
+    sizes[i] = Math.random()*1.5+.2;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  geo.setAttribute('size',     new THREE.BufferAttribute(sizes,1));
+  const mat = new THREE.PointsMaterial({
+    color:0xaabbdd, size:.03, transparent:true, opacity:.18,
+    sizeAttenuation:true
+  });
+  const pts = new THREE.Points(geo, mat);
+  scene.add(pts);
+  return {pts, mat};
+}
+const particles = makeParticles();
+
+// ═══════════════════════════════════════════════════════════════
+//  PANE SHADER MATERIAL
+// ═══════════════════════════════════════════════════════════════
+function makePaneMaterial(opts={}){
+  return new THREE.ShaderMaterial({
+    uniforms:{
+      uTex:       {value: opts.tex || null},
+      uHasTex:    {value: opts.tex ? 1.0 : 0.0},
+      uSelected:  {value: 0.0},
+      uPlaying:   {value: 0.0},
+      uTime:      {value: 0.0},
+      uBass:      {value: 0.0},
+      uBeat:      {value: 0.0},
+      uIndex:     {value: opts.index || 0.0},
+      uAspect:    {value: opts.aspect || 1.777},
+    },
+    transparent: false,
+    depthWrite:  true,
+    depthTest:   true,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits:  -1,
+    vertexShader:`
+      varying vec2 vUv;
+      varying vec3 vPos;
+      void main(){vUv=uv;vPos=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}
+    `,
+    fragmentShader:`
+      precision highp float;
+      uniform sampler2D uTex;
+      uniform float uHasTex,uSelected,uPlaying,uTime,uBass,uBeat,uIndex,uAspect;
+      varying vec2 vUv;
+      varying vec3 vPos;
+
+      float hash(vec2 p){p=fract(p*vec2(127.1,311.7));p+=dot(p,p+19.19);return fract(p.x*p.y);}
+
+      vec3 posterColor(vec2 uv){
+        // Mid-tone base — clearly visible against dark tunnel
+        vec3 base = vec3(.12,.12,.18);
+
+        // Grid lines — bright enough to see at distance
+        vec2 grid = fract(uv * vec2(10., 6.));
+        float gline = smoothstep(.05,.03, min(grid.x, grid.y));
+        base += gline * vec3(.08,.09,.16);
+
+        // Cross-hatch center marker
+        vec2 c = abs(uv - .5);
+        float cross = max(
+          smoothstep(.006,.002, c.x) * step(c.y,.18),
+          smoothstep(.006,.002, c.y) * step(c.x,.18)
+        );
+        base += cross * vec3(.3,.18,.06);
+
+        // Bright animated border — the main visibility cue
+        float edgeX = min(uv.x, 1.-uv.x);
+        float edgeY = min(uv.y, 1.-uv.y);
+        float borderDist = min(edgeX, edgeY);
+        float pulse = sin(uTime * .9 + uIndex * 1.5) * .5 + .5;
+        // Inner bright line
+        float innerLine = smoothstep(.022,.018, borderDist) - smoothstep(.018,.012, borderDist);
+        base += innerLine * vec3(1.,.5,.1) * (.5 + pulse*.5);
+        // Outer glow halo
+        float outerGlow = (1. - smoothstep(.0,.045, borderDist)) * (.15 + pulse*.2);
+        base += outerGlow * vec3(.8,.35,.05);
+
+        // Selected: flood fill lift
+        base += uSelected * vec3(.08,.05,.02);
+
+        // Bottom index bar
+        float bar = step(.87, uv.y) * step(uv.x, .22);
+        base = mix(base, vec3(.9,.45,.06)*(.6+uSelected*.4), bar);
+
+        // Grain
+        base += (hash(uv*120.+uTime*.04)-.5)*.014;
+
+        return clamp(base, 0., 1.);
+      }
+
+      uniform vec2 R;
+
+      vec3 videoColor(vec2 uv){
+        // Slight barrel distortion
+        vec2 p = uv-.5;
+        float r2 = dot(p,p);
+        p *= 1. + r2 * .04;
+        vec2 distUV = clamp(p+.5, 0., 1.);
+        // Chromatic aberration on selection
+        float ab = uSelected * .004 + uBass * .003;
+        vec3 c;
+        c.r = texture2D(uTex, distUV + vec2(ab,0.)).r;
+        c.g = texture2D(uTex, distUV).g;
+        c.b = texture2D(uTex, distUV - vec2(ab,0.)).b;
+        // Vignette — soft, doesn't blacken edges fully
+        float vig = 1. - smoothstep(.2,.85, length(p)*1.3)*0.22;
+        c *= vig;
+        // Scanline overlay removed to keep video clean
+        return c;
+      }
+
+      void main(){
+        vec2 uv = vUv;
+        vec3 col;
+        if(uHasTex > .5){
+          col = videoColor(uv);
+        } else {
+          col = posterColor(uv);
+        }
+        // Selection glow border (fusion corona: non-directional, thin + crisp, stochastic sparks)
+        float edgeX = min(uv.x, 1.-uv.x);
+        float edgeY = min(uv.y, 1.-uv.y);
+        float d = min(edgeX, edgeY);
+
+        // Core crisp line (very thin)
+        float core = smoothstep(0.010, 0.002, d);
+        float line = smoothstep(0.006, 0.0018, d) * (1.0 - smoothstep(0.014, 0.008, d));
+
+        // Soft outer corona (kept outside the content more than inside)
+        float corona = pow(1.0 - smoothstep(0.004, 0.055, d), 2.2);
+
+        // Non-directional "fusion spark" bursts around the perimeter
+        // Build a perimeter coordinate from the closest edge (avoids obvious travel direction).
+        float useY = step(edgeX, edgeY);                // 1 when closer to left/right edges
+        float s = mix(uv.x, uv.y, useY);                // coordinate along that edge
+        float side = mix(step(0.5, uv.y), step(0.5, uv.x), useY); // which half of the edge
+        float edgeId = useY * 2.0 + side;               // 0..3 id-ish
+        float pcoord = s + edgeId;                      // 0..4-ish
+        float cell = floor(pcoord * 48.0);              // spark sites along perimeter
+        float rnd  = hash(vec2(cell + uIndex * 17.0, uIndex * 31.7));
+        float tJit = uTime * (5.0 + rnd * 6.0);         // per-site timing variation
+        float burst = smoothstep(0.78, 0.98, sin(tJit + rnd * 6.283) * 0.5 + 0.5);
+        // Gate to a thin shell near the edge so it doesn't "wash" the video.
+        float shell = smoothstep(0.020, 0.003, d) * (1.0 - smoothstep(0.070, 0.040, d));
+        float sparks = burst * shell;
+
+        // Fine micro-flicker grain at the edge (adds 'electric' feel)
+        float micro = (hash(vec2(floor(pcoord*180.0), floor(uTime*24.0))) - 0.5);
+        micro *= smoothstep(0.030, 0.006, d);
+
+        float glowStr = (uSelected * 0.95 + uPlaying * 1.15 + uBeat * 0.65);
+        // Keep intensity controlled to avoid encroaching into the pane
+        vec3 neon = vec3(1.0, 0.42, 0.06);
+
+        col += neon * (line * (0.55 + 0.45 * glowStr) + corona * (0.18 + 0.35 * glowStr));
+        col += neon * sparks * (0.35 + 0.95 * glowStr);
+        col += neon * micro * (0.10 + 0.25 * glowStr);
+// Playing pulse
+        if(uPlaying>.5){
+          float pulse = sin(uTime*8.)*.5+.5;
+          col = mix(col, col*1.12, pulse*.15);
+        }
+        gl_FragColor = vec4(col, 1.);
+      }
+    `,
+    side: THREE.FrontSide,
+  });
+}
+
+// Fusion / corona halo that renders ONLY OUTSIDE the pane (separate mesh, additive).
+function makeFusionHaloMaterial(opts={}){
+  const {
+    haloFrac = 0.075,     // halo thickness as fraction of pane size
+    colorA   = [1.00, 0.58, 0.18],
+    colorB   = [1.00, 0.92, 0.45],
+    strength = 1.15,
+    crisp    = 1.0
+  } = opts;
+
+  const inner = 1.0 / (1.0 + 2.0*haloFrac); // inner rect half-size in [-1..1] space
+
+  const vert = `
+    varying vec2 vUv;
+    void main(){
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0);
+    }
+  `;
+
+  // Notes:
+  // - We compute signed distance to an inner rectangle (the pane). We render ONLY where d>0 (outside).
+  // - Corona = thin crisp edge + soft outer glow + noisy spikes + short-lived sparks sampled on the perimeter.
+  const frag = `
+    precision highp float;
+    varying vec2 vUv;
+    uniform float uTime;
+    uniform float uBass;
+    uniform float uBeat;
+    uniform float uInner;      // half-size of inner rect in [-1..1]
+    uniform float uStrength;
+    uniform float uCrisp;
+    uniform vec3  uColorA;
+    uniform vec3  uColorB;
+
+    // 2D hash / noise
+    float hash11(float p){
+      p = fract(p * 0.1031);
+      p *= p + 33.33;
+      p *= p + p;
+      return fract(p);
+    }
+    float hash21(vec2 p){
+      vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+      p3 += dot(p3, p3.yzx + 33.33);
+      return fract((p3.x + p3.y) * p3.z);
+    }
+    float noise(vec2 x){
+      vec2 i = floor(x);
+      vec2 f = fract(x);
+      float a = hash21(i);
+      float b = hash21(i + vec2(1.0,0.0));
+      float c = hash21(i + vec2(0.0,1.0));
+      float d = hash21(i + vec2(1.0,1.0));
+      vec2 u = f*f*(3.0-2.0*f);
+      return mix(a,b,u.x) + (c-a)*u.y*(1.0-u.x) + (d-b)*u.x*u.y;
+    }
+
+    float sdBox(vec2 p, vec2 b){
+      vec2 d = abs(p) - b;
+      return length(max(d,0.0)) + min(max(d.x,d.y), 0.0);
+    }
+
+    // sample a spark position on the rectangle perimeter given s in [0,1)
+    vec2 perimeterPoint(float s, vec2 b){
+      float t = fract(s) * 4.0;
+      float side = floor(t);
+      float u = fract(t);
+      // Slightly outside the box so sparks sit outward.
+      float ox = b.x + 0.02;
+      float oy = b.y + 0.02;
+      if(side < 1.0) return vec2(mix(-b.x, b.x, u),  oy); // top
+      if(side < 2.0) return vec2( ox, mix( b.y,-b.y, u)); // right
+      if(side < 3.0) return vec2(mix( b.x,-b.x, u), -oy); // bottom
+      return vec2(-ox, mix(-b.y, b.y, u));                // left
+    }
+
+    void main(){
+      // p in [-1..1]
+      vec2 p = (vUv - 0.5) * 2.0;
+      vec2 b = vec2(uInner);
+
+      // Signed distance from inner rectangle
+      float sd = sdBox(p, b);
+      float outMask = step(0.0, sd);
+      float d = max(sd, 0.0);
+      // Outside-only mask (keeps halo off the video)
+      // Base crisp rim (thin) and outer glow
+      float rimW   = mix(0.020, 0.012, clamp(uCrisp, 0.0, 2.0));
+      float rim    = exp(-d * (55.0 * uCrisp + 25.0)) * smoothstep(0.06, 0.0, d);
+      float edge   = smoothstep(rimW, 0.0, d); // very thin edge
+      float outer  = exp(-d * (16.0 + 10.0*uBass)) * 0.75;
+
+      // Noisy corona modulation (non-directional)
+      float t = uTime;
+      float n1 = noise(p*6.0 + vec2(0.0, t*0.7));
+        float n2 = noise(p*14.0 + vec2(t*0.9, 0.0));
+        float n  = mix(n1, n2, 0.6);
+        // High-frequency 'static' used ONLY for outer glow texture (keeps video clean)
+        float hf = noise(p*48.0 + vec2(t*1.4, -t*1.1));
+
+      // "Spikes" around the center angle, but applied as intensity modulation (looks like energetic burps)
+      float ang = atan(p.y, p.x);
+      float sp  = pow(max(0.0, sin(ang*12.0 + n*3.0 + t*0.6)*0.5+0.5), 6.0);
+      float sp2 = pow(max(0.0, sin(ang*24.0 - n*2.0 - t*0.35)*0.5+0.5), 8.0);
+      float spikes = 0.35*sp + 0.25*sp2;
+
+      // Sparks: a few gaussian blobs pinned to the perimeter, refreshed periodically (no travel direction)
+      float sparks = 0.0;
+      float burstPhase = floor(t * 2.5);  // refresh ~2.5x/sec
+      for(int i=0;i<14;i++){
+        float fi = float(i);
+        float s = hash11(fi*17.13 + burstPhase*3.71);
+        vec2 spPos = perimeterPoint(s, b);
+        float dd = length(p - spPos);
+        float life = hash11(fi*41.7 + burstPhase*9.11);
+        float amp = smoothstep(0.2, 1.0, life) * smoothstep(1.0, 0.65, fract(t*2.5));
+        sparks += amp * exp(-dd*dd * 420.0) * (0.7 + 1.2*uBeat);
+      }
+
+      // Mix and shape
+      float energy = 0.0;
+      energy += edge * (0.92 + 0.55*n) * (1.0 + 0.75*uBass);
+        // Rim stays crisp; only mild static
+        energy += rim  * (0.72 + 0.65*n + 0.18*(hf-0.5)) * (1.0 + 0.55*uBeat);
+        // Outer gets the 'static' texture more strongly
+        energy += outer * (0.78 + 0.55*n + 0.55*(hf-0.5)) * (1.0 + 0.35*uBass);
+      energy += spikes * rim * 1.15;
+      energy += sparks;
+
+      // Clamp and color
+      energy = clamp(energy, 0.0, 2.5) * outMask;
+      vec3 col = mix(uColorA, uColorB, clamp(0.35 + 0.65*n, 0.0, 1.0));
+      col *= (0.85 + 0.55*uBeat);
+
+      // Alpha is energy; additive blending will do the rest.
+      float a = energy * uStrength;
+
+      gl_FragColor = vec4(col * a, a);
+    }
+  `;
+
+  const mat = new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    depthTest: true,
+    blending: THREE.AdditiveBlending,
+    vertexShader: vert,
+    fragmentShader: frag,
+    uniforms: {
+      uTime:     { value: 0.0 },
+      uBass:     { value: 0.0 },
+      uBeat:     { value: 0.0 },
+      uInner:    { value: inner },
+      uStrength: { value: strength },
+      uCrisp:    { value: crisp },
+      uColorA:   { value: new THREE.Color(colorA[0], colorA[1], colorA[2]) },
+      uColorB:   { value: new THREE.Color(colorB[0], colorB[1], colorB[2]) },
+    }
+  });
+
+  return mat;
+}
+
+
+
+// ═══════════════════════════════════════════════════════════════
+//  PANE LAYOUT CONFIGS
+// ═══════════════════════════════════════════════════════════════
+const LAYOUTS = {
+  vertical: [
+    // [x, y, z, rotY]  — staggered down Z axis, alternating L/R
+    [ 0.0,  1.5, -1.0,  0.0 ],   // 0: center front  (hero-ish)
+    [-1.5,  0.2, -3.5,  0.18],   // 1: left wall
+    [ 1.5, -0.3, -5.5, -0.18],   // 2: right wall
+    [-1.3, -1.0, -8.0,  0.14],   // 3: left far
+    [ 1.2, -1.5,-10.5, -0.14],   // 4: right far
+  ],
+  panoramic: [
+    [ 0.0,  0.0, -4.0,  0.0  ],  // center
+    [-3.0,  0.0, -4.5,  0.32 ],  // left near
+    [ 3.0,  0.0, -4.5, -0.32 ],  // right near
+    [-5.5,  0.0, -6.0,  0.55 ],  // left far
+    [ 5.5,  0.0, -6.0, -0.55 ],  // right far
+  ],
+};
+
+// ═══════════════════════════════════════════════════════════════
+//  INIT PANES
+// ═══════════════════════════════════════════════════════════════
+let currentMode = MODE_START;
+let panes = [];
+let selectedPane = -1;
+let bootOverviewTimer = null;
+
+// Full-frame play framing targets (pane fills ~85-90% viewport while playing).
+let PLAY_TARGET_FILL = 0.92;
+let PLAY_FIT_MODE = 'cover'; // cover | contain | height | width
+let PLAY_FOV_BASE = 58;
+let PLAY_FOV_MIN = 34;
+let PLAY_FOV_MAX = 72;
+let PLAY_DOLLY_MIN = 0.9;
+let PLAY_DOLLY_MAX = 8.0;
+
+// ═══════════════════════════════════════════════════════════════
+//  PANE CLASS
+// ═══════════════════════════════════════════════════════════════
+const PANE_W = 1.77, PANE_H = 1.0; // 16:9 aspect
+
+// In-pane video texture playback helper.
+// Keeps playback inside each pane and avoids native fullscreen takeover on mobile browsers.
+function createPaneVideoEl(url){
+  const el = document.createElement('video');
+  el.src = url;
+  el.muted = false;
+  el.playsInline = true;
+  el.setAttribute('playsinline', '');
+  el.setAttribute('webkit-playsinline', '');
+  el.setAttribute('x5-playsinline', '');
+  el.controls = false;
+  el.disablePictureInPicture = true;
+  el.setAttribute('controlsList', 'nodownload noplaybackrate noremoteplayback');
+  el.setAttribute('noremoteplayback', '');
+  el.autoplay = false;
+  el.preload = 'auto';
+  el.style.display = 'none';
+  return el;
+}
+
+class Pane {
+  constructor(index, layoutPos){
+    this.index    = index;
+    this.selected = false;
+    this.playing  = false;
+    this.videoUrl = PANE_URLS[index] || null;
+    this.videoEl  = null;
+    this.videoTex = null;
+    this._endedHandler = null;
+
+    // Mesh
+    const geo = new THREE.PlaneGeometry(PANE_W, PANE_H);
+    this.mat  = makePaneMaterial({index, aspect: PANE_W/PANE_H});
+    this.mat.uniforms.R = {value: new THREE.Vector2(innerWidth, innerHeight)};
+    this.mesh = new THREE.Mesh(geo, this.mat);
+
+    // Frame (border box)
+    const frameGeo = new THREE.BoxGeometry(PANE_W + 0.025, PANE_H + 0.025, 0.012);
+    const frameMat = new THREE.MeshStandardMaterial({
+      color: 0x111118, roughness:.6, metalness:.7,
+      emissive: new THREE.Color(0x220e00), emissiveIntensity:.3,
+      polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
+    });
+    this.frame = new THREE.Mesh(frameGeo, frameMat);
+    this.frame.position.z = -0.01; // push further back to avoid z-fight
+
+    // Group
+    this.group = new THREE.Group();
+    this.group.add(this.mesh);
+
+// OUTER fusion halo (renders outside the pane only; does NOT encroach on video)
+this._haloFrac = 0.075;
+this.haloMat = makeFusionHaloMaterial({ haloFrac: this._haloFrac, strength: 1.10, crisp: 1.15 });
+this.halo = new THREE.Mesh(
+  new THREE.PlaneGeometry(PANE_W * (1 + 2*this._haloFrac), PANE_H * (1 + 2*this._haloFrac)),
+  this.haloMat
+);
+this.halo.position.z = 0.010; // slightly in front (alpha-only anyway), avoids z-fight
+this.halo.renderOrder = 5;
+this.group.add(this.halo);
+
+    this.group.add(this.frame);
+    this.setLayout(layoutPos);
+    scene.add(this.group);
+
+    // Per-pane glow light
+    this.light = new THREE.PointLight(0xff6a00, 0, 4);
+    this.light.position.set(0, 0, 0.5);
+    this.group.add(this.light);
+  }
+
+  setLayout([x, y, z, rotY]){
+    this.group.position.set(x, y, z);
+    this.group.rotation.y = rotY;
+  }
+
+  setSelected(v){
+    this.selected = v;
+    this.mat.uniforms.uSelected.value = v ? 1.0 : 0.0;
+    this.frame.material.emissiveIntensity = v ? 3.0 : 0.5;
+    this.frame.material.emissive.set(v ? 0x993300 : 0x1a0800);
+    this.light.intensity = v ? 2.5 : 0.0;
+  }
+
+  loadVideo(url){
+    this._stopVideo();
+    this.videoUrl = url;
+    this._thumbPushed = false;
+    logEv('VIDEO LOADED -> P'+(this.index+1));
+    // Immediately create video element and show first frame — no play needed.
+    const el = createPaneVideoEl(url);
+    document.getElementById('vidPool').appendChild(el);
+    attachVideoAudioToContext(el);
+    el.load();
+    el.addEventListener('loadedmetadata', () => {
+      const vw = el.videoWidth  || 1920;
+      const vh = el.videoHeight || 1080;
+      const aspect = vw / vh;
+      const newW = Math.min(PANE_W, PANE_H * aspect);
+      const newH = newW / aspect;
+      this.mesh.geometry.dispose();
+      this.mesh.geometry = new THREE.PlaneGeometry(newW, newH);
+      if(this.halo){
+        this.halo.geometry.dispose();
+        this.halo.geometry = new THREE.PlaneGeometry(newW * (1 + 2*this._haloFrac), newH * (1 + 2*this._haloFrac));
+      }
+
+      this.frame.geometry.dispose();
+      this.frame.geometry = new THREE.BoxGeometry(newW+0.025, newH+0.025, 0.012);
+      this.mat.uniforms.uAspect.value = aspect;
+      if(this.index === selectedPane){
+        const focus = solveFocusForPane(this.index, {fill:0.82, minFov:24, maxFov:70});
+        if(focus){
+          tweenRigTo({toPos:focus.camPos, toQuat:focus.camQuat, toFov:focus.fov, durSec:0.35, shotName:'refit', lockBypass:true});
+        }
+      }
+    }, {once:true});
+    el.addEventListener('canplay', () => {
+      // Seek to frame 0 so thumbnail shows without playing
+      el.currentTime = 0;
+      const tex = new THREE.VideoTexture(el);
+      tex.minFilter = THREE.LinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      tex.generateMipmaps = false;
+      // Force one frame upload so poster shows immediately
+      tex.needsUpdate = true;
+      this.videoEl  = el;
+      this.videoTex = tex;
+      this.mat.uniforms.uTex.value    = tex;
+      this.mat.uniforms.uHasTex.value = 1.0;
+      updatePaneNavUI();
+      logEv('P'+(this.index+1)+' READY');
+    }, {once:true});
+  }
+
+  playOnce(){
+    if(this.playing) return Promise.resolve();
+    if(!this.videoUrl){ logEv('NO VIDEO ON P'+(this.index+1)); return Promise.resolve(); }
+    const onEnded = () => {
+      this.playing = false;
+      this.mat.uniforms.uPlaying.value = 0.0;
+      this._endedHandler = null;
+      updatePaneNavUI();
+      logEv('P'+(this.index+1)+' ENDED - FROZEN');
+    };
+
+    // If video element already exists (from loadVideo or previous play), reuse it
+    if(this.videoEl && this.videoTex){
+      return new Promise((resolve) => {
+        if(this._endedHandler){
+          this.videoEl.removeEventListener('ended', this._endedHandler);
+          this._endedHandler = null;
+        }
+        this._endedHandler = () => { onEnded(); resolve(); };
+        this.videoEl.addEventListener('ended', this._endedHandler, {once:true});
+        this.videoEl.currentTime = 0;
+        this.videoEl.muted = false;
+        this.videoEl.volume = 1.0;
+        const pp = this.videoEl.play();
+        this.playing = true;
+        this.mat.uniforms.uPlaying.value = 1.0;
+        updatePaneNavUI();
+        logEv('PLAYING P'+(this.index+1));
+        if(pp && pp.catch) pp.catch((err) => {
+          this.playing = false;
+          this.mat.uniforms.uPlaying.value = 0.0;
+          if(this._endedHandler){
+            this.videoEl.removeEventListener('ended', this._endedHandler);
+            this._endedHandler = null;
+          }
+          updatePaneNavUI();
+          logEv('PLAY FAIL P'+(this.index+1)+' '+(err && err.name ? err.name : 'Error'));
+          this.playing = false;
+          resolve();
+        });
+      });
+    }
+    return new Promise((resolve) => {
+      this.videoEl = createPaneVideoEl(this.videoUrl);
+      document.getElementById('vidPool').appendChild(this.videoEl);
+      attachVideoAudioToContext(this.videoEl);
+      this.videoEl.load();
+      this.videoEl.addEventListener('loadedmetadata', () => {
+        // Resize mesh to match actual video aspect ratio
+        const vw = this.videoEl.videoWidth  || 1920;
+        const vh = this.videoEl.videoHeight || 1080;
+        // Clamp to max 1.77 wide or 1.0 tall
+        const aspect = vw / vh;
+        const newW = Math.min(PANE_W, PANE_H * aspect);
+        const newH = newW / aspect;
+        // Rebuild geometry in-place
+        this.mesh.geometry.dispose();
+        this.mesh.geometry = new THREE.PlaneGeometry(newW, newH);
+        this.frame.geometry.dispose();
+        this.frame.geometry = new THREE.BoxGeometry(newW+0.025, newH+0.025, 0.012);
+        this.mat.uniforms.uAspect.value = aspect;
+        logEv('P'+(this.index+1)+' '+vw+'x'+vh);
+      }, {once:true});
+      this.videoEl.addEventListener('canplay', () => {
+        this.videoTex = new THREE.VideoTexture(this.videoEl);
+        this.videoTex.minFilter = THREE.LinearFilter;
+        this.videoTex.magFilter = THREE.LinearFilter;
+        this.videoTex.generateMipmaps = false;
+        this.mat.uniforms.uTex.value = this.videoTex;
+        this.mat.uniforms.uHasTex.value = 1.0;
+        if(this._endedHandler){
+          this.videoEl.removeEventListener('ended', this._endedHandler);
+          this._endedHandler = null;
+        }
+        this._endedHandler = () => { onEnded(); resolve(); };
+        this.videoEl.addEventListener('ended', this._endedHandler, {once:true});
+        this.videoEl.muted = false;
+        this.videoEl.volume = 1.0;
+        const pp = this.videoEl.play();
+        this.playing = true;
+        this.mat.uniforms.uPlaying.value = 1.0;
+        updatePaneNavUI();
+        logEv('PLAYING P'+(this.index+1));
+        if(pp && pp.catch) pp.catch((err) => {
+          this.playing = false;
+          this.mat.uniforms.uPlaying.value = 0.0;
+          if(this._endedHandler){
+            this.videoEl.removeEventListener('ended', this._endedHandler);
+            this._endedHandler = null;
+          }
+          updatePaneNavUI();
+          logEv('PLAY FAIL P'+(this.index+1)+' '+(err && err.name ? err.name : 'Error'));
+          resolve();
+        });
+      }, {once:true});
+    });
+  }
+
+  _stopVideo(){
+    this.playing = false;
+    this.mat.uniforms.uPlaying.value = 0.0;
+    if(this.videoEl){
+      if(this._endedHandler){
+        this.videoEl.removeEventListener('ended', this._endedHandler);
+        this._endedHandler = null;
+      }
+      this.videoEl.pause();
+      this.videoEl.src='';
+      this.videoEl.load();
+      if(this.videoEl.parentNode){
+        this.videoEl.parentNode.removeChild(this.videoEl);
+      }
+    }
+    if(this.videoTex){ this.videoTex.dispose(); this.videoTex=null; }
+    this.videoEl = null;
+    this.mat.uniforms.uTex.value = null;
+    this.mat.uniforms.uHasTex.value = 0.0;
+    updatePaneNavUI();
+  }
+
+  update(t, bass, beat){
+    this.mat.uniforms.uTime.value  = t;
+    this.mat.uniforms.uBass.value  = bass;
+    this.mat.uniforms.uBeat.value  = beat;
+    if(this.haloMat){ this.haloMat.uniforms.uTime.value=t; this.haloMat.uniforms.uBass.value=bass; this.haloMat.uniforms.uBeat.value=beat; }
+    if(this.videoTex && this.videoEl){
+      // Push frame when playing, or once on first load/seek (readyState 4 = HAVE_ENOUGH_DATA)
+      if(this.playing && !this.videoEl.paused && !this.videoEl.ended){
+        this.videoTex.needsUpdate = true;
+      } else if(this.videoEl.readyState >= 2 && !this._thumbPushed){
+        // Push the thumbnail frame once when video is loaded but not yet played
+        this.videoTex.needsUpdate = true;
+        this._thumbPushed = true;
+      }
+    }
+  }
+}
+
+
+function buildPanes(mode){
+  // Save video state per index before destroying meshes
+  const savedState = panes.map(p => ({
+    videoUrl: p.videoUrl,
+    videoEl:  p.videoEl,
+    videoTex: p.videoTex,
+    playing:  p.playing,
+  }));
+  // Detach video elements from old panes without destroying them
+  panes.forEach(p => {
+    p.videoEl  = null; // prevent _stopVideo from killing the el
+    p.videoTex = null;
+    scene.remove(p.group);
+  });
+  const aspect = camera.aspect || (innerWidth/innerHeight);
+  const panoScale = mode==='panoramic' ? Math.max(0.55, Math.min(1.0, aspect/1.0)) : 1.0;
+  panes = LAYOUTS[mode].map((pos, i) => {
+    const panePos = mode==='panoramic' ? [pos[0]*panoScale, pos[1], pos[2], pos[3]] : pos;
+    return new Pane(i, panePos);
+  });
+  currentMode = mode;
+  ensureWorld();
+  // Restore video state into new pane objects
+  panes.forEach((p, i) => {
+    const s = savedState[i];
+    if(!s) return;
+    p.videoUrl = s.videoUrl;
+    if(s.videoEl && s.videoTex){
+      p.videoEl  = s.videoEl;
+      p.videoTex = s.videoTex;
+      p.playing  = s.playing;
+      p._thumbPushed = false; // force thumbnail re-render on new layout
+      p.mat.uniforms.uTex.value    = s.videoTex;
+      p.mat.uniforms.uHasTex.value = 1.0;
+      p.mat.uniforms.uPlaying.value = s.playing ? 1.0 : 0.0;
+      // Restore geometry to match video aspect
+      const vw = s.videoEl.videoWidth  || 1920;
+      const vh = s.videoEl.videoHeight || 1080;
+      const aspect = vw / vh;
+      const newW = Math.min(PANE_W, PANE_H * aspect);
+      const newH = newW / aspect;
+      p.mesh.geometry.dispose();
+      p.mesh.geometry = new THREE.PlaneGeometry(newW, newH);
+      p.frame.geometry.dispose();
+      p.frame.geometry = new THREE.BoxGeometry(newW+0.025, newH+0.025, 0.012);
+      p.mat.uniforms.uAspect.value = aspect;
+    }
+  });
+  buildPaneNavUI();
+  updatePaneNavUI();
+}
+buildPanes(currentMode);
+
+// ═══════════════════════════════════════════════════════════════
+//  SHOT SOLVER
+// ═══════════════════════════════════════════════════════════════
+const SHOTS = {
+  approach: {dolly:2.4, yaw:0.00, pitch:-0.04, fov:56},
+  tight:    {dolly:1.3, yaw:0.00, pitch:-0.02, fov:50},
+  angle:    {dolly:2.1, yaw:0.28, pitch:-0.04, fov:56},
+  low:      {dolly:2.0, yaw:0.08, pitch: 0.12, fov:58},
+  orbit:    {dolly:2.2, yaw:0.00, pitch:-0.03, fov:55},
+  overview: {dolly:0.0, yaw:0.00, pitch:0.00,  fov:58, absolute:true,
+             pos: new THREE.Vector3(0,0.2,6), lookAt: new THREE.Vector3(0,0,-3)},
+  overviewPano: {dolly:0.0, yaw:0.00, pitch:0.00, fov:66, absolute:true,
+             pos: new THREE.Vector3(0,0.15,8.5), lookAt: new THREE.Vector3(0,0,-5)},
+};
+
+function solveShot(paneObj, shot){
+  if(shot.absolute){
+    const m = new THREE.Matrix4().lookAt(shot.pos, shot.lookAt, new THREE.Vector3(0,1,0));
+    const q = new THREE.Quaternion().setFromRotationMatrix(m);
+    return {camPos: shot.pos.clone(), camQuat: q, fov: shot.fov};
+  }
+  // Decompose pane world transform
+  const panePos = new THREE.Vector3();
+  const paneQuat = new THREE.Quaternion();
+  const paneScale = new THREE.Vector3();
+  paneObj.matrixWorld.decompose(panePos, paneQuat, paneScale);
+
+  const forward = new THREE.Vector3(0,0,1).applyQuaternion(paneQuat).normalize();
+  const right   = new THREE.Vector3(1,0,0).applyQuaternion(paneQuat).normalize();
+  const up      = new THREE.Vector3(0,1,0).applyQuaternion(paneQuat).normalize();
+
+  let dir = forward.clone();
+  dir.applyAxisAngle(up,    shot.yaw);
+  dir.applyAxisAngle(right, shot.pitch);
+  dir.normalize();
+
+  const camPos  = panePos.clone().add(dir.clone().multiplyScalar(shot.dolly));
+  const lookAt  = panePos.clone();
+  const mat4    = new THREE.Matrix4().lookAt(camPos, lookAt, new THREE.Vector3(0,1,0));
+  const camQuat = new THREE.Quaternion().setFromRotationMatrix(mat4);
+
+  return {camPos, camQuat, fov: shot.fov};
+}
+
+function ensureWorld(){
+  // Keep pane/group world transforms current before solving camera shots.
+  scene.updateMatrixWorld(true);
+}
+
+const clampVal = (v, a, b) => Math.max(a, Math.min(b, v));
+
+function paneContentDims(pane){
+  const planeW = PANE_W;
+  const planeH = PANE_H;
+  const planeAspect = planeW / planeH;
+  let srcAspect = planeAspect;
+  const v = pane && pane.videoEl;
+  if(v && v.videoWidth && v.videoHeight){
+    srcAspect = v.videoWidth / v.videoHeight;
+  }
+  let contentW, contentH;
+  if(srcAspect <= planeAspect){
+    contentH = planeH;
+    contentW = planeH * srcAspect;
+  } else {
+    contentW = planeW;
+    contentH = planeW / srcAspect;
+  }
+  return {contentW, contentH, srcAspect};
+}
+
+function computeFitFovDeg({contentW, contentH, distance, fill=0.8, aspect=camera.aspect}){
+  const safeDist = Math.max(distance, 0.01);
+  const fovH = 2 * Math.atan((contentH / (2 * fill)) / safeDist);
+  const fovW = 2 * Math.atan((contentW / (2 * fill * aspect)) / safeDist);
+  return Math.max(fovH, fovW) * 180 / Math.PI;
+}
+
+function requiredViewHeightForWidth(contentW, fill, aspect){
+  const safeAspect = Math.max(aspect, 0.1);
+  return contentW / (Math.max(fill, 0.01) * safeAspect);
+}
+
+function distanceForViewHeight(viewH, fovRad){
+  return viewH / (2 * Math.tan(fovRad / 2));
+}
+
+function solvePlayFrame(i, {
+  fill = PLAY_TARGET_FILL,
+  fovBaseDeg = PLAY_FOV_BASE,
+  fovMinDeg = PLAY_FOV_MIN,
+  fovMaxDeg = PLAY_FOV_MAX,
+  dollyMin = PLAY_DOLLY_MIN,
+  dollyMax = PLAY_DOLLY_MAX,
+  baseShot = SHOTS.tight,
+} = {}){
+  const pane = panes[i];
+  if(!pane) return null;
+
+  ensureWorld();
+  const base = solveShot(pane.group, baseShot);
+  const camQuat = base.camQuat.clone();
+
+  const panePos = new THREE.Vector3();
+  pane.mesh.getWorldPosition(panePos);
+  const dims = paneContentDims(pane);
+  const aspect = camera.aspect || (innerWidth / innerHeight);
+
+  const fovDeg = clampVal(fovBaseDeg, fovMinDeg, fovMaxDeg);
+  const fovRad = fovDeg * Math.PI / 180;
+
+  const viewHfromH = dims.contentH / Math.max(fill, 0.01);
+  const viewHfromW = requiredViewHeightForWidth(dims.contentW, fill, aspect);
+  let viewH;
+  switch(PLAY_FIT_MODE){
+    case 'height':
+      viewH = viewHfromH;
+      break;
+    case 'width':
+      viewH = viewHfromW;
+      break;
+    case 'cover':
+      viewH = Math.min(viewHfromH, viewHfromW);
+      break;
+    case 'contain':
+    default:
+      viewH = Math.max(viewHfromH, viewHfromW);
+      break;
+  }
+
+  let dist = distanceForViewHeight(viewH, fovRad);
+  dist = clampVal(dist, dollyMin, dollyMax);
+
+  const forward = new THREE.Vector3(0,0,-1).applyQuaternion(camQuat).normalize();
+  const camPos = panePos.clone().sub(forward.multiplyScalar(dist));
+
+  return {camPos, camQuat, fov: fovDeg};
+}
+
+function solveFocusForPane(i, {fill=0.8, minFov=26, maxFov=70} = {}){
+  const pane = panes[i];
+  if(!pane) return null;
+  ensureWorld();
+  const base = solveShot(pane.group, SHOTS.tight);
+  const panePos = new THREE.Vector3();
+  pane.mesh.getWorldPosition(panePos);
+  const distance = base.camPos.distanceTo(panePos);
+  const dims = paneContentDims(pane);
+  const fov = clampVal(computeFitFovDeg({contentW:dims.contentW, contentH:dims.contentH, distance, fill, aspect:camera.aspect}), minFov, maxFov);
+  return {camPos: base.camPos, camQuat: base.camQuat, fov};
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  CAMERA TWEEN
+// ═══════════════════════════════════════════════════════════════
+let tweenActive = false;
+let tweenPromiseResolve = null;
+
+// Prevent unintended camera requests from fighting pane focus/play camera intent.
+let cameraLock = {active:false,paneIndex:-1,reason:'',until:0};
+
+function lockCameraToPane(i, reason=''){
+  cameraLock.active = true;
+  cameraLock.paneIndex = i;
+  cameraLock.reason = reason;
+  cameraLock.until = Infinity;
+}
+
+function lockCameraFor(ms, i, reason=''){
+  cameraLock.active = true;
+  cameraLock.paneIndex = i;
+  cameraLock.reason = reason;
+  cameraLock.until = performance.now() + Math.max(0, ms);
+}
+
+function unlockCamera(reason=''){
+  cameraLock.active = false;
+  cameraLock.paneIndex = -1;
+  cameraLock.reason = reason;
+  cameraLock.until = 0;
+}
+
+function easeInOut(t){ return t<.5 ? 2*t*t : 1-Math.pow(-2*t+2,2)/2; }
+function easeOut(t){ return 1-Math.pow(1-t,3); }
+
+function tweenRigTo({toPos, toQuat, toFov, durSec=0.9, shotName='', lockBypass=false}){
+  if(cameraLock.active && !lockBypass){
+    if(cameraLock.until !== Infinity && performance.now() > cameraLock.until){
+      unlockCamera('timeout');
+    } else {
+      return Promise.resolve();
+    }
+  }
+  tweenActive = true;
+  if(tweenPromiseResolve) tweenPromiseResolve();
+
+  const t0   = performance.now();
+  const p0   = rig.position.clone();
+  const q0   = rig.quaternion.clone();
+  const f0   = camera.fov;
+
+  // Update shot tag
+  document.getElementById('shotTag').textContent = '// '+shotName.toUpperCase();
+
+  // Flash on camera move
+  const fl = document.getElementById('flash');
+  fl.style.opacity = '1';
+  setTimeout(()=>fl.style.opacity='0', 80);
+
+  return new Promise(resolve => {
+    tweenPromiseResolve = resolve;
+    function step(now){
+      const u = Math.min(1,(now-t0)/(durSec*1000));
+      const e = easeInOut(u);
+
+      rig.position.lerpVectors(p0, toPos, e);
+      rig.quaternion.slerpQuaternions(q0, toQuat, e);
+      camera.fov = f0+(toFov-f0)*e;
+      camera.updateProjectionMatrix();
+
+      // Streak intensity during move (drives post)
+      motionBlurStr = (1-e)*0.4;
+
+      if(u>=1){ tweenActive=false; motionBlurStr=0; resolve(); return; }
+      requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SELECTION + FLY
+// ═══════════════════════════════════════════════════════════════
+selectedPane = -1;
+let armed = false; // set to true after fly completes
+let playInFlight = false;
+let autoAdvancing = false;
+let autoTimer = null;
+
+async function flyToPane(i, shotName='approach', dur=0.85, lockBypass=false){
+  if(i<0||i>=NUM_PANES) return;
+  ensureWorld();
+  const shot = SHOTS[shotName] || SHOTS.approach;
+  const sol  = solveShot(panes[i].group, shot);
+  await tweenRigTo({toPos:sol.camPos, toQuat:sol.camQuat, toFov:sol.fov, durSec:dur, shotName, lockBypass});
+}
+
+async function setSelected(i, {fromAuto=false} = {}){
+  if(bootOverviewTimer){
+    clearTimeout(bootOverviewTimer);
+    bootOverviewTimer = null;
+  }
+  if(!fromAuto && autoAdvancing){
+    autoAdvancing = false;
+    document.getElementById('bAuto').classList.remove('on');
+    logEv('AUTO OFF');
+  }
+  if(autoTimer){
+    clearTimeout(autoTimer);
+    autoTimer = null;
+  }
+
+  // Deselect old
+  if(selectedPane>=0) panes[selectedPane].setSelected(false);
+  selectedPane = i;
+  armed = false;
+
+  panes.forEach((p,idx)=>p.setSelected(idx===i));
+  document.getElementById('playBtn').classList.add('hidden');
+  updateStat();
+
+  lockCameraFor(1300, i, 'focus');
+  ensureWorld();
+  const focus = solveFocusForPane(i, {fill:0.8, minFov:26, maxFov:70});
+  if(focus){
+    await tweenRigTo({toPos:focus.camPos, toQuat:focus.camQuat, toFov:focus.fov, durSec:0.55, shotName:'focus', lockBypass:true});
+  } else {
+    await flyToPane(i, 'tight', 0.55, true);
+  }
+  lockCameraToPane(i, 'hold');
+  armed = true;
+
+  // Show play button if video available
+  if(panes[i].videoUrl){
+    document.getElementById('playBtn').classList.remove('hidden');
+    document.getElementById('paneInfo').textContent = 'PANE '+(i+1)+' — READY';
+  } else {
+    document.getElementById('paneInfo').textContent = 'PANE '+(i+1)+' — NO VIDEO';
+  }
+
+  updatePaneNavUI();
+  logEv('SEL P'+(i+1));
+}
+
+async function playSelected({fromAuto=false} = {}){
+  if(!armed||selectedPane<0||playInFlight) return;
+  playInFlight = true;
+  const i = selectedPane;
+  try {
+    if(bootOverviewTimer){
+      clearTimeout(bootOverviewTimer);
+      bootOverviewTimer = null;
+    }
+    if(!fromAuto && autoAdvancing){
+      autoAdvancing = false;
+      document.getElementById('bAuto').classList.remove('on');
+      logEv('AUTO OFF');
+    }
+    initACtx();
+    if(actx && actx.state !== 'running'){
+      try { await actx.resume(); } catch(_e){}
+    }
+    lockCameraToPane(i, 'playing');
+    document.getElementById('playBtn').classList.add('hidden');
+    const playRun = panes[i].playOnce();
+    if(panes[i] && panes[i].videoEl){
+      attachVideoAudioToContext(panes[i].videoEl);
+      document.getElementById('sdot').className = 's-live';
+      document.getElementById('slbl').textContent = 'VIDEO';
+    }
+    // Push in for play so selected pane fills most of the viewport.
+    ensureWorld();
+    const playFrame = solvePlayFrame(i, {fill:PLAY_TARGET_FILL});
+    if(playFrame){
+      await tweenRigTo({toPos:playFrame.camPos, toQuat:playFrame.camQuat, toFov:playFrame.fov, durSec:0.35, shotName:'play-full', lockBypass:true});
+    } else {
+      await flyToPane(i, 'tight', 0.35, true);
+    }
+    await playRun;
+    if(panes[i].videoUrl){
+      document.getElementById('playBtn').classList.remove('hidden');
+    }
+  } finally {
+    playInFlight = false;
+  }
+}
+
+async function goOverview(){
+  unlockCamera('overview');
+  if(selectedPane>=0){panes[selectedPane].setSelected(false);selectedPane=-1;}
+  document.getElementById('playBtn').classList.add('hidden');
+  document.getElementById('paneInfo').textContent='SELECT A PANE';
+  armed=false;
+  const shot=currentMode==='panoramic' ? SHOTS.overviewPano : SHOTS.overview;
+  const m=new THREE.Matrix4().lookAt(shot.pos, shot.lookAt, new THREE.Vector3(0,1,0));
+  const q=new THREE.Quaternion().setFromRotationMatrix(m);
+  await tweenRigTo({toPos:shot.pos, toQuat:q, toFov:shot.fov, durSec:1.1, shotName:'overview', lockBypass:true});
+  updateStat();
+}
+
+// Auto advance
+let autoIdx = 0;
+let autoQueue = [];
+let autoRunId = 0;
+
+function buildAutoQueue(){
+  return panes
+    .map((pane, idx) => pane && pane.videoUrl ? idx : -1)
+    .filter(idx => idx >= 0);
+}
+
+async function autoAdvanceStep(runId){
+  while(autoAdvancing && runId === autoRunId && autoIdx < autoQueue.length){
+    const next = autoQueue[autoIdx++];
+    await setSelected(next, {fromAuto:true});
+    await playSelected({fromAuto:true});
+  }
+  if(runId !== autoRunId) return;
+  if(autoAdvancing){
+    autoAdvancing = false;
+    autoQueue = [];
+    autoIdx = 0;
+    document.getElementById('bAuto').classList.remove('on');
+    logEv('AUTO COMPLETE');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  ORBIT MODE (for "orbit" shot)
+// ═══════════════════════════════════════════════════════════════
+let orbitActive = false;
+let orbitAngle = 0;
+let orbitTarget = null;
+
+function startOrbit(i){
+  orbitActive = true;
+  orbitTarget = i;
+  orbitAngle = 0;
+}
+function stopOrbit(){ orbitActive=false; orbitTarget=null; }
+
+// ═══════════════════════════════════════════════════════════════
+//  WEBAUDIO
+// ═══════════════════════════════════════════════════════════════
+let actx,analyser,srcNode,videoAudioGain,fftData=new Uint8Array(256);
+const videoAudioNodes = new WeakMap();
+let bass=0,rms=0,beat=0,bpmVal=0;
+let beatHist=new Array(43).fill(0),beatPtr=0,lastBeat=0,bpmBuf=[];
+
+function initACtx(){
+  if(!actx){
+    actx=new(window.AudioContext||window.webkitAudioContext)();
+    analyser=actx.createAnalyser();
+    analyser.fftSize=512;analyser.smoothingTimeConstant=.82;
+    analyser.connect(actx.destination);
+    videoAudioGain = actx.createGain();
+    videoAudioGain.gain.value = 1.0;
+    videoAudioGain.connect(actx.destination);
+    panes.forEach(p=>{ if(p && p.videoEl) attachVideoAudioToContext(p.videoEl); });
+  }
+}
+function killSrc(){if(srcNode){try{srcNode.disconnect()}catch(e){}srcNode=null;}}
+function attachVideoAudioToContext(videoEl){
+  if(!actx || !videoAudioGain || !videoEl) return;
+  if(videoAudioNodes.has(videoEl)) return;
+  try {
+    const src = actx.createMediaElementSource(videoEl);
+    const gain = actx.createGain();
+    gain.gain.value = 1.0;
+    src.connect(gain);
+    gain.connect(videoAudioGain);
+    videoAudioNodes.set(videoEl, {src, gain});
+  } catch(err){
+    logEv('VIDEO AUDIO ERR '+(err && err.name ? err.name : 'Error'));
+  }
+}
+async function startMic(){
+  initACtx();killSrc();
+  const s=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
+  srcNode=actx.createMediaStreamSource(s);srcNode.connect(analyser);
+  document.getElementById('sdot').className='s-live';
+  document.getElementById('slbl').textContent='MIC';
+  document.getElementById('bMic').classList.add('on');
+}
+async function startTab(){
+  initACtx();killSrc();
+  const s=await navigator.mediaDevices.getDisplayMedia({audio:true,video:true});
+  srcNode=actx.createMediaStreamSource(s);srcNode.connect(analyser);
+  document.getElementById('sdot').className='s-live';
+  document.getElementById('slbl').textContent='TAB';
+  document.getElementById('bTab').classList.add('on');
+}
+
+function analyzeAudio(){
+  if(!analyser)return;
+  analyser.getByteFrequencyData(fftData);
+  let bS=0,rS=0;
+  for(let i=0;i<256;i++){
+    const v=fftData[i]/255;
+    if(i<=5)bS+=v;
+    rS+=v*v;
+  }
+  bass=Math.min(1,bS/5);
+  rms=Math.min(1,Math.sqrt(rS/256));
+  beatHist[beatPtr%43]=bS/5;beatPtr++;
+  const avg=beatHist.reduce((a,b)=>a+b,0)/43,now=performance.now();
+  if(bass>avg*1.38&&bass>.12&&now-lastBeat>180){
+    beat=1;
+    const dt=now-lastBeat;
+    if(dt<2000){bpmBuf.push(60000/dt);if(bpmBuf.length>8)bpmBuf.shift();
+      bpmVal=Math.round(bpmBuf.reduce((a,b)=>a+b,0)/bpmBuf.length);}
+    lastBeat=now;
+    // Beat flash
+    const fl=document.getElementById('flash');
+    fl.style.opacity=(.06+bass*.08).toFixed(2);
+    setTimeout(()=>fl.style.opacity='0',55);
+  }
+  beat=Math.max(0,beat-.04);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  POST PROCESSING (CPU-side via 2D overlay canvas)
+//  We simulate grain + vignette + streak in a 2D canvas overlay
+//  layered over the WebGL canvas via mix-blend-mode
+// ═══════════════════════════════════════════════════════════════
+const postCanvas = document.createElement('canvas');
+postCanvas.style.cssText='position:fixed;inset:0;pointer-events:none;z-index:145;mix-blend-mode:screen;opacity:.55';
+document.body.appendChild(postCanvas);
+const pctx = postCanvas.getContext('2d');
+
+let motionBlurStr = 0;
+
+function drawPost(t){
+  const W=innerWidth, H=innerHeight;
+  if(postCanvas.width!==W||postCanvas.height!==H){postCanvas.width=W;postCanvas.height=H;}
+  pctx.clearRect(0,0,W,H);
+
+  // Vignette
+  const vg=pctx.createRadialGradient(W/2,H/2,H*.2,W/2,H/2,H*.75);
+  vg.addColorStop(0,'transparent');
+  vg.addColorStop(1,`rgba(0,0,0,${.45+bass*.12})`);
+  pctx.fillStyle=vg;pctx.fillRect(0,0,W,H);
+
+  // Grain (sparse)
+  const grainStr = REACT_ON ? (.015+rms*.02) : .015;
+  pctx.fillStyle=`rgba(200,210,255,${grainStr})`;
+  for(let i=0;i<700;i++){
+    pctx.fillRect(Math.random()*W|0, Math.random()*H|0, 1, 1);
+  }
+
+  // Motion streak (during camera move)
+  if(motionBlurStr>.01){
+    const stk=pctx.createRadialGradient(W/2,H/2,0,W/2,H/2,W*.6);
+    stk.addColorStop(0,`rgba(255,120,20,${motionBlurStr*.12})`);
+    stk.addColorStop(1,'transparent');
+    pctx.fillStyle=stk;pctx.fillRect(0,0,W,H);
+
+    // Speed lines
+    pctx.strokeStyle=`rgba(255,140,30,${motionBlurStr*.06})`;
+    pctx.lineWidth=.5;
+    for(let i=0;i<18;i++){
+      const ang=Math.random()*Math.PI*2;
+      const r0=W*.05,r1=W*.5*(1+Math.random()*.3);
+      pctx.beginPath();
+      pctx.moveTo(W/2+Math.cos(ang)*r0,H/2+Math.sin(ang)*r0);
+      pctx.lineTo(W/2+Math.cos(ang)*r1,H/2+Math.sin(ang)*r1);
+      pctx.stroke();
+    }
+  }
+
+  // Beat flash (neon pulse on edge)
+  if(REACT_ON && beat>.3){
+    const bf=pctx.createLinearGradient(0,0,0,H);
+    bf.addColorStop(0,`rgba(255,100,0,${beat*.06})`);
+    bf.addColorStop(.5,'transparent');
+    bf.addColorStop(1,`rgba(255,100,0,${beat*.06})`);
+    pctx.fillStyle=bf;pctx.fillRect(0,0,W,H);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SCENE AUDIO REACTIVITY
+// ═══════════════════════════════════════════════════════════════
+function applyAudioToScene(t){
+  if(!REACT_ON) return;
+  // Key light pulses with bass
+  keyLight.intensity = bass*3.5+rms*.8;
+  keyLight.position.set(
+    Math.sin(t*.3)*.8,
+    1.5+Math.sin(t*.2)*.4,
+    3+bass*1.5
+  );
+  // Particles drift
+  particles.mat.opacity = .12+rms*.1;
+  // Tunnel floor strip
+  tunnel.strip.material.opacity = .12+bass*.28+beat*.15;
+  // Micro camera shake on beat
+  if(beat>.5 && !tweenActive){
+    camShakeX += (Math.random()-.5)*beat*.008;
+    camShakeY += (Math.random()-.5)*beat*.006;
+  }
+  // Decay shake without altering rig anchor (prevents camera drift).
+  camShakeX *= .92;
+  camShakeY *= .92;
+  shake.position.x = camShakeX;
+  shake.position.y = camShakeY;
+}
+
+// Orbit update
+function updateOrbit(t){
+  if(!orbitActive||orbitTarget===null) return;
+  orbitAngle += .008;
+  const i=orbitTarget;
+  const shot={dolly:2.2, yaw:orbitAngle, pitch:-0.05, fov:55};
+  ensureWorld();
+  const sol=solveShot(panes[i].group, shot);
+  rig.position.copy(sol.camPos);
+  rig.quaternion.copy(sol.camQuat);
+  camera.fov=sol.fov;
+  camera.updateProjectionMatrix();
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  UI UPDATES
+// ═══════════════════════════════════════════════════════════════
+function buildPaneNavUI(){
+  const nav=document.getElementById('paneNav');
+  nav.innerHTML='';
+  panes.forEach((p,i)=>{
+    const b=document.createElement('button');
+    b.className='pn-btn';b.dataset.i=i;b.textContent='P'+(i+1);
+    b.addEventListener('click',()=>{
+      if(i===selectedPane && panes[i] && panes[i].videoUrl && !panes[i].playing){
+        playSelected();
+        return;
+      }
+      setSelected(i);
+    });
+    nav.appendChild(b);
+  });
+}
+function updatePaneNavUI(){
+  document.querySelectorAll('.pn-btn').forEach((b,i)=>{
+    b.classList.toggle('on',i===selectedPane);
+    b.classList.toggle('playing',panes[i]&&panes[i].playing);
+    b.style.opacity=panes[i]&&panes[i].videoUrl?'1':'.45';
+  });
+}
+function updateStat(){
+  document.getElementById('sPane').textContent=
+    'PANE '+(selectedPane>=0?selectedPane+1:'-')+' / '+NUM_PANES;
+  if(bpmVal)document.getElementById('sbpm').textContent=bpmVal+' BPM';
+  const bd=document.getElementById('bdot');
+  bd.style.background=beat>.3?`rgba(255,106,0,${beat})`:'transparent';
+  bd.style.boxShadow=beat>.3?`0 0 ${beat*14}px rgba(255,106,0,.8)`:'none';
+  bd.style.borderColor=beat>.3?'var(--neon)':'rgba(255,106,0,.22)';
+  const sm=(id,vid,v)=>{
+    const el=document.getElementById(id);
+    const vel=document.getElementById(vid);
+    if(el)el.style.width=(v*100)+'%';
+    if(vel)vel.textContent=v.toFixed(2);
+  };
+  sm('mB','vB',bass);sm('mR','vR',rms);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  EVENT LOG
+// ═══════════════════════════════════════════════════════════════
+function logEv(msg){
+  const el=document.getElementById('evlog');
+  const d=document.createElement('div');
+  d.className='ev-line';d.textContent='> '+msg;
+  el.appendChild(d);
+  setTimeout(()=>d.remove(),2600);
+  if(window.FLUXGALLERY)window.FLUXGALLERY.lastEvent={msg,ts:Date.now()};
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  RENDER LOOP
+// ═══════════════════════════════════════════════════════════════
+let lastFT=performance.now(),fCnt=0;
+
+function render(ts){
+  requestAnimationFrame(render);
+  fCnt++;
+  if(ts-lastFT>500){
+    document.getElementById('sfps').textContent=Math.round(fCnt*1000/(ts-lastFT))+' FPS';
+    fCnt=0;lastFT=ts;
+  }
+  const t=ts*.001;
+  analyzeAudio();
+  applyAudioToScene(t);
+  updateOrbit(t);
+
+  // Update pane shaders
+  panes.forEach(p=>p.update(t, bass, beat));
+
+  // Tunnel ambient move
+  tunnel.mesh.position.y = Math.sin(t*.05)*.04;
+
+  renderer.render(scene, camera);
+  drawPost(t);
+  updateStat();
+}
+requestAnimationFrame(render);
+
+// ═══════════════════════════════════════════════════════════════
+//  EVENT WIRING
+// ═══════════════════════════════════════════════════════════════
+document.getElementById('bMic').addEventListener('click',startMic);
+document.getElementById('bTab').addEventListener('click',startTab);
+
+document.getElementById('bLoadVid').addEventListener('click',()=>document.getElementById('fVid').click());
+document.getElementById('fVid').addEventListener('change',e=>{
+  const f=e.target.files[0];if(!f)return;
+  const i=+document.getElementById('paneSelDrop').value;
+  panes[i].loadVideo(URL.createObjectURL(f));
+  document.getElementById('paneSelDrop').value=(i+1)%NUM_PANES;
+  updatePaneNavUI();
+});
+
+document.getElementById('bFly').addEventListener('click',()=>{
+  if(selectedPane<0)return;
+  const sn=document.getElementById('shotSel').value;
+  if(sn==='orbit'){startOrbit(selectedPane);}
+  else{stopOrbit();flyToPane(selectedPane,sn,0.75,true);}
+  logEv('SHOT: '+sn.toUpperCase());
+});
+
+document.getElementById('playBtn').addEventListener('click',playSelected);
+
+document.getElementById('bModeV').addEventListener('click',()=>{
+  if(currentMode==='vertical')return;
+  stopOrbit();goOverview();buildPanes('vertical');
+  document.getElementById('bModeV').classList.add('on');
+  document.getElementById('bModeP').classList.remove('on');
+  logEv('MODE: VERTICAL');
+});
+document.getElementById('bModeP').addEventListener('click',()=>{
+  if(currentMode==='panoramic')return;
+  stopOrbit();goOverview();buildPanes('panoramic');
+  document.getElementById('bModeP').classList.add('on');
+  document.getElementById('bModeV').classList.remove('on');
+  logEv('MODE: PANORAMIC');
+});
+
+document.getElementById('bAuto').addEventListener('click',function(){
+  autoAdvancing = !autoAdvancing;
+  this.classList.toggle('on', autoAdvancing);
+  if(autoAdvancing){
+    autoQueue = buildAutoQueue();
+    autoIdx = 0;
+    autoRunId += 1;
+    if(autoQueue.length === 0){
+      autoAdvancing = false;
+      this.classList.remove('on');
+      logEv('AUTO: NO VIDEOS');
+      return;
+    }
+    autoAdvanceStep(autoRunId);
+    logEv('AUTO ON');
+    return;
+  }
+  autoRunId += 1;
+  autoQueue = [];
+  autoIdx = 0;
+  if(autoTimer){
+    clearTimeout(autoTimer);
+    autoTimer = null;
+  }
+  logEv('AUTO OFF');
+});
+
+document.getElementById('bOverview').addEventListener('click',()=>{stopOrbit();goOverview();});
+
+// CURSOR
+const cur=document.getElementById('cur');
+window.addEventListener('mousemove',e=>{cur.style.left=e.clientX+'px';cur.style.top=e.clientY+'px';});
+window.addEventListener('mousedown',()=>cur.classList.add('active'));
+window.addEventListener('mouseup',  ()=>cur.classList.remove('active'));
+
+// PANE CLICK — raycaster so tapping a pane selects it (same as nav buttons)
+const raycaster = new THREE.Raycaster();
+const _mouse = new THREE.Vector2();
+function onCanvasClick(e){
+  // Get click/touch position — use changedTouches for touchend (touches[] is empty by then)
+  const rect = canvas.getBoundingClientRect();
+  const touch = e.changedTouches ? e.changedTouches[0] : null;
+  const cx = touch ? touch.clientX : e.clientX;
+  const cy = touch ? touch.clientY : e.clientY;
+  _mouse.x =  ((cx - rect.left) / rect.width)  * 2 - 1;
+  _mouse.y = -((cy - rect.top)  / rect.height) * 2 + 1;
+  raycaster.setFromCamera(_mouse, camera);
+  const meshes = panes.map(p => p.mesh);
+  const hits = raycaster.intersectObjects(meshes);
+  if(hits.length > 0){
+    const hitMesh = hits[0].object;
+    const idx = panes.findIndex(p => p.mesh === hitMesh);
+    if(idx < 0) return;
+    if(idx !== selectedPane){
+      setSelected(idx);
+      return;
+    }
+    if(panes[idx] && panes[idx].videoUrl && !panes[idx].playing){
+      playSelected();
+    }
+  }
+}
+canvas.addEventListener('click', onCanvasClick);
+canvas.addEventListener('touchend', e => { e.preventDefault(); onCanvasClick(e); }, {passive:false});
+
+// KEYBOARD
+window.addEventListener('keydown',e=>{
+  const k=e.key;
+  if(k>='1'&&k<='5'){const i=+k-1;setSelected(i);}
+  if(k==='ArrowRight'){setSelected(selectedPane<0?0:(selectedPane+1)%NUM_PANES);}
+  if(k==='ArrowLeft') {setSelected(selectedPane<=0?NUM_PANES-1:selectedPane-1);}
+  if(k===' '){e.preventDefault();playSelected();}
+  if(k==='m'||k==='M') startMic();
+  if(k==='h'||k==='H'){const hud=document.getElementById('ctrl');hud.style.display=hud.style.display==='none'?'':'none';}
+  if(k==='r'||k==='R'){stopOrbit();goOverview();}
+  if(k==='o'||k==='O'){if(selectedPane>=0)startOrbit(selectedPane);}
+});
+
+// ═══════════════════════════════════════════════════════════════
+//  WINDOW STATE BUS
+// ═══════════════════════════════════════════════════════════════
+window.FLUXGALLERY = {
+  get selected(){ return selectedPane; },
+  get playing(){ return panes.filter(p=>p.playing).map(p=>p.index); },
+  get bass(){ return bass; },
+  get rms(){ return rms; },
+  get beat(){ return beat; },
+  get bpmVal(){ return bpmVal; },
+  flyToPane, playSelected, setSelected, goOverview,
+  flyToPane,
+  loadVideoToPane(i, url){ if(panes[i])panes[i].loadVideo(url); },
+};
+
+
+// ---- External Import Listener (Explorer -> Flux.Gallery) ----
+// Supports:
+// 1) BroadcastChannel('fluxgallery::import').postMessage({type:'fluxgallery:import', urls:[...], startIndex:0})
+// 2) window.postMessage({type:'fluxgallery:import', urls:[...], startIndex:0}, window.location.origin)
+// Notes:
+// - Loads up to NUM_PANES URLs into panes, preserving existing UI "Load Video" behavior.
+// - Only accepts messages from same-origin by default for safety.
+(function(){
+  // Flux Gallery external import listener.
+  // Accepts up to 5 stream URLs and loads them into panes without breaking the built-in UI "Load video" flow.
+  //
+  // Message protocol (postMessage):
+  //   type: 'CDAPROD_FLUX_GALLERY_IMPORT'
+  //   version: 1
+  //   streams: [url1,url2,...]  (or 'urls' or 'lines' for compatibility)
+  //   replace: true|false  (default true)
+  //   startPane: 1..5      (default 1)
+  //
+  // Reply ACK:
+  //   type: 'CDAPROD_FLUX_GALLERY_ACK'
+  //   ok: true|false
+  //   received: <n>
+  //   panes: [1,2,...]
+  //
+  // Security:
+  // - By default we allow messages from the same hostname (regardless of port) + same scheme.
+  // - Override with URL params:
+  //     ?import_allow=any               -> accept any origin
+  //     ?import_allow_origin=<origin>   -> accept one exact origin (repeatable via comma)
+  //
+  const MAX_PANES = (typeof NUM_PANES !== 'undefined') ? NUM_PANES : 5;
+  const IMPORT_TYPE = 'CDAPROD_FLUX_GALLERY_IMPORT';
+  const ACK_TYPE = 'CDAPROD_FLUX_GALLERY_ACK';
+
+  function _qs(){
+    try{ return new URLSearchParams(window.location.search); }catch{ return new URLSearchParams(); }
+  }
+  const QS = _qs();
+
+  function _asUrlList(payload){
+    if (!payload) return [];
+    if (Array.isArray(payload)) return payload.map(String).map(s => s.trim()).filter(Boolean);
+    if (typeof payload === 'string') {
+      // allow "url1|url2|url3" or newline separated
+      const parts = payload.split(/\||\n/);
+      return parts.map(s => String(s).trim()).filter(Boolean);
+    }
+    if (typeof payload === 'object') {
+      // common shapes: {streams:[...]}, {urls:[...]}, {lines:[...]} or shorthands
+      const candidate =
+        payload.streams || payload.urls || payload.lines ||
+        payload.stream_url || payload.streamUrl || payload.url ||
+        payload.srcs || payload.sources || null;
+
+      return _asUrlList(candidate);
+    }
+    return [];
+  }
+
+  function _toAbs(u){
+    try{
+      if (!u) return '';
+      const s = String(u).trim();
+      if (!s) return '';
+      if (s.startsWith('http://') || s.startsWith('https://')) return s;
+      return new URL(s, window.location.origin).toString();
+    }catch{
+      return '';
+    }
+  }
+
+  function _clipMax(list, n){
+    return list.slice(0, Math.max(0, n|0));
+  }
+
+  function _parseAllowedOrigins(){
+    const mode = (QS.get('import_allow') || '').toLowerCase().trim();
+    const allowAny = (mode === 'any' || mode === 'all' || mode === '1' || mode === 'true' || QS.get('import_allow_any') === '1');
+    const raw = (QS.get('import_allow_origin') || '').trim();
+    const extra = raw ? raw.split(',').map(s => s.trim()).filter(Boolean) : [];
+    return { allowAny, exact: new Set(extra) };
+  }
+
+  const ORIGIN_POLICY = _parseAllowedOrigins();
+
+  function _sameHostSameScheme(originA, originB){
+    try{
+      const a = new URL(originA);
+      const b = new URL(originB);
+      return a.protocol === b.protocol && a.hostname === b.hostname;
+    }catch{
+      return false;
+    }
+  }
+
+  function _isAllowedOrigin(eventOrigin){
+    if (ORIGIN_POLICY.allowAny) return true;
+    if (!eventOrigin) return false;
+    if (ORIGIN_POLICY.exact.size && ORIGIN_POLICY.exact.has(eventOrigin)) return true;
+    // default: same host (ignore port), same scheme
+    return _sameHostSameScheme(eventOrigin, window.location.origin);
+  }
+
+  function _setPaneSrc(paneIndex, url){
+    // This assumes Flux Gallery has a global API from the existing UI logic.
+    // We try several known shapes to stay resilient across iterations.
+    const abs = _toAbs(url);
+    if (!abs) return false;
+
+    // Preferred: a helper that already exists in your build (from prior patches)
+    if (typeof window.setPaneSource === 'function'){
+      window.setPaneSource(paneIndex, abs);
+      return true;
+    }
+
+    // Fallbacks: attempt to locate a pane video element by data attributes / ids.
+    const i = Number(paneIndex);
+    const selectors = [
+      `[data-pane="${i}"] video`,
+      `#pane${i} video`,
+      `#video${i}`,
+      `video[data-pane="${i}"]`,
+    ];
+    for (const sel of selectors){
+      const v = document.querySelector(sel);
+      if (v && v.tagName === 'VIDEO'){
+        try{
+          v.src = abs;
+          v.load();
+          v.play?.().catch(()=>{});
+          return true;
+        }catch{}
+      }
+    }
+    return false;
+  }
+
+  function importStreams(streams, opts){
+    const urls = _clipMax(streams.map(_toAbs).filter(Boolean), MAX_PANES);
+    if (!urls.length) return { ok:false, received:0, panes:[] };
+
+    const startPane = Math.min(MAX_PANES, Math.max(1, Number(opts?.startPane || 1)));
+    const replace = (opts?.replace !== false); // default true
+    const panes = [];
+
+    // Build a list of target pane indices in order, wrapping if needed.
+    const targets = [];
+    for (let k=0; k<urls.length; k++){
+      const idx = startPane + k;
+      const pane = ((idx - 1) % MAX_PANES) + 1;
+      targets.push(pane);
+    }
+
+    // If replace=false, only fill panes that are currently empty.
+    // We consider "empty" if the video has no currentSrc/src.
+    function isPaneEmpty(i){
+      const selectors = [
+        `[data-pane="${i}"] video`,
+        `#pane${i} video`,
+        `#video${i}`,
+        `video[data-pane="${i}"]`,
+      ];
+      for (const sel of selectors){
+        const v = document.querySelector(sel);
+        if (v && v.tagName === 'VIDEO'){
+          const cur = (v.currentSrc || v.src || '').trim();
+          return !cur;
+        }
+      }
+      return true; // if we can't find it, treat as empty so caller sees something happen
+    }
+
+    for (let t=0; t<targets.length; t++){
+      const pane = targets[t];
+      if (!replace && !isPaneEmpty(pane)) continue;
+      const ok = _setPaneSrc(pane, urls[t]);
+      if (ok) panes.push(pane);
+    }
+
+    return { ok: panes.length > 0, received: urls.length, panes };
+  }
+
+  function _replyAck(event, ack){
+    try{
+      const targetOrigin = event?.origin || '*';
+      event?.source?.postMessage?.(ack, targetOrigin);
+    }catch{
+      // ignore
+    }
+  }
+
+  window.__flux_import = {
+    importStreams,
+    policy: ORIGIN_POLICY,
+  };
+
+  window.addEventListener('message', (event) => {
+    const data = event?.data;
+    if (!data || typeof data !== 'object') return;
+    if (data.type !== IMPORT_TYPE) return;
+
+    if (!_isAllowedOrigin(event.origin)){
+      _replyAck(event, { type: ACK_TYPE, ok:false, error:'origin_not_allowed', received:0, panes:[], at: new Date().toISOString() });
+      return;
+    }
+
+    try{
+      const streams = _asUrlList(data.streams || data.urls || data.lines || data);
+      const res = importStreams(streams, { replace: data.replace, startPane: data.startPane });
+      _replyAck(event, { type: ACK_TYPE, ok: !!res.ok, received: res.received, panes: res.panes, at: new Date().toISOString() });
+    }catch(err){
+      _replyAck(event, { type: ACK_TYPE, ok:false, error: String(err?.message || err || 'import_failed'), received:0, panes:[], at: new Date().toISOString() });
+    }
+  });
+})();;
+
+
+// ═══════════════════════════════════════════════════════════════
+//  INIT
+// ═══════════════════════════════════════════════════════════════
+// Pre-load videos from URL params
+PANE_URLS.forEach((url,i)=>{if(url&&panes[i])panes[i].loadVideo(url);});
+
+// Auto-start
+if(AUTO_ADV){
+  setTimeout(()=>{
+    const bAuto = document.getElementById('bAuto');
+    autoQueue = buildAutoQueue();
+    autoIdx = 0;
+    autoRunId += 1;
+    if(autoQueue.length === 0){
+      logEv('AUTO: NO VIDEOS');
+      return;
+    }
+    bAuto.classList.add('on');
+    autoAdvancing = true;
+    autoAdvanceStep(autoRunId);
+  },1200);
+}
+
+// Hide load screen
+bootOverviewTimer = setTimeout(()=>{
+  document.getElementById('loadOverlay').classList.add('gone');
+  goOverview();
+  logEv('FLUX.GALLERY v1 READY');
+}, 600);
+
+// HUD visibility
+if(!HUD_ON){
+  document.getElementById('ctrl').style.display='none';
+  document.getElementById('paneNav').style.display='none';
+  document.getElementById('stat').style.display='none';
+}
+</script>
+
+</body>
+</html>
