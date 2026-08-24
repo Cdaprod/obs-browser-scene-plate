@@ -1,0 +1,895 @@
+/tools/void_wave/VOID_WAVE_ALPHA.html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>VOID.WAVE — Transparent Overlay</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Bebas+Neue&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root{
+    --acid:#00ffaa;
+    --glitch:#ff003c;
+    --panel:rgba(5,5,10,0.72);
+    --border:rgba(0,255,170,0.25);
+  }
+
+  html,body{
+    width:100%;
+    height:100%;
+    background:transparent; /* IMPORTANT */
+    overflow:hidden;
+    font-family:'Share Tech Mono',monospace;
+    color:var(--acid);
+    cursor:none;
+  }
+
+  /* WebGL canvas with alpha */
+  #canvas{
+    position:fixed;
+    inset:0;
+    width:100%;
+    height:100%;
+    display:block;
+    background:transparent; /* IMPORTANT */
+  }
+
+  /* UI wake layer: enables "tap anywhere to unhide" */
+  #uiWake{
+    position:fixed;
+    inset:0;
+    z-index:10000;
+    display:none;
+    pointer-events:none;
+    background:transparent;
+    touch-action:manipulation;
+  }
+  body.ui-off #uiWake{
+    display:block;
+    pointer-events:auto;
+  }
+
+  /* Mini spectrum (optional) */
+  #specCanvas{
+    position:fixed;
+    right:32px;
+    bottom:96px;
+    width:180px;
+    height:50px;
+    opacity:0.55;
+    z-index:200;
+    border-bottom:1px solid var(--border);
+    background:transparent;
+    pointer-events:none;
+  }
+
+  /* Cursor */
+  #cursor{
+    position:fixed;
+    width:12px;
+    height:12px;
+    border:1px solid var(--acid);
+    border-radius:50%;
+    pointer-events:none;
+    transform:translate(-50%,-50%);
+    z-index:9999;
+    mix-blend-mode:screen;
+    transition:transform 0.1s ease;
+  }
+
+  /* Title */
+  #title{
+    position:fixed;
+    top:28px;
+    left:32px;
+    font-family:'Bebas Neue',sans-serif;
+    font-size:2.2rem;
+    letter-spacing:0.3em;
+    color:#fff;
+    text-shadow:0 0 20px var(--acid), 0 0 60px var(--acid);
+    pointer-events:none;
+    z-index:200;
+    mix-blend-mode:screen;
+  }
+  #title span{ color:var(--acid); }
+
+  /* Status */
+  #status{
+    position:fixed;
+    top:28px;
+    right:32px;
+    font-size:0.6rem;
+    letter-spacing:0.18em;
+    color:rgba(0,255,170,0.6);
+    z-index:200;
+    pointer-events:none;
+    text-align:right;
+    line-height:1.8;
+    text-shadow:0 0 10px rgba(0,255,170,0.25);
+  }
+  #status .dot{
+    display:inline-block;
+    width:6px;
+    height:6px;
+    border-radius:50%;
+    background:var(--glitch);
+    margin-right:6px;
+    animation:pulse 1s ease-in-out infinite;
+  }
+  #status .dot.live{ background:var(--acid); }
+  @keyframes pulse{ 0%,100%{opacity:1;} 50%{opacity:0.2;} }
+
+  /* Controls */
+  #controls{
+    position:fixed;
+    bottom:0;
+    left:0;
+    right:0;
+    display:flex;
+    align-items:center;
+    gap:16px;
+    padding:18px 28px;
+    background:linear-gradient(to top, rgba(0,0,0,0.75), transparent);
+    z-index:200;
+    flex-wrap:wrap;
+    pointer-events:auto;
+  }
+  .ctrl-group{ display:flex; align-items:center; gap:10px; flex-shrink:0; }
+  .ctrl-label{
+    font-size:0.6rem;
+    letter-spacing:0.2em;
+    color:rgba(0,255,170,0.65);
+    text-transform:uppercase;
+  }
+  .src-btn,.mode-btn{
+    background:transparent;
+    border:1px solid var(--border);
+    color:rgba(0,255,170,0.75);
+    font-family:'Share Tech Mono',monospace;
+    font-size:0.65rem;
+    letter-spacing:0.15em;
+    padding:6px 14px;
+    cursor:pointer;
+    transition:all 0.15s;
+    text-transform:uppercase;
+  }
+  .src-btn:hover,.src-btn.active,
+  .mode-btn:hover,.mode-btn.active{
+    border-color:var(--acid);
+    color:var(--acid);
+    background:rgba(0,255,170,0.10);
+    box-shadow:0 0 12px rgba(0,255,170,0.22);
+  }
+  #fileInput{ display:none; }
+
+  /* DOM meters */
+  .meter-wrap{
+    display:flex;
+    flex-direction:column;
+    gap:4px;
+    min-width:120px;
+  }
+  .meter-row{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    font-size:0.55rem;
+    letter-spacing:0.1em;
+  }
+  .meter-row span:first-child{
+    width:36px;
+    color:rgba(0,255,170,0.65);
+    flex-shrink:0;
+  }
+  .meter-bar-outer{
+    flex:1;
+    height:3px;
+    background:rgba(0,255,170,0.15);
+    position:relative;
+    overflow:hidden;
+  }
+  .meter-bar-inner{
+    height:100%;
+    background:var(--acid);
+    width:0%;
+    transition:width 0.05s linear;
+    box-shadow:0 0 6px rgba(0,255,170,0.9);
+  }
+  .meter-val{
+    width:30px;
+    text-align:right;
+    color:rgba(0,255,170,0.8);
+  }
+
+  /* Scanlines (optional) */
+  #scanlines{
+    position:fixed;
+    inset:0;
+    background:repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.045) 2px,
+      rgba(0,0,0,0.045) 4px
+    );
+    pointer-events:none;
+    z-index:150;
+    mix-blend-mode:multiply;
+  }
+
+  /* UI off = clean overlay for OBS */
+  body.ui-off #controls,
+  body.ui-off #title,
+  body.ui-off #status,
+  body.ui-off #specCanvas,
+  body.ui-off #scanlines,
+  body.ui-off #cursor{
+    display:none !important;
+  }
+</style>
+</head>
+<body>
+
+<canvas id="canvas"></canvas>
+<div id="uiWake" title="Tap to show UI"></div>
+<canvas id="specCanvas"></canvas>
+
+<div id="cursor"></div>
+<div id="scanlines"></div>
+
+<div id="title">VOID<span>.</span>WAVE</div>
+
+<div id="status">
+  <div><span class="dot" id="srcDot"></span><span id="srcLabel">NO SOURCE</span></div>
+  <div id="modeDisplay">MODE —</div>
+  <div id="bpmDisplay">BPM —</div>
+  <div id="fpsDisplay">— FPS</div>
+</div>
+
+<div id="controls">
+  <div class="ctrl-group">
+    <span class="ctrl-label">Source</span>
+    <button class="src-btn" id="btnMic">MIC</button>
+    <button class="src-btn" id="btnTab">TAB</button>
+    <button class="src-btn" id="btnFile">FILE</button>
+    <input type="file" id="fileInput" accept="audio/*,video/*">
+  </div>
+
+  <div class="ctrl-group">
+    <span class="ctrl-label">Style</span>
+    <button class="mode-btn" id="btnRadial" data-mode="0">RADIAL</button>
+    <button class="mode-btn" id="btnLinear" data-mode="1">LINEAR</button>
+    <button class="mode-btn" id="btnBars"   data-mode="2">BARS</button>
+  </div>
+
+  <div class="ctrl-group meter-wrap" id="meters">
+    <div class="meter-row">
+      <span>BASS</span>
+      <div class="meter-bar-outer"><div class="meter-bar-inner" id="mBass"></div></div>
+      <span class="meter-val" id="vBass">0.00</span>
+    </div>
+    <div class="meter-row">
+      <span>MID</span>
+      <div class="meter-bar-outer"><div class="meter-bar-inner" id="mMid"></div></div>
+      <span class="meter-val" id="vMid">0.00</span>
+    </div>
+    <div class="meter-row">
+      <span>TREB</span>
+      <div class="meter-bar-outer"><div class="meter-bar-inner" id="mTreb"></div></div>
+      <span class="meter-val" id="vTreb">0.00</span>
+    </div>
+    <div class="meter-row">
+      <span>RMS</span>
+      <div class="meter-bar-outer"><div class="meter-bar-inner" id="mRms"></div></div>
+      <span class="meter-val" id="vRms">0.00</span>
+    </div>
+  </div>
+
+  <div class="ctrl-group" style="margin-left:auto;">
+    <span class="ctrl-label">Beat</span>
+    <div id="beatFlash" style="width:14px;height:14px;border:1px solid var(--border);border-radius:50%;transition:all 0.05s;"></div>
+  </div>
+
+  <div class="ctrl-group">
+    <span class="ctrl-label">UI</span>
+    <button class="mode-btn" id="btnUi">HIDE</button>
+  </div>
+</div>
+
+<audio id="audioEl" crossorigin="anonymous" style="display:none;" controls></audio>
+
+<script>
+// ─────────────────────────────────────────────────────────────
+//  WEBGL SETUP (ALPHA TRANSPARENT)
+// ─────────────────────────────────────────────────────────────
+const canvas = document.getElementById('canvas');
+
+const gl = canvas.getContext('webgl', {
+  alpha: true,
+  premultipliedAlpha: true,
+  antialias: true,
+  depth: false,
+  stencil: false,
+  preserveDrawingBuffer: false
+}) || canvas.getContext('experimental-webgl');
+
+if (!gl) {
+  document.body.innerHTML = '<h1 style="color:red;padding:40px;background:black">WebGL not supported</h1>';
+}
+
+function resize() {
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
+  canvas.width  = Math.floor(window.innerWidth * dpr);
+  canvas.height = Math.floor(window.innerHeight * dpr);
+  canvas.style.width  = window.innerWidth + 'px';
+  canvas.style.height = window.innerHeight + 'px';
+  gl.viewport(0, 0, canvas.width, canvas.height);
+}
+window.addEventListener('resize', resize);
+resize();
+
+// Blend for overlay alpha
+gl.enable(gl.BLEND);
+gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+
+// ─────────────────────────────────────────────────────────────
+//  SHADERS (FIXED: "FULL START→END" VISUALS VIA LOG-WARP + GAIN)
+// ─────────────────────────────────────────────────────────────
+const VS = `
+attribute vec2 a_pos;
+varying vec2 v_uv;
+void main(){
+  v_uv = a_pos * 0.5 + 0.5;
+  gl_Position = vec4(a_pos, 0.0, 1.0);
+}
+`;
+
+const FS = `
+precision highp float;
+
+varying vec2 v_uv;
+
+uniform vec2  u_res;
+uniform float u_time;
+uniform float u_bass;
+uniform float u_mid;
+uniform float u_treble;
+uniform float u_rms;
+uniform float u_beat;
+uniform int   u_mode;     // 0 radial, 1 linear, 2 bars
+uniform float u_opacity;  // master alpha scale (0..1)
+uniform sampler2D u_spectrum; // 256x1
+
+float hash(vec2 p){
+  p = fract(p * vec2(127.1, 311.7));
+  p += dot(p, p + 19.19);
+  return fract(p.x * p.y);
+}
+
+float specRaw(float t){
+  return texture2D(u_spectrum, vec2(clamp(t,0.0,1.0), 0.5)).r;
+}
+
+/*
+  Why your preview looked "half on":
+  - Real audio has WAY more low-frequency energy than high.
+  - Sampling linear 0..1 across bins makes the left-side dominate and right-side look "empty".
+  Fix:
+  - Remap UI coordinate -> spectrum coordinate with a perceptual warp
+  - Add gentle high-end compensation gain
+  - Add multi-tap smoothing so faint highs still show as structure
+*/
+float specWarp(float x){
+  // Expand high frequencies across more screen space:
+  // x in [0..1] -> w in [0..1], with more "distance" for highs
+  float w = pow(clamp(x,0.0,1.0), 2.2);
+
+  // Multi-tap: smear a bit so sparse bins still contribute visually
+  float s = 0.0;
+  s += specRaw(w) * 0.50;
+  s += specRaw(w + 1.0/256.0) * 0.20;
+  s += specRaw(w - 1.0/256.0) * 0.20;
+  s += specRaw(w + 3.0/256.0) * 0.05;
+  s += specRaw(w - 3.0/256.0) * 0.05;
+
+  // High-end compensation: boost highs slightly so the full width stays alive
+  float gain = mix(1.35, 2.10, x); // more gain towards the right side
+  s *= gain;
+
+  // Soft floor so totally silent highs still have a faint presence (keeps continuity)
+  s = max(s, 0.03 * u_rms);
+
+  return clamp(s, 0.0, 1.0);
+}
+
+vec3 palette(float t, float treb){
+  float h = t + treb * 0.45 + u_time * 0.02;
+  vec3 a = vec3(0.52);
+  vec3 b = vec3(0.48);
+  vec3 c = vec3(1.0, 1.0, 0.9);
+  vec3 d = vec3(0.00, 0.33, 0.67);
+  return a + b * cos(6.28318 * (c*h + d));
+}
+
+float softLine(float d, float w){
+  return smoothstep(w, 0.0, d);
+}
+
+void main(){
+  vec2 uv = v_uv;
+
+  vec2 asp = u_res / min(u_res.x, u_res.y);
+  vec2 p = (uv - 0.5) * asp * 2.0;
+
+  float bass = u_bass;
+  float mid = u_mid;
+  float treb = u_treble;
+  float rms = u_rms;
+  float beat = u_beat;
+
+  float grain = (hash(uv * u_res + fract(u_time * 137.13)) - 0.5) * 0.08;
+  float glowBoost = 0.70 + rms * 1.50 + beat * 1.00;
+
+  vec3 col = vec3(0.0);
+  float a = 0.0;
+
+  if (u_mode == 0) {
+    // ── RADIAL (full ring coverage via warped spectrum mapping)
+    float ang = atan(p.y, p.x);
+    float normAng = ang / 6.28318 + 0.5;
+
+    // Use warped spectrum so all angles show action
+    float s = specWarp(normAng);
+
+    float r = length(p);
+
+    // Slightly larger ring so it reads as "full viewport" rather than small core
+    float ringR = 0.58 + bass * 0.16 + s * 0.22;
+    float ringD = abs(r - ringR);
+    float ring = softLine(ringD, 0.020 + treb * 0.012) * (0.85 + rms * 1.25);
+
+    // Radial bars
+    float inner = 0.64 + bass * 0.06;
+    float barAmp = s * (0.32 + bass * 0.55);
+    float outer = inner + barAmp;
+    float inBar = step(inner, r) * step(r, outer);
+    float bar = inBar * (0.35 + rms * 1.1);
+
+    // Core glow
+    float core = softLine(abs(r - (0.18 + beat*0.035)), 0.032) * (0.45 + mid * 0.95);
+
+    float energy = (ring + bar + core) * glowBoost;
+
+    vec3 base = palette(normAng + u_time*0.05, treb);
+    col = base * energy;
+
+    // Alpha proportional to energy; fade far outside ring gently (but keep full ring visible)
+    float fade = smoothstep(2.15, 0.20, r);
+    a = clamp(energy * 0.55 + rms * 0.06, 0.0, 1.0) * fade;
+    col *= fade;
+
+  } else if (u_mode == 1) {
+    // ── LINEAR (full-width wave: warp+gain keeps right-side alive)
+    float x = uv.x;
+    float s = specWarp(x);
+
+    // More "motion" across the whole line
+    float wob = sin(u_time * (2.4 + bass*2.0) + x * 18.0) * (0.10 + treb*0.06);
+
+    float yLine = 0.5 + (s * (0.34 + bass*0.22) - 0.17) + wob;
+
+    float d = abs(uv.y - yLine);
+    float w = 0.010 + rms*0.010;
+
+    float line = softLine(d, w) * (0.9 + rms*1.6);
+    float halo = softLine(d, w*3.8) * (0.35 + treb*0.95);
+
+    float energy = (line + halo) * glowBoost;
+
+    vec3 base = palette(x + u_time*0.10, treb);
+    col = base * energy;
+
+    a = clamp((line*0.95 + halo*0.55) * 0.98, 0.0, 1.0);
+
+    // faint baseline shimmer for continuity (still transparent-ish)
+    float baseLine = softLine(abs(uv.y - 0.5), 0.0025) * (0.10 + rms*0.25);
+    col += palette(0.15 + u_time*0.02, treb) * baseLine;
+    a = max(a, baseLine * 0.35);
+
+  } else {
+    // ── BARS (full-width perceived spectrum via warped coordinate)
+    float bands = 64.0;
+    float idx = floor(uv.x * bands);
+    float t = (idx + 0.5) / bands;
+
+    // Use warped mapping to spread energy across whole bar field
+    float s = specWarp(t) * (0.55 + bass*0.35 + rms*0.70);
+    float h = clamp(s, 0.0, 1.0);
+
+    float inBar = step(uv.y, h);
+    float edge = softLine(abs(uv.y - h), 0.012 + treb*0.010);
+
+    float energy = (inBar * (0.80 + rms*1.25)) + (edge * (0.40 + treb*1.10));
+    energy *= glowBoost;
+
+    vec3 base = palette(t + u_time*0.05, treb);
+    col = base * energy;
+
+    a = clamp(inBar * 0.92 + edge * 0.70, 0.0, 1.0);
+  }
+
+  // Grain that doesn't force opacity
+  col += vec3(grain) * a;
+
+  // Tone map + gamma
+  col = col / (col + 1.0);
+  col = pow(col, vec3(0.4545));
+
+  a *= u_opacity;
+
+  gl_FragColor = vec4(col, a);
+}
+`;
+
+function compileShader(type, src){
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+    console.error('Shader error:', gl.getShaderInfoLog(s));
+  }
+  return s;
+}
+
+const prog = gl.createProgram();
+gl.attachShader(prog, compileShader(gl.VERTEX_SHADER, VS));
+gl.attachShader(prog, compileShader(gl.FRAGMENT_SHADER, FS));
+gl.linkProgram(prog);
+gl.useProgram(prog);
+
+// Fullscreen quad
+const buf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+
+const aPos = gl.getAttribLocation(prog, 'a_pos');
+gl.enableVertexAttribArray(aPos);
+gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+// Uniforms
+const U = {};
+['u_res','u_time','u_bass','u_mid','u_treble','u_rms','u_beat','u_mode','u_opacity','u_spectrum']
+  .forEach(n => U[n] = gl.getUniformLocation(prog, n));
+
+// Spectrum texture
+const SPEC_SIZE = 256;
+
+const specTex = gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D, specTex);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+const specData = new Uint8Array(SPEC_SIZE * 4);
+gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, SPEC_SIZE, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, specData);
+
+// ─────────────────────────────────────────────────────────────
+//  WEBAUDIO PIPELINE
+// ─────────────────────────────────────────────────────────────
+let audioCtx = null;
+let analyser = null;
+let sourceNode = null;
+let fftData = new Uint8Array(SPEC_SIZE);
+
+let bass = 0, mid = 0, treble = 0, rms = 0, beat = 0;
+let currentSource = null; // 'mic'|'tab'|'file'
+
+function initAudioCtx(){
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = SPEC_SIZE * 2;
+    analyser.smoothingTimeConstant = 0.8;
+    // NOTE: don't connect analyser to destination to avoid mic echo
+  }
+}
+
+function disconnectSource(){
+  if (sourceNode) {
+    try { sourceNode.disconnect(); } catch(e) {}
+    sourceNode = null;
+  }
+}
+
+async function startMic(){
+  initAudioCtx();
+  disconnectSource();
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({ audio:true, video:false });
+    sourceNode = audioCtx.createMediaStreamSource(stream);
+    sourceNode.connect(analyser);
+    setSourceUI('mic');
+  } catch(e) {
+    alert('Mic access denied: ' + e.message);
+  }
+}
+
+async function startTab(){
+  initAudioCtx();
+  disconnectSource();
+  try{
+    const stream = await navigator.mediaDevices.getDisplayMedia({ audio:true, video:true });
+    sourceNode = audioCtx.createMediaStreamSource(stream);
+    sourceNode.connect(analyser);
+    setSourceUI('tab');
+  } catch(e) {
+    alert('Tab capture failed: ' + e.message);
+  }
+}
+
+function startFile(file){
+  initAudioCtx();
+  disconnectSource();
+  const audioEl = document.getElementById('audioEl');
+  audioEl.src = URL.createObjectURL(file);
+  audioEl.play().catch(()=>{});
+  sourceNode = audioCtx.createMediaElementSource(audioEl);
+  sourceNode.connect(analyser);
+  setSourceUI('file');
+}
+
+function setSourceUI(src){
+  currentSource = src;
+  document.querySelectorAll('.src-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('btn' + src.charAt(0).toUpperCase() + src.slice(1)).classList.add('active');
+  const dot = document.getElementById('srcDot');
+  dot.className = 'dot live';
+  document.getElementById('srcLabel').textContent = src.toUpperCase() + ' ACTIVE';
+}
+
+document.getElementById('btnMic').addEventListener('click', startMic);
+document.getElementById('btnTab').addEventListener('click', startTab);
+document.getElementById('btnFile').addEventListener('click', () => document.getElementById('fileInput').click());
+document.getElementById('fileInput').addEventListener('change', e => {
+  if (e.target.files && e.target.files[0]) startFile(e.target.files[0]);
+});
+
+// ─────────────────────────────────────────────────────────────
+//  MODE TOGGLING
+// ─────────────────────────────────────────────────────────────
+let mode = 0;      // 0 radial, 1 linear, 2 bars
+let opacity = 1.0; // master alpha
+
+function setMode(m){
+  mode = (m|0);
+  document.querySelectorAll('.mode-btn[data-mode]').forEach(b => b.classList.remove('active'));
+  const btn = document.querySelector(`.mode-btn[data-mode="${mode}"]`);
+  if (btn) btn.classList.add('active');
+  const name = mode === 0 ? 'RADIAL' : (mode === 1 ? 'LINEAR' : 'BARS');
+  document.getElementById('modeDisplay').textContent = `MODE ${name}`;
+}
+
+document.getElementById('btnRadial').addEventListener('click', () => setMode(0));
+document.getElementById('btnLinear').addEventListener('click', () => setMode(1));
+document.getElementById('btnBars').addEventListener('click', () => setMode(2));
+setMode(0);
+
+// ─────────────────────────────────────────────────────────────
+//  UI HIDE/SHOW + "TAP ANYWHERE TO UNHIDE"
+// ─────────────────────────────────────────────────────────────
+const uiBtn = document.getElementById('btnUi');
+const uiWake = document.getElementById('uiWake');
+
+function setUi(on){
+  document.body.classList.toggle('ui-off', !on);
+  uiBtn.textContent = on ? 'HIDE' : 'SHOW';
+}
+
+// Button toggles
+uiBtn.addEventListener('click', () => setUi(document.body.classList.contains('ui-off')));
+
+// Tap anywhere while hidden -> restore UI
+function wakeUi(e){
+  e.preventDefault?.();
+  e.stopPropagation?.();
+  setUi(true);
+}
+uiWake.addEventListener('pointerdown', wakeUi, { passive:false });
+uiWake.addEventListener('touchstart', wakeUi, { passive:false });
+
+// Start visible
+setUi(true);
+
+// ─────────────────────────────────────────────────────────────
+//  AUDIO ANALYSIS
+// ─────────────────────────────────────────────────────────────
+let beatHistory = new Array(43).fill(0), beatPtr = 0;
+let lastBeatTime = 0, bpmAccum = [], displayBpm = 0;
+
+function analyzeAudio(){
+  if (!analyser) return;
+  analyser.getByteFrequencyData(fftData);
+
+  const BASS_END = 5, MID_END = 30, TREB_END = 100;
+  let bSum=0, mSum=0, tSum=0, rSum=0;
+
+  for (let i=0;i<SPEC_SIZE;i++){
+    const v = fftData[i] / 255;
+    if (i <= BASS_END) bSum += v;
+    else if (i <= MID_END) mSum += v;
+    else if (i <= TREB_END) tSum += v;
+    rSum += v*v;
+  }
+
+  const bLen = Math.max(1, BASS_END);
+  const mLen = Math.max(1, MID_END - BASS_END);
+  const tLen = Math.max(1, TREB_END - MID_END);
+
+  bass   = Math.min(1, bSum / bLen);
+  mid    = Math.min(1, mSum / mLen);
+  treble = Math.min(1, tSum / tLen);
+  rms    = Math.min(1, Math.sqrt(rSum / SPEC_SIZE));
+
+  const bassNow = bSum / bLen;
+  beatHistory[beatPtr % 43] = bassNow;
+  beatPtr++;
+
+  const avg = beatHistory.reduce((a,b)=>a+b,0) / 43;
+
+  if (bassNow > avg * 1.4 && bassNow > 0.15) {
+    const now = performance.now();
+    if (now - lastBeatTime > 200) {
+      beat = 1.0;
+      const dt = now - lastBeatTime;
+      if (dt < 2000 && lastBeatTime > 0) {
+        bpmAccum.push(60000/dt);
+        if (bpmAccum.length > 8) bpmAccum.shift();
+        displayBpm = Math.round(bpmAccum.reduce((a,b)=>a+b,0)/bpmAccum.length);
+      }
+      lastBeatTime = now;
+    }
+  }
+  beat = Math.max(0, beat - 0.04);
+}
+
+// ─────────────────────────────────────────────────────────────
+//  MINI SPECTRUM CANVAS (OPTIONAL)
+// ─────────────────────────────────────────────────────────────
+const specCanvas = document.getElementById('specCanvas');
+const sCtx = specCanvas.getContext('2d');
+specCanvas.width = 180;
+specCanvas.height = 50;
+
+function drawMiniSpec(){
+  if (document.body.classList.contains('ui-off')) return;
+
+  sCtx.clearRect(0,0,180,50);
+  sCtx.fillStyle = 'rgba(0,0,0,0.25)';
+  sCtx.fillRect(0,0,180,50);
+
+  const barW = 180/64;
+  for (let i=0;i<64;i++){
+    const v = (fftData[i*2] || 0) / 255;
+    const h = v * 48;
+    const r = Math.floor(v * 50);
+    const g = Math.floor(80 + v * 175);
+    sCtx.fillStyle = `rgb(${r},${g},120)`;
+    sCtx.fillRect(i*barW, 50-h, barW-1, h);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+//  UI METERS
+// ─────────────────────────────────────────────────────────────
+function updateMeters(){
+  if (document.body.classList.contains('ui-off')) return;
+
+  const set = (id, vid, val) => {
+    document.getElementById(id).style.width = (val*100) + '%';
+    document.getElementById(vid).textContent = val.toFixed(2);
+  };
+
+  set('mBass','vBass', bass);
+  set('mMid','vMid', mid);
+  set('mTreb','vTreb', treble);
+  set('mRms','vRms', rms);
+
+  const bf = document.getElementById('beatFlash');
+  bf.style.background = beat > 0.3 ? `rgba(0,255,170,${beat})` : 'transparent';
+  bf.style.boxShadow = beat > 0.3 ? `0 0 ${beat*20}px rgba(0,255,170,0.8)` : 'none';
+  bf.style.borderColor = beat > 0.3 ? 'var(--acid)' : 'var(--border)';
+
+  if (displayBpm) document.getElementById('bpmDisplay').textContent = displayBpm + ' BPM';
+}
+
+// ─────────────────────────────────────────────────────────────
+//  RENDER LOOP
+// ─────────────────────────────────────────────────────────────
+let lastFpsTime = performance.now(), frameCount = 0;
+
+function render(ts){
+  requestAnimationFrame(render);
+
+  // FPS (only when UI visible)
+  frameCount++;
+  if (ts - lastFpsTime > 500) {
+    if (!document.body.classList.contains('ui-off')) {
+      document.getElementById('fpsDisplay').textContent =
+        Math.round(frameCount * 1000 / (ts - lastFpsTime)) + ' FPS';
+    }
+    frameCount = 0;
+    lastFpsTime = ts;
+  }
+
+  analyzeAudio();
+  drawMiniSpec();
+  updateMeters();
+
+  // Upload spectrum texture
+  for (let i=0;i<SPEC_SIZE;i++){
+    const v = fftData[i];
+    specData[i*4+0] = v;
+    specData[i*4+1] = v;
+    specData[i*4+2] = v;
+    specData[i*4+3] = 255;
+  }
+  gl.bindTexture(gl.TEXTURE_2D, specTex);
+  gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, SPEC_SIZE, 1, gl.RGBA, gl.UNSIGNED_BYTE, specData);
+
+  // True transparent background each frame
+  gl.clearColor(0,0,0,0);
+  gl.clear(gl.COLOR_BUFFER_BIT);
+
+  // Uniforms
+  gl.uniform2f(U.u_res, canvas.width, canvas.height);
+  gl.uniform1f(U.u_time, ts * 0.001);
+  gl.uniform1f(U.u_bass, bass);
+  gl.uniform1f(U.u_mid, mid);
+  gl.uniform1f(U.u_treble, treble);
+  gl.uniform1f(U.u_rms, rms);
+  gl.uniform1f(U.u_beat, beat);
+  gl.uniform1i(U.u_mode, mode);
+  gl.uniform1f(U.u_opacity, opacity);
+
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, specTex);
+  gl.uniform1i(U.u_spectrum, 0);
+
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+requestAnimationFrame(render);
+
+// ─────────────────────────────────────────────────────────────
+//  CURSOR
+// ─────────────────────────────────────────────────────────────
+const cur = document.getElementById('cursor');
+window.addEventListener('mousemove', e => {
+  if (document.body.classList.contains('ui-off')) return;
+  cur.style.left = e.clientX + 'px';
+  cur.style.top  = e.clientY + 'px';
+});
+
+// ─────────────────────────────────────────────────────────────
+//  KEYBOARD SHORTCUTS
+// ─────────────────────────────────────────────────────────────
+//  1/2/3 = mode, H = hide/show UI, M/T/F = sources
+window.addEventListener('keydown', e => {
+  if (e.key === '1') setMode(0);
+  if (e.key === '2') setMode(1);
+  if (e.key === '3') setMode(2);
+
+  if (e.key === 'h' || e.key === 'H') setUi(document.body.classList.contains('ui-off'));
+
+  if (e.key === 'm' || e.key === 'M') startMic();
+  if (e.key === 't' || e.key === 'T') startTab();
+  if (e.key === 'f' || e.key === 'F') document.getElementById('fileInput').click();
+
+  if (e.key === 'F11' || (e.key === 'f' && e.ctrlKey)) canvas.requestFullscreen?.();
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,1061 @@
+<!doctype html>
+
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Ascetic TopBar — Cdaprod</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;1,300&family=Syne:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      /* palette — almost monochrome */
+      --bg:        #060709;
+      --surface:   #0b0d11;
+      --border:    rgba(255,255,255,.055);
+      --text:      rgba(255,255,255,.92);
+      --muted:     rgba(255,255,255,.36);
+      --ghost:     rgba(255,255,255,.14);
+      --ink:       rgba(255,255,255,.72);
+
+```
+  /* single accent — barely there */
+  --a:         170,255,210;        /* cold mint */
+  --accent:    rgba(var(--a),1);
+  --accent-dim:rgba(var(--a),.18);
+
+  /* topbar geometry */
+  --bar-h:     clamp(42px, 7dvh, 72px);
+  --bar-px:    clamp(14px, 2.4vw, 32px);
+  --bar-py:    clamp(8px, 1.1dvh, 14px);
+
+  /* type */
+  --f-brand:   clamp(11px, 1.5dvh, 14px);
+  --f-sub:     clamp(9px, 1.0dvh, 11px);
+  --f-ui:      clamp(9px, 1.1dvh, 11.5px);
+  --f-mono:    clamp(9px, 1.0dvh, 10.5px);
+
+  /* icon */
+  --mark-sz:   clamp(22px, 3.6dvh, 32px);
+
+  /* chip */
+  --chip-py:   clamp(5px, .65dvh, 8px);
+  --chip-px:   clamp(8px, 1.1vw, 14px);
+
+  /* blur — thinner, sharper */
+  --blur:      12px;
+
+  --content-w: min(1480px, calc(100vw - 16px));
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; }
+
+html, body { height: 100%; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Syne', ui-sans-serif, system-ui, sans-serif;
+  overflow: hidden;
+}
+
+/* ─── GRAIN OVERLAY ──────────────────────────────── */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  opacity: .028;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 160px 160px;
+}
+
+/* ─── AMBIENT BACKGROUND ─────────────────────────── */
+.app {
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+}
+
+.app::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(ellipse 900px 500px at -8% -12%, rgba(var(--a), .045) 0%, transparent 60%),
+    radial-gradient(ellipse 600px 380px at 110% 90%,  rgba(var(--a), .025) 0%, transparent 58%);
+}
+
+/* ─── TOPBAR ─────────────────────────────────────── */
+.topbar-anchor {
+  position: sticky;
+  top: 0;
+  z-index: 120;
+  height: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.topbar {
+  position: relative;
+  width: 100%;
+  pointer-events: auto;
+  will-change: transform, opacity;
+  transition:
+    transform 380ms cubic-bezier(.22,.84,.2,1),
+    opacity   200ms ease;
+}
+
+.topbar[data-hidden="true"] {
+  transform: translateY(calc(-100% - 8px));
+  opacity: .97;
+}
+
+/* atmosphere layer — barely-there scrim, no hard edge */
+.topbar-field {
+  position: relative;
+  min-height: var(--bar-h);
+  padding: var(--bar-py) var(--bar-px);
+  isolation: isolate;
+}
+
+/* ultra-thin blur scrim — dissolves into nothing by ~80px down */
+.topbar-field::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  height: calc(var(--bar-h) + 60px);
+  backdrop-filter: blur(var(--blur)) saturate(1.04);
+  -webkit-backdrop-filter: blur(var(--blur)) saturate(1.04);
+  background: linear-gradient(
+    180deg,
+    rgba(6,7,9,.78) 0%,
+    rgba(6,7,9,.32) 44%,
+    rgba(6,7,9,.06) 72%,
+    transparent    100%
+  );
+  mask-image: linear-gradient(180deg, rgba(0,0,0,.98), rgba(0,0,0,.82) 40%, rgba(0,0,0,.08) 76%, transparent 100%);
+  -webkit-mask-image: linear-gradient(180deg, rgba(0,0,0,.98), rgba(0,0,0,.82) 40%, rgba(0,0,0,.08) 76%, transparent 100%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* hairline — a single pixel of intention, not decoration */
+.topbar-field::after {
+  content: "";
+  position: absolute;
+  left: var(--bar-px);
+  right: var(--bar-px);
+  bottom: 0;
+  height: 1px;
+  background: var(--border);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 1;
+  transition: opacity 240ms ease;
+}
+
+.topbar[data-condensed="true"] .topbar-field::after {
+  opacity: 1;
+}
+
+/* ─── INNER GRID ─────────────────────────────────── */
+.topbar-inner {
+  position: relative;
+  z-index: 2;
+  width: var(--content-w);
+  max-width: 100%;
+  margin: 0 auto;
+  min-height: calc(var(--bar-h) - var(--bar-py) * 2);
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: clamp(10px, 1.4vw, 24px);
+  align-items: center;
+}
+
+/* ─── BRAND ──────────────────────────────────────── */
+.brand {
+  display: flex;
+  align-items: center;
+  gap: clamp(9px, 1vw, 13px);
+  min-width: 0;
+}
+
+/* mark: geometric, single-weight, no gradient */
+.brand-mark {
+  width: var(--mark-sz);
+  height: var(--mark-sz);
+  flex: 0 0 auto;
+  position: relative;
+}
+
+.brand-mark svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.brand-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.brand-title {
+  font-family: 'Syne', sans-serif;
+  font-size: var(--f-brand);
+  font-weight: 700;
+  letter-spacing: .01em;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+}
+
+.brand-sub {
+  font-family: 'DM Mono', monospace;
+  font-size: var(--f-sub);
+  font-weight: 300;
+  font-style: italic;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: .01em;
+  line-height: 1;
+}
+
+/* ─── CENTER ─────────────────────────────────────── */
+.topbar-center {
+  display: flex;
+  align-items: center;
+  gap: clamp(6px, .8vw, 10px);
+  min-width: 0;
+}
+
+/* search: invisible by default, barely there on hover/focus */
+.search {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: var(--chip-py) var(--chip-px);
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  transition:
+    background 200ms ease,
+    border-color 200ms ease;
+  cursor: text;
+}
+
+.search:focus-within,
+.search:hover {
+  background: rgba(255,255,255,.04);
+  border-color: var(--border);
+}
+
+.search svg {
+  width: clamp(11px, 1.3dvh, 13px);
+  height: clamp(11px, 1.3dvh, 13px);
+  color: var(--muted);
+  flex: 0 0 auto;
+  transition: color 200ms ease;
+}
+
+.search:focus-within svg { color: var(--ink); }
+
+.search input {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: 'DM Mono', monospace;
+  font-size: var(--f-mono);
+  font-weight: 300;
+  letter-spacing: .02em;
+  line-height: 1;
+}
+
+.search input::placeholder {
+  color: rgba(255,255,255,.22);
+  font-style: italic;
+}
+
+/* ─── ACTIONS ────────────────────────────────────── */
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: clamp(4px, .5vw, 8px);
+  flex-wrap: nowrap;
+}
+
+/* segmented — no background, just thin dividers */
+.seg {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  overflow: hidden;
+  gap: 0;
+}
+
+.seg button {
+  appearance: none;
+  border: 0;
+  border-right: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-family: 'DM Mono', monospace;
+  font-size: var(--f-mono);
+  font-weight: 300;
+  letter-spacing: .04em;
+  padding: var(--chip-py) var(--chip-px);
+  min-height: clamp(26px, 3.8dvh, 34px);
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease;
+  white-space: nowrap;
+}
+
+.seg button:last-child { border-right: 0; }
+
+.seg button:hover { background: rgba(255,255,255,.04); color: var(--ink); }
+
+.seg button.active {
+  background: rgba(255,255,255,.07);
+  color: var(--text);
+}
+
+/* chip — ghost, barely visible */
+.chip {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: var(--chip-py) var(--chip-px);
+  min-height: clamp(26px, 3.8dvh, 34px);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font-family: 'DM Mono', monospace;
+  font-size: var(--f-mono);
+  font-weight: 300;
+  letter-spacing: .04em;
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease, border-color 160ms ease;
+  white-space: nowrap;
+}
+
+.chip:hover {
+  background: rgba(255,255,255,.04);
+  color: var(--ink);
+  border-color: rgba(255,255,255,.10);
+}
+
+/* primary action — accent, but quiet */
+.action-primary {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: var(--chip-py) var(--chip-px);
+  min-height: clamp(26px, 3.8dvh, 34px);
+  border: 1px solid rgba(var(--a), .30);
+  border-radius: 5px;
+  background: rgba(var(--a), .07);
+  color: rgba(var(--a), .90);
+  font-family: 'DM Mono', monospace;
+  font-size: var(--f-mono);
+  font-weight: 400;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease;
+  white-space: nowrap;
+}
+
+.action-primary:hover {
+  background: rgba(var(--a), .12);
+  border-color: rgba(var(--a), .46);
+}
+
+/* status dot — monospace label beside a cold mint dot */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: 'DM Mono', monospace;
+  font-size: var(--f-mono);
+  font-weight: 300;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.status-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px rgba(var(--a), .7);
+  flex: 0 0 auto;
+  animation: pulse 3.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1;   box-shadow: 0 0 8px rgba(var(--a), .7); }
+  50%       { opacity: .55; box-shadow: 0 0 3px rgba(var(--a), .3); }
+}
+
+/* ─── VIEWPORT ───────────────────────────────────── */
+.viewport {
+  height: 100%;
+  overflow: auto;
+  overflow-x: hidden;
+  position: relative;
+  z-index: 1;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+}
+
+.viewport::-webkit-scrollbar { width: 6px; }
+.viewport::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,.08);
+  border-radius: 999px;
+}
+
+/* ─── CONTENT ────────────────────────────────────── */
+.page {
+  width: var(--content-w);
+  margin: 0 auto;
+  padding-bottom: 160px;
+}
+
+/* hero — text-first, no card */
+.hero {
+  padding: clamp(28px, 7dvh, 90px) 0 clamp(18px, 4dvh, 48px);
+  border-bottom: 1px solid var(--border);
+}
+
+.eyebrow {
+  font-family: 'DM Mono', monospace;
+  font-size: clamp(9px, 1.1dvh, 11px);
+  font-weight: 300;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: rgba(var(--a), .70);
+  margin-bottom: clamp(10px, 1.8dvh, 20px);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.eyebrow::before {
+  content: "";
+  display: block;
+  width: 20px;
+  height: 1px;
+  background: rgba(var(--a), .50);
+}
+
+.headline {
+  font-family: 'Syne', sans-serif;
+  font-size: clamp(34px, 7.8vw, 100px);
+  font-weight: 800;
+  line-height: .88;
+  letter-spacing: -.055em;
+  color: var(--text);
+  max-width: 12ch;
+  margin-bottom: clamp(14px, 2.2dvh, 28px);
+}
+
+/* hollow text on second line */
+.headline em {
+  font-style: normal;
+  -webkit-text-stroke: 1px rgba(255,255,255,.28);
+  color: transparent;
+}
+
+.subcopy {
+  max-width: 52ch;
+  font-size: clamp(11px, 1.5dvh, 14px);
+  line-height: 1.65;
+  color: var(--muted);
+  font-family: 'DM Mono', monospace;
+  font-weight: 300;
+}
+
+/* ─── GRID ───────────────────────────────────────── */
+.section {
+  display: grid;
+  grid-template-columns: 200px minmax(0,1fr);
+  gap: 0;
+  margin-top: 0;
+}
+
+.sidebar {
+  border-right: 1px solid var(--border);
+  padding: clamp(16px, 2dvh, 28px) clamp(12px, 1.4vw, 20px) clamp(16px, 2dvh, 28px) 0;
+  position: sticky;
+  top: calc(var(--bar-h) + 8px);
+  align-self: start;
+}
+
+.sidebar-label {
+  font-family: 'DM Mono', monospace;
+  font-size: 9px;
+  font-weight: 300;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 16px;
+}
+
+.sidebar-nav {
+  display: grid;
+  gap: 2px;
+}
+
+.nav-item {
+  font-family: 'DM Mono', monospace;
+  font-size: clamp(9px, 1.05dvh, 11px);
+  font-weight: 300;
+  color: var(--muted);
+  padding: 7px 0;
+  border-bottom: 1px solid transparent;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+  transition: color 160ms ease;
+}
+
+.nav-item:hover { color: var(--ink); }
+
+.nav-item.active {
+  color: var(--text);
+}
+
+.nav-item.active::before {
+  content: "";
+  display: block;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: 0 0 auto;
+}
+
+.nav-item:not(.active)::before {
+  content: "";
+  display: block;
+  width: 3px;
+  height: 3px;
+  flex: 0 0 auto;
+}
+
+/* asset feed */
+.feed-wrap {
+  padding: clamp(16px, 2dvh, 28px) 0 0 clamp(16px, 1.8vw, 28px);
+}
+
+.feed-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: clamp(10px, 1.5dvh, 18px);
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.feed-label {
+  font-family: 'DM Mono', monospace;
+  font-size: 9px;
+  font-weight: 300;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.feed-count {
+  font-family: 'DM Mono', monospace;
+  font-size: 9px;
+  font-weight: 300;
+  color: var(--muted);
+  letter-spacing: .06em;
+}
+
+.feed {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0,1fr));
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+}
+
+.asset {
+  background: var(--bg);
+  min-height: clamp(140px, 22dvh, 200px);
+  padding: clamp(10px, 1.4dvh, 16px);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  cursor: pointer;
+  transition: background 180ms ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.asset::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(var(--a), .04);
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+
+.asset:hover::before { opacity: 1; }
+
+.asset-kind {
+  font-family: 'DM Mono', monospace;
+  font-size: 8.5px;
+  font-weight: 300;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  align-self: flex-start;
+}
+
+.asset-bottom { }
+
+.asset-title {
+  font-family: 'Syne', sans-serif;
+  font-size: clamp(10px, 1.3dvh, 13px);
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: -.01em;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.asset-sub {
+  font-family: 'DM Mono', monospace;
+  font-size: 9px;
+  font-weight: 300;
+  color: var(--muted);
+  letter-spacing: .02em;
+}
+
+/* ─── EDITOR LAUNCHER ────────────────────────────── */
+.editor-launch {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: max(14px, env(safe-area-inset-bottom));
+  z-index: 220;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 36px;
+  padding: 8px 14px;
+  border: 1px solid rgba(255,255,255,.10);
+  border-radius: 4px;
+  background: rgba(6,7,9,.86);
+  color: var(--muted);
+  font-family: 'DM Mono', monospace;
+  font-size: var(--f-mono);
+  font-weight: 300;
+  letter-spacing: .06em;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  cursor: pointer;
+  transition: border-color 180ms ease, color 180ms ease;
+}
+
+.editor-launch:hover {
+  border-color: rgba(255,255,255,.18);
+  color: var(--ink);
+}
+
+.editor-launch .tiny-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px rgba(var(--a), .6);
+  flex: 0 0 auto;
+}
+
+/* ─── CONTROL SURFACE ────────────────────────────── */
+.control-surface {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%) translateY(12px);
+  bottom: calc(max(14px, env(safe-area-inset-bottom)) + 52px);
+  z-index: 221;
+  width: min(760px, calc(100vw - 20px));
+  padding: 14px;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 6px;
+  background: rgba(8,9,12,.90);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  display: grid;
+  gap: 12px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.control-surface[data-open="true"] {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(-50%) translateY(0);
+}
+
+.ctrl-group { display: grid; gap: 5px; }
+
+.ctrl-label {
+  font-family: 'DM Mono', monospace;
+  font-size: 9px;
+  font-weight: 300;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.ctrl-seg {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.ctrl-seg button {
+  appearance: none;
+  border: 0;
+  border-right: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-family: 'DM Mono', monospace;
+  font-size: var(--f-mono);
+  font-weight: 300;
+  letter-spacing: .04em;
+  padding: 7px 12px;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+  white-space: nowrap;
+}
+
+.ctrl-seg button:last-child { border-right: 0; }
+.ctrl-seg button:hover { background: rgba(255,255,255,.04); color: var(--ink); }
+.ctrl-seg button.active { background: rgba(255,255,255,.07); color: var(--text); }
+
+/* ─── RESPONSIVE ─────────────────────────────────── */
+@media (max-width: 900px) {
+  .section { grid-template-columns: 1fr; }
+  .sidebar { display: none; }
+  .feed { grid-template-columns: repeat(2, 1fr); }
+  .feed-wrap { padding-left: 0; }
+}
+
+@media (max-width: 620px) {
+  .topbar-inner {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  .topbar-center { order: 3; }
+  .topbar-actions {
+    justify-content: space-between;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .topbar-actions::-webkit-scrollbar { display: none; }
+  .brand-sub { display: none; }
+  .feed { grid-template-columns: 1fr; }
+  .headline { font-size: clamp(32px, 10vw, 56px); }
+}
+
+@media (orientation: portrait) and (max-width: 860px) {
+  :root {
+    --bar-h: clamp(38px, 6.4dvh, 58px);
+    --f-brand: clamp(10px, 1.35dvh, 13px);
+    --f-sub: clamp(8px, .92dvh, 10px);
+    --f-ui: clamp(8px, .96dvh, 10.5px);
+    --f-mono: clamp(8px, .90dvh, 10px);
+    --mark-sz: clamp(20px, 3.0dvh, 26px);
+    --chip-py: clamp(4px, .55dvh, 7px);
+    --chip-px: clamp(7px, .95vw, 11px);
+  }
+}
+```
+
+  </style>
+</head>
+<body data-style="no-line" data-blur="dissipate">
+<div class="app">
+  <div class="topbar-anchor">
+    <header class="topbar" id="topbar" data-hidden="false" data-condensed="false">
+      <div class="topbar-field">
+        <div class="topbar-inner">
+
+```
+      <!-- BRAND -->
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <!-- minimal geometric mark: two overlapping squares, one rotated 45° -->
+            <rect x="6" y="6" width="20" height="20" stroke="rgba(170,255,210,.60)" stroke-width="1.2" fill="none"/>
+            <rect x="11.3" y="11.3" width="9.4" height="9.4" transform="rotate(45 16 16)" stroke="rgba(170,255,210,.90)" stroke-width="1" fill="none"/>
+            <circle cx="16" cy="16" r="1.2" fill="rgba(170,255,210,1)"/>
+          </svg>
+        </div>
+        <div class="brand-copy">
+          <div class="brand-title" id="brandTitle">Cdaprod</div>
+          <div class="brand-sub">atmospheric layer / not a navbar</div>
+        </div>
+      </div>
+
+      <!-- CENTER: SEARCH -->
+      <div class="topbar-center">
+        <label class="search" aria-label="Search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <circle cx="11" cy="11" r="7"/>
+            <path d="M20 20l-3.5-3.5"/>
+          </svg>
+          <input type="text" placeholder="filename · path · project · source" />
+        </label>
+      </div>
+
+      <!-- ACTIONS -->
+      <div class="topbar-actions">
+        <div class="status-pill">
+          <span class="status-dot"></span>
+          <span>live</span>
+        </div>
+
+        <div class="seg" id="viewSeg">
+          <button class="active" type="button">grid</button>
+          <button type="button">list</button>
+        </div>
+
+        <button class="chip" type="button">density·5</button>
+        <button class="chip" type="button">filters</button>
+        <button class="action-primary" type="button">resolve</button>
+      </div>
+
+    </div>
+  </div>
+</header>
+```
+
+  </div>
+
+  <main class="viewport" id="viewport">
+    <div class="page">
+
+```
+  <section class="hero">
+    <div class="eyebrow">atmospheric layer — not a nav component</div>
+    <h1 class="headline">Less.<br><em>Always</em><br>less.</h1>
+    <p class="subcopy">
+      No glass border. No gradient card. No shadow box.<br>
+      Blur scrim, falloff, and a single hairline on scroll.<br>
+      Monospace labels. Syne weight for hierarchy. Cold mint as the only accent.
+    </p>
+  </section>
+
+  <div class="section">
+    <aside class="sidebar">
+      <div class="sidebar-label">index</div>
+      <nav class="sidebar-nav">
+        <div class="nav-item active">all assets</div>
+        <div class="nav-item">video</div>
+        <div class="nav-item">image</div>
+        <div class="nav-item">audio</div>
+        <div class="nav-item">overlay</div>
+        <div class="nav-item">doc</div>
+        <div class="nav-item">compose queue</div>
+      </nav>
+    </aside>
+
+    <div class="feed-wrap">
+      <div class="feed-header">
+        <span class="feed-label">assets</span>
+        <span class="feed-count">12 items</span>
+      </div>
+      <div class="feed" id="assetFeed">
+        <article class="asset"><div class="asset-kind">video</div><div class="asset-bottom"><div class="asset-title">Rig orbit sequence</div><div class="asset-sub">Garage build · Nikon Z7</div></div></article>
+        <article class="asset"><div class="asset-kind">image</div><div class="asset-bottom"><div class="asset-title">Workbench hero frame</div><div class="asset-sub">Project P5 · cinematic still</div></div></article>
+        <article class="asset"><div class="asset-kind">audio</div><div class="asset-bottom"><div class="asset-title">Voiceover scratch</div><div class="asset-sub">USB condenser · noisy room pass</div></div></article>
+        <article class="asset"><div class="asset-kind">video</div><div class="asset-bottom"><div class="asset-title">Witness camera capture</div><div class="asset-sub">Source NAS · index ready</div></div></article>
+        <article class="asset"><div class="asset-kind">overlay</div><div class="asset-bottom"><div class="asset-title">Plate preview</div><div class="asset-sub">OBS · browser source</div></div></article>
+        <article class="asset"><div class="asset-kind">video</div><div class="asset-bottom"><div class="asset-title">Public accountability cut</div><div class="asset-sub">Compose pending · exports</div></div></article>
+        <article class="asset"><div class="asset-kind">image</div><div class="asset-bottom"><div class="asset-title">Shader moodboard</div><div class="asset-sub">AssetFX glow concept</div></div></article>
+        <article class="asset"><div class="asset-kind">video</div><div class="asset-bottom"><div class="asset-title">Vertical BTS clip</div><div class="asset-sub">Phone share candidate</div></div></article>
+        <article class="asset"><div class="asset-kind">doc</div><div class="asset-bottom"><div class="asset-title">Metadata notes</div><div class="asset-sub">XML export mapping</div></div></article>
+        <article class="asset"><div class="asset-kind">video</div><div class="asset-bottom"><div class="asset-title">NDI relay test</div><div class="asset-sub">Bedroom desktop scene</div></div></article>
+        <article class="asset"><div class="asset-kind">image</div><div class="asset-bottom"><div class="asset-title">Pan-tilt CAD</div><div class="asset-sub">Servo + extrusion assembly</div></div></article>
+        <article class="asset"><div class="asset-kind">video</div><div class="asset-bottom"><div class="asset-title">Shorts export candidate</div><div class="asset-sub">Vertical cut concept</div></div></article>
+      </div>
+    </div>
+  </div>
+
+</div>
+```
+
+  </main>
+
+  <!-- EDITOR LAUNCHER -->
+
+  <button class="editor-launch" id="editorLaunch" type="button" aria-expanded="false">
+    <span class="tiny-dot"></span>
+    tune topbar
+  </button>
+
+  <!-- CONTROL SURFACE -->
+
+  <div class="control-surface" id="controlSurface" data-open="false">
+    <div class="ctrl-group">
+      <div class="ctrl-label">blur treatment</div>
+      <div class="ctrl-seg" id="blurSeg">
+        <button type="button" data-v="dissipate" class="active">dissipating</button>
+        <button type="button" data-v="soft-plate">soft plate</button>
+        <button type="button" data-v="strong-fog">strong fog</button>
+      </div>
+    </div>
+    <div class="ctrl-group">
+      <div class="ctrl-label">hairline</div>
+      <div class="ctrl-seg" id="lineSeg">
+        <button type="button" data-v="no-line" class="active">none</button>
+        <button type="button" data-v="soft-line">soft</button>
+        <button type="button" data-v="thin-line">sharp</button>
+      </div>
+    </div>
+    <div class="ctrl-group">
+      <div class="ctrl-label">brand label</div>
+      <div class="ctrl-seg" id="brandSeg">
+        <button type="button" data-v="base" class="active">Cdaprod</button>
+        <button type="button" data-v="explorer">Explorer</button>
+        <button type="button" data-v="projects">Projects</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const viewport       = document.getElementById('viewport');
+  const topbar         = document.getElementById('topbar');
+  const blurSeg        = document.getElementById('blurSeg');
+  const lineSeg        = document.getElementById('lineSeg');
+  const brandSeg       = document.getElementById('brandSeg');
+  const brandTitle     = document.getElementById('brandTitle');
+  const editorLaunch   = document.getElementById('editorLaunch');
+  const controlSurface = document.getElementById('controlSurface');
+
+  let lastY = 0;
+
+  function setActiveSeg(seg, value, attr = 'data-v') {
+    seg.querySelectorAll('button').forEach(b =>
+      b.classList.toggle('active', b.getAttribute(attr) === value));
+  }
+
+  function setOpen(v) {
+    controlSurface.dataset.open = v ? 'true' : 'false';
+    editorLaunch.setAttribute('aria-expanded', v ? 'true' : 'false');
+  }
+
+  /* blur modes — only change scrim opacity & blur amount via CSS vars on body */
+  const BLUR_MAP = {
+    'dissipate':  { blur: '12px', scrim: '.78', fade: '.32', bottom: '.06' },
+    'soft-plate': { blur: '8px',  scrim: '.56', fade: '.24', bottom: '.0'  },
+    'strong-fog': { blur: '20px', scrim: '.88', fade: '.44', bottom: '.10' },
+  };
+
+  function applyBlur(v) {
+    const m = BLUR_MAP[v] || BLUR_MAP['dissipate'];
+    document.documentElement.style.setProperty('--blur', m.blur);
+    document.body.dataset.blur = v;
+    setActiveSeg(blurSeg, v);
+  }
+
+  const BRAND_MAP = {
+    base: 'Cdaprod',
+    explorer: 'Explorer',
+    projects: 'Projects',
+  };
+
+  function applyBrand(v) {
+    brandTitle.textContent = BRAND_MAP[v] || 'Cdaprod';
+    setActiveSeg(brandSeg, v);
+  }
+
+  function applyLine(v) {
+    document.body.dataset.style = v;
+    setActiveSeg(lineSeg, v);
+  }
+
+  const toggle = (e) => { e.preventDefault(); e.stopPropagation(); setOpen(controlSurface.dataset.open !== 'true'); };
+  editorLaunch.addEventListener('click', toggle);
+  editorLaunch.addEventListener('touchend', toggle, { passive: false });
+
+  blurSeg.addEventListener('click', e => {
+    const b = e.target.closest('button[data-v]'); if (!b) return;
+    applyBlur(b.dataset.v); setOpen(true);
+  });
+
+  lineSeg.addEventListener('click', e => {
+    const b = e.target.closest('button[data-v]'); if (!b) return;
+    applyLine(b.dataset.v); setOpen(true);
+  });
+
+  brandSeg.addEventListener('click', e => {
+    const b = e.target.closest('button[data-v]'); if (!b) return;
+    applyBrand(b.dataset.v); setOpen(true);
+  });
+
+  document.addEventListener('pointerdown', e => {
+    if (controlSurface.contains(e.target) || editorLaunch.contains(e.target)) return;
+    setOpen(false);
+  });
+
+  function onScroll() {
+    const y = viewport.scrollTop;
+    const dn = y > lastY + 4;
+    const up = y < lastY - 4;
+
+    topbar.dataset.condensed = y > 28 ? 'true' : 'false';
+
+    if (y < 16)            topbar.dataset.hidden = 'false';
+    else if (dn && y > 160) topbar.dataset.hidden = 'true';
+    else if (up)            topbar.dataset.hidden = 'false';
+
+    lastY = y;
+  }
+
+  applyBlur('dissipate');
+  applyLine('no-line');
+  applyBrand('base');
+  setOpen(false);
+
+  viewport.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
+
+  /* view seg toggle */
+  document.getElementById('viewSeg').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    document.getElementById('viewSeg').querySelectorAll('button').forEach(btn =>
+      btn.classList.toggle('active', btn === b));
+  });
+</script>
+
+</body>
+</html>

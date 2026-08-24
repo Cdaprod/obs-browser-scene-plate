@@ -1,0 +1,1027 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Explorer — World Camera Push Lab (Fixed)</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;600;700;800&display=swap');
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #09090f;
+      --card-bg: #111120;
+      --border: rgba(255,255,255,0.07);
+      --text: #e8e8f0;
+      --muted: rgba(255,255,255,0.42);
+      --accent: #5b7fff;
+      --gap: 6px;
+      --radius: 10px;
+      --header-h: 48px;
+      --preview-ui-h: 112px;
+      --preview-radius: 16px;
+      --shadow-focus: 0 28px 120px rgba(0,0,0,0.34);
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Syne', sans-serif;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+      user-select: none;
+    }
+
+    body {
+      background:
+        radial-gradient(circle at top, rgba(91,127,255,0.08), transparent 28%),
+        var(--bg);
+    }
+
+    #header {
+      position: fixed;
+      inset: 0 0 auto 0;
+      height: var(--header-h);
+      z-index: 50;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 14px;
+      background: rgba(9, 9, 15, 0.72);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .logo {
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .logo em { color: var(--accent); font-style: normal; }
+
+    .meta {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }
+
+    .col-btns { display: flex; gap: 6px; align-items: center; }
+
+    .col-btn {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      line-height: 1;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease;
+    }
+
+    .col-btn:hover, .col-btn.active {
+      border-color: rgba(91,127,255,0.55);
+      color: var(--accent);
+      background: rgba(91,127,255,0.1);
+    }
+
+    #viewport {
+      position: fixed;
+      top: var(--header-h);
+      inset-inline: 0;
+      bottom: 0;
+      overflow: auto;
+      z-index: 1;
+      -webkit-overflow-scrolling: touch;
+      background: transparent;
+    }
+
+    #viewport.locked { overflow: hidden; touch-action: none; }
+
+    #world {
+      position: relative;
+      min-height: 100%;
+      padding: var(--gap);
+      transform-origin: center center;
+      will-change: transform, opacity, filter;
+    }
+
+    #grid {
+      columns: 4;
+      column-gap: var(--gap);
+    }
+
+    .card {
+      break-inside: avoid;
+      position: relative;
+      display: block;
+      margin-bottom: var(--gap);
+      border-radius: var(--radius);
+      overflow: hidden;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      cursor: pointer;
+      will-change: transform, opacity, filter, box-shadow;
+      box-shadow: 0 0 0 rgba(0,0,0,0);
+      transform: translateZ(0);
+      isolation: isolate;
+    }
+
+    .card-media {
+      position: relative;
+      width: 100%;
+      display: block;
+      overflow: hidden;
+      background: #07070c;
+    }
+
+    .card img {
+      width: 100%;
+      height: 100%;
+      display: block;
+      object-fit: cover;
+      transform: scale(1.001);
+      pointer-events: none;
+    }
+
+    .card.tall .card-media { aspect-ratio: 9 / 16; }
+    .card.wide .card-media { aspect-ratio: 16 / 9; }
+    .card.sq .card-media { aspect-ratio: 1 / 1; }
+
+    .card.audio {
+      min-height: 92px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background:
+        radial-gradient(circle at 50% 35%, rgba(91,127,255,0.14), transparent 35%),
+        linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0));
+    }
+
+    .card-audio-inner {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .aud-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      border: 1px solid rgba(255,255,255,0.12);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .aud-label {
+      font-family: 'DM Mono', monospace;
+      font-size: 9px;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+
+    .card-overlay {
+      position: absolute;
+      inset: auto 0 0 0;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      background: linear-gradient(to top, rgba(9,9,15,0.76), rgba(9,9,15,0));
+      pointer-events: none;
+      transition: opacity 0.22s ease, transform 0.22s ease;
+      z-index: 3;
+    }
+
+    .card-overlay .title {
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1.05;
+    }
+
+    .card-overlay .sub {
+      font-family: 'DM Mono', monospace;
+      font-size: 8px;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+    }
+
+    .card-preview-ui {
+      position: absolute;
+      inset: auto 0 0 0;
+      z-index: 4;
+      padding: 20px 18px 18px;
+      background: linear-gradient(to top, rgba(9,9,15,0.96), rgba(9,9,15,0.60) 28%, rgba(9,9,15,0));
+      opacity: 0;
+      transform: translateY(14px);
+      pointer-events: none;
+    }
+
+    .card-preview-topline {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+      font-family: 'DM Mono', monospace;
+      font-size: 9px;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+
+    .dot {
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.18);
+    }
+
+    .card-preview-title {
+      font-size: clamp(18px, 2vw, 25px);
+      font-weight: 800;
+      line-height: 0.96;
+      margin-bottom: 7px;
+      max-width: 88%;
+    }
+
+    .card-preview-meta {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      line-height: 1.45;
+      letter-spacing: 0.05em;
+      color: rgba(255,255,255,0.62);
+      max-width: 92%;
+    }
+
+    .card-play-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 16px;
+      opacity: 0.9;
+    }
+
+    .play-pill,
+    .mute-pill {
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.08);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text);
+      flex: 0 0 auto;
+    }
+
+    .play-pill {
+      width: 34px;
+      height: 34px;
+      font-size: 12px;
+    }
+
+    .mute-pill {
+      width: 30px;
+      height: 30px;
+      font-size: 11px;
+    }
+
+    .play-track {
+      position: relative;
+      flex: 1 1 auto;
+      height: 4px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.18);
+      overflow: hidden;
+    }
+
+    .play-fill {
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 36%;
+      border-radius: inherit;
+      background: rgba(255,255,255,0.72);
+    }
+
+    .card-focus-frame {
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.05);
+      pointer-events: none;
+      z-index: 6;
+    }
+
+    #world.focusing .card:not(.focus-card) {
+      filter: saturate(0.88);
+    }
+
+    .card.focus-card {
+      z-index: 20;
+      box-shadow: var(--shadow-focus);
+    }
+
+    .card.focus-card .card-overlay {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+
+    #hud {
+      position: fixed;
+      inset: 0;
+      z-index: 30;
+      pointer-events: none;
+      opacity: 0;
+    }
+
+    #hud.open { opacity: 1; }
+
+    #focus-mask {
+      position: absolute;
+      inset: 0;
+      pointer-events: auto;
+      opacity: 0;
+      background: radial-gradient(circle at center, rgba(0,0,0,0) 0%, rgba(0,0,0,0.08) 28%, rgba(0,0,0,0.42) 72%, rgba(0,0,0,0.62) 100%);
+    }
+
+    #target-window {
+      position: absolute;
+      border-radius: var(--preview-radius);
+      overflow: hidden;
+      opacity: 0;
+      pointer-events: none;
+      box-shadow: 0 0 0 1px rgba(255,255,255,0.06);
+      background: transparent;
+    }
+
+    #window-matte-top,
+    #window-matte-bottom {
+      position: absolute;
+      left: 0;
+      right: 0;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    #window-matte-top {
+      background: linear-gradient(to bottom, rgba(0,0,0,0.72), rgba(0,0,0,0.22) 52%, rgba(0,0,0,0));
+    }
+
+    #window-matte-bottom {
+      background: linear-gradient(to top, rgba(0,0,0,0.72), rgba(0,0,0,0.22) 52%, rgba(0,0,0,0));
+    }
+
+    #close-btn {
+      position: fixed;
+      top: 12px;
+      right: 14px;
+      z-index: 60;
+      width: 34px;
+      height: 34px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.08);
+      color: var(--text);
+      font-size: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      pointer-events: none;
+      cursor: pointer;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+    }
+
+    #close-btn.visible {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    #lab {
+      position: fixed;
+      left: 50%;
+      bottom: max(14px, env(safe-area-inset-bottom));
+      transform: translateX(-50%);
+      z-index: 70;
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: center;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(10,10,16,0.86);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      font-family: 'DM Mono', monospace;
+      font-size: 9px;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      transition: opacity 0.25s ease, transform 0.25s ease;
+    }
+
+    #lab.hidden {
+      opacity: 0;
+      pointer-events: none;
+      transform: translateX(-50%) translateY(8px);
+    }
+
+    .lb {
+      font-family: 'DM Mono', monospace;
+      font-size: 9px;
+      line-height: 1;
+      padding: 5px 9px;
+      border-radius: 999px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .lb:hover, .lb.active {
+      color: var(--accent);
+      border-color: rgba(91,127,255,0.55);
+      background: rgba(91,127,255,0.08);
+    }
+
+    .divider {
+      width: 1px;
+      height: 14px;
+      background: var(--border);
+      margin: 0 2px;
+    }
+
+    #feel-wrap {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    #feel-slider {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 84px;
+      height: 2px;
+      border-radius: 2px;
+      background: rgba(255,255,255,0.12);
+      outline: none;
+      cursor: pointer;
+    }
+
+    #feel-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      background: var(--accent);
+      cursor: pointer;
+    }
+
+    #feel-val {
+      color: var(--accent);
+      min-width: 26px;
+      text-align: right;
+    }
+
+    @media (max-width: 820px) {
+      #grid { columns: 3; }
+    }
+
+    @media (max-width: 540px) {
+      #header { padding: 0 10px; }
+      .logo { font-size: 11px; letter-spacing: 0.08em; }
+      .meta { display: none; }
+      #grid { columns: 2; }
+      #lab { width: min(94vw, 560px); border-radius: 18px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="header">
+    <div class="logo"><em>C</em>DAPROD · EXPLORER</div>
+    <div class="meta" id="item-count">— items</div>
+    <div class="col-btns">
+      <button class="col-btn active" onclick="setCols(4, this)">4</button>
+      <button class="col-btn" onclick="setCols(3, this)">3</button>
+      <button class="col-btn" onclick="setCols(2, this)">2</button>
+    </div>
+  </div>
+
+  <div id="viewport">
+    <div id="world">
+      <div id="grid"></div>
+    </div>
+  </div>
+
+  <div id="hud">
+    <div id="focus-mask"></div>
+    <div id="target-window">
+      <div id="window-matte-top"></div>
+      <div id="window-matte-bottom"></div>
+    </div>
+  </div>
+
+  <button id="close-btn" aria-label="Close preview" onclick="closeFocus()">✕</button>
+
+  <div id="lab">
+    <span>EASE</span>
+    <button class="lb active" onclick="setEaseFamily(this, 'power4.inOut')">power4</button>
+    <button class="lb" onclick="setEaseFamily(this, 'power2.inOut')">power2</button>
+    <button class="lb" onclick="setEaseFamily(this, 'expo.inOut')">expo</button>
+    <button class="lb" onclick="setEaseFamily(this, 'circ.inOut')">circ</button>
+    <div class="divider"></div>
+    <div id="feel-wrap">
+      <span>FEEL</span>
+      <input id="feel-slider" type="range" min="0" max="100" step="1" value="55" oninput="setFeelFromSlider(this.value)" />
+      <span id="feel-val">55</span>
+    </div>
+  </div>
+
+  <script>
+    const ASSETS = [
+      { id: 1, type: 'wide', src: 'https://picsum.photos/seed/a1/960/540', title: 'Setup Overview', meta: 'IMG · 3.2MB · 2024-03-12' },
+      { id: 2, type: 'tall', src: 'https://picsum.photos/seed/a2/720/1280', title: 'Self Portrait', meta: 'IMG · 2.1MB · 2024-03-11' },
+      { id: 3, type: 'sq', src: 'https://picsum.photos/seed/a3/800/800', title: 'Close Up Study', meta: 'IMG · 1.8MB · 2024-03-10' },
+      { id: 4, type: 'sq', src: 'https://picsum.photos/seed/a4/800/800', title: 'Night Drive', meta: 'VID · 47MB · 2024-03-09' },
+      { id: 5, type: 'tall', src: 'https://picsum.photos/seed/a5/720/1280', title: 'Street Sign', meta: 'IMG · 1.4MB · 2024-03-09' },
+      { id: 6, type: 'sq', src: 'https://picsum.photos/seed/a6/800/800', title: 'Trash Day', meta: 'IMG · 2.7MB · 2024-03-08' },
+      { id: 7, type: 'wide', src: 'https://picsum.photos/seed/a7/960/540', title: 'Walking Trail', meta: 'VID · 91MB · 2024-03-07' },
+      { id: 8, type: 'tall', src: 'https://picsum.photos/seed/a8/720/1280', title: 'Lava Lamp Green', meta: 'VID · 34MB · 2024-03-06' },
+      { id: 9, type: 'sq', src: 'https://picsum.photos/seed/a9/800/800', title: 'Kids at Target', meta: 'IMG · 1.9MB · 2024-03-06' },
+      { id: 10, type: 'wide', src: 'https://picsum.photos/seed/a10/960/540', title: 'Black Car Snow', meta: 'VID · 55MB · 2024-03-05' },
+      { id: 11, type: 'tall', src: 'https://picsum.photos/seed/a11/720/1280', title: 'Drink Closeup', meta: 'VID · 22MB · 2024-03-05' },
+      { id: 12, type: 'sq', src: 'https://picsum.photos/seed/a12/800/800', title: 'Sand Pour', meta: 'VID · 18MB · 2024-03-04' },
+      { id: 13, type: 'audio', src: null, title: 'Voice Memo 01', meta: 'AUD · 4.2MB · 2024-03-04' },
+      { id: 14, type: 'tall', src: 'https://picsum.photos/seed/a14/720/1280', title: 'Camera Rig', meta: 'IMG · 3.1MB · 2024-03-03' },
+      { id: 15, type: 'wide', src: 'https://picsum.photos/seed/a15/960/540', title: 'Toys Aisle', meta: 'VID · 62MB · 2024-03-03' },
+      { id: 16, type: 'sq', src: 'https://picsum.photos/seed/a16/800/800', title: 'Lava Lamp Blue', meta: 'VID · 29MB · 2024-03-02' },
+      { id: 17, type: 'tall', src: 'https://picsum.photos/seed/a17/720/1280', title: 'Smoke Driveway', meta: 'VID · 77MB · 2024-03-02' },
+      { id: 18, type: 'sq', src: 'https://picsum.photos/seed/a18/800/800', title: 'Paulding County', meta: 'IMG · 1.2MB · 2024-03-01' },
+      { id: 19, type: 'audio', src: null, title: 'Voice Memo 02', meta: 'AUD · 2.8MB · 2024-03-01' },
+      { id: 20, type: 'tall', src: 'https://picsum.photos/seed/a20/720/1280', title: 'Sunglasses Self', meta: 'IMG · 2.3MB · 2024-02-28' },
+      { id: 21, type: 'wide', src: 'https://picsum.photos/seed/a21/960/540', title: 'Code Screenshot', meta: 'SCN · 0.9MB · 2024-02-27' },
+      { id: 22, type: 'sq', src: 'https://picsum.photos/seed/a22/800/800', title: 'Shopping Carts', meta: 'IMG · 1.7MB · 2024-02-27' },
+      { id: 23, type: 'audio', src: null, title: 'Voice Memo 03', meta: 'AUD · 6.1MB · 2024-02-26' },
+      { id: 24, type: 'wide', src: 'https://picsum.photos/seed/a24/960/540', title: 'County Sign Wide', meta: 'IMG · 2.0MB · 2024-02-26' },
+      { id: 25, type: 'sq', src: 'https://picsum.photos/seed/a25/800/800', title: 'Holding Device', meta: 'IMG · 1.5MB · 2024-02-25' },
+      { id: 26, type: 'tall', src: 'https://picsum.photos/seed/a26/720/1280', title: 'Concert Lights', meta: 'VID · 48MB · 2024-02-25' },
+      { id: 27, type: 'audio', src: null, title: 'Voice Memo 04', meta: 'AUD · 3.4MB · 2024-02-24' },
+      { id: 28, type: 'sq', src: 'https://picsum.photos/seed/a28/800/800', title: 'Document Scan', meta: 'DOC · 0.4MB · 2024-02-24' }
+    ];
+
+    let currentEaseFamily = 'power4.inOut';
+    let feel = 55;
+
+    let isFocused = false;
+    let activeAsset = null;
+    let activeCard = null;
+    let focusTL = null;
+    let unfocusTL = null;
+    let restoreScrollTop = 0;
+
+    const els = {
+      viewport: document.getElementById('viewport'),
+      world: document.getElementById('world'),
+      grid: document.getElementById('grid'),
+      itemCount: document.getElementById('item-count'),
+      hud: document.getElementById('hud'),
+      focusMask: document.getElementById('focus-mask'),
+      targetWindow: document.getElementById('target-window'),
+      matteTop: document.getElementById('window-matte-top'),
+      matteBottom: document.getElementById('window-matte-bottom'),
+      closeBtn: document.getElementById('close-btn'),
+      lab: document.getElementById('lab'),
+      feelVal: document.getElementById('feel-val'),
+      feelSlider: document.getElementById('feel-slider')
+    };
+
+    function lerp(a, b, t) { return a + (b - a) * t; }
+
+    function getProfile() {
+      const t = feel / 100;
+      return {
+        duration: lerp(0.62, 1.24, t),
+        blurPx: lerp(0.4, 1.9, t),
+        dimOpacity: lerp(0.44, 0.18, t),
+        scrimOpacity: lerp(0.22, 0.58, t),
+        matteOpacity: lerp(0.36, 0.90, t),
+        overshoot: lerp(0.00, 0.03, t),
+        verticalBias: lerp(0.00, -0.02, t)
+      };
+    }
+
+    function mediaRatioFor(asset) {
+      if (asset.type === 'tall') return 9 / 16;
+      if (asset.type === 'sq') return 1;
+      if (asset.type === 'audio') return 16 / 9;
+      return 16 / 9;
+    }
+
+    function kindFromMeta(meta = '') {
+      return meta.split('·')[0]?.trim() || 'MEDIA';
+    }
+
+    function buildGrid() {
+      els.grid.innerHTML = '';
+      els.itemCount.textContent = `${ASSETS.length} items`;
+
+      ASSETS.forEach((asset, i) => {
+        const card = document.createElement('article');
+        card.className = `card ${asset.type}`;
+        card.dataset.id = String(asset.id);
+        card.dataset.index = String(i);
+
+        if (asset.type === 'audio') {
+          card.innerHTML = `
+            <div class="card-audio-inner">
+              <div class="aud-icon">♪</div>
+              <div class="aud-label">AUDIO</div>
+            </div>
+            <div class="card-overlay">
+              <div class="title">${escapeHtml(asset.title)}</div>
+              <div class="sub">${escapeHtml(asset.meta)}</div>
+            </div>
+            <div class="card-preview-ui">
+              <div class="card-preview-topline">
+                <span>Preview</span>
+                <span class="dot"></span>
+                <span>${escapeHtml(kindFromMeta(asset.meta))}</span>
+              </div>
+              <div class="card-preview-title">${escapeHtml(asset.title)}</div>
+              <div class="card-preview-meta">${escapeHtml(asset.meta)}</div>
+              <div class="card-play-row">
+                <div class="play-pill">♪</div>
+                <div class="play-track"><div class="play-fill"></div></div>
+                <div class="mute-pill">•</div>
+              </div>
+            </div>
+            <div class="card-focus-frame"></div>
+          `;
+        } else {
+          card.innerHTML = `
+            <div class="card-media">
+              <img src="${asset.src}" alt="${escapeAttr(asset.title)}" draggable="false" />
+            </div>
+            <div class="card-overlay">
+              <div class="title">${escapeHtml(asset.title)}</div>
+              <div class="sub">${escapeHtml(asset.meta)}</div>
+            </div>
+            <div class="card-preview-ui">
+              <div class="card-preview-topline">
+                <span>Preview</span>
+                <span class="dot"></span>
+                <span>${escapeHtml(kindFromMeta(asset.meta))}</span>
+              </div>
+              <div class="card-preview-title">${escapeHtml(asset.title)}</div>
+              <div class="card-preview-meta">${escapeHtml(asset.meta)}</div>
+              <div class="card-play-row">
+                <div class="play-pill">▶</div>
+                <div class="play-track"><div class="play-fill"></div></div>
+                <div class="mute-pill">🔇</div>
+              </div>
+            </div>
+            <div class="card-focus-frame"></div>
+          `;
+        }
+
+        gsap.set(card, { opacity: 0, y: 14, scale: 0.97 });
+        gsap.to(card, {
+          opacity: 1,
+          y: 0,
+          scale: 1,
+          duration: 0.52,
+          ease: 'power3.out',
+          delay: 0.02 + i * 0.02
+        });
+
+        card.addEventListener('click', () => focusCard(asset, card));
+        els.grid.appendChild(card);
+      });
+    }
+
+    function computeTargetRect(asset) {
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const ratio = mediaRatioFor(asset);
+      const profile = getProfile();
+
+      const sidePad = Math.max(12, Math.round(vw * 0.02));
+      const topSafe = 12 + 36 + 14;
+      const bottomSafe = 16;
+      const availableW = vw - sidePad * 2;
+      const availableH = vh - topSafe - bottomSafe;
+      const uiReserve = Math.min(116, Math.max(94, vh * 0.15));
+
+      let mediaW = availableW;
+      let mediaH = mediaW / ratio;
+      if (mediaH + uiReserve > availableH) {
+        mediaH = availableH - uiReserve;
+        mediaW = mediaH * ratio;
+      }
+
+      const totalW = Math.round(mediaW);
+      const totalH = Math.round(mediaH + uiReserve);
+      const left = Math.round((vw - totalW) / 2);
+      const top = Math.round(topSafe + ((availableH - totalH) / 2) + (availableH * profile.verticalBias));
+
+      return {
+        left,
+        top,
+        width: totalW,
+        height: totalH,
+        mediaHeight: Math.round(mediaH),
+        mediaRatio: ratio
+      };
+    }
+
+    function focusCard(asset, cardEl) {
+      if (isFocused) return;
+      isFocused = true;
+      activeAsset = asset;
+      activeCard = cardEl;
+      restoreScrollTop = els.viewport.scrollTop;
+
+      if (focusTL) focusTL.kill();
+      if (unfocusTL) unfocusTL.kill();
+
+      const profile = getProfile();
+      const target = computeTargetRect(asset);
+      const cardRect = cardEl.getBoundingClientRect();
+      const cardCenterX = cardRect.left + cardRect.width / 2;
+      const cardCenterY = cardRect.top + cardRect.height / 2;
+      const targetCenterX = target.left + target.width / 2;
+      const targetCenterY = target.top + target.height / 2;
+
+      const previewScale = Math.min(
+        target.width / cardRect.width,
+        target.mediaHeight / cardRect.height
+      ) * (1 + profile.overshoot);
+
+      const rawLeft = cardRect.left;
+      const rawTop = cardRect.top + els.viewport.scrollTop;
+      const originX = rawLeft;
+      const originY = rawTop;
+
+      const x = target.left - cardRect.left;
+      const y = target.top - cardRect.top;
+
+      gsap.set(els.world, {
+        transformOrigin: `${originX}px ${originY}px`
+      });
+
+      positionTargetWindow(target, 0, profile.matteOpacity);
+      document.querySelectorAll('.card').forEach(card => card.classList.remove('focus-card'));
+      cardEl.classList.add('focus-card');
+
+      els.viewport.classList.add('locked');
+      els.world.classList.add('focusing');
+      els.hud.classList.add('open');
+      els.closeBtn.classList.add('visible');
+      els.lab.classList.add('hidden');
+
+      const previewUi = cardEl.querySelector('.card-preview-ui');
+      gsap.set(els.hud, { opacity: 1 });
+      gsap.set(els.focusMask, { opacity: 0 });
+      gsap.set(els.closeBtn, { opacity: 0, scale: 0.88 });
+      gsap.set(previewUi, { opacity: 0, y: 14 });
+
+      focusTL = gsap.timeline({
+        defaults: { overwrite: 'auto' },
+        onComplete: () => {
+          els.world.classList.remove('focusing');
+        }
+      });
+
+      focusTL
+        .to(els.world, {
+          x,
+          y,
+          scale: previewScale,
+          duration: profile.duration,
+          ease: currentEaseFamily
+        }, 0)
+        .to(els.world, {
+          filter: `blur(${profile.blurPx}px)`,
+          opacity: profile.dimOpacity,
+          duration: profile.duration * 0.70,
+          ease: 'power2.out'
+        }, profile.duration * 0.14)
+        .to(cardEl, {
+          opacity: 1,
+          filter: 'blur(0px)',
+          duration: 0.01,
+          boxShadow: 'var(--shadow-focus)'
+        }, 0)
+        .to(els.focusMask, {
+          opacity: profile.scrimOpacity,
+          duration: 0.28,
+          ease: 'power2.out'
+        }, 0)
+        .to({}, {
+          duration: profile.duration * 0.44,
+          onUpdate: function() {
+            positionTargetWindow(target, this.progress(), profile.matteOpacity);
+          }
+        }, profile.duration * 0.16)
+        .to(previewUi, {
+          opacity: 1,
+          y: 0,
+          duration: 0.36,
+          ease: 'power3.out'
+        }, profile.duration * 0.50)
+        .to(els.closeBtn, {
+          opacity: 1,
+          scale: 1,
+          duration: 0.22,
+          ease: 'power2.out'
+        }, profile.duration * 0.46);
+    }
+
+    function closeFocus() {
+      if (!isFocused || !activeCard) return;
+
+      if (focusTL) focusTL.kill();
+      if (unfocusTL) unfocusTL.kill();
+
+      const profile = getProfile();
+      const previewUi = activeCard.querySelector('.card-preview-ui');
+      const target = computeTargetRect(activeAsset);
+
+      els.world.classList.add('focusing');
+
+      unfocusTL = gsap.timeline({
+        defaults: { overwrite: 'auto' },
+        onComplete: () => {
+          gsap.set(els.world, { clearProps: 'transform,filter,opacity,transformOrigin' });
+          gsap.set(els.focusMask, { clearProps: 'opacity' });
+          gsap.set(els.closeBtn, { clearProps: 'all' });
+          gsap.set(previewUi, { clearProps: 'all' });
+          gsap.set(activeCard, { clearProps: 'boxShadow,filter,opacity' });
+
+          els.targetWindow.style.opacity = '0';
+          els.matteTop.style.opacity = '0';
+          els.matteBottom.style.opacity = '0';
+          els.matteTop.style.height = '0px';
+          els.matteBottom.style.height = '0px';
+
+          els.viewport.scrollTop = restoreScrollTop;
+          els.viewport.classList.remove('locked');
+          els.world.classList.remove('focusing');
+          els.hud.classList.remove('open');
+          els.closeBtn.classList.remove('visible');
+          els.lab.classList.remove('hidden');
+
+          document.querySelectorAll('.card').forEach(card => card.classList.remove('focus-card'));
+
+          isFocused = false;
+          activeAsset = null;
+          activeCard = null;
+        }
+      });
+
+      unfocusTL
+        .to(previewUi, {
+          opacity: 0,
+          y: 12,
+          duration: 0.18,
+          ease: 'power2.in'
+        }, 0)
+        .to(els.closeBtn, {
+          opacity: 0,
+          scale: 0.9,
+          duration: 0.18,
+          ease: 'power2.in'
+        }, 0)
+        .to(els.focusMask, {
+          opacity: 0,
+          duration: profile.duration * 0.46,
+          ease: 'power2.out'
+        }, 0.02)
+        .to({}, {
+          duration: profile.duration * 0.34,
+          onUpdate: function() {
+            positionTargetWindow(target, 1 - this.progress(), profile.matteOpacity);
+          }
+        }, 0)
+        .to(els.world, {
+          filter: 'blur(0px)',
+          opacity: 1,
+          duration: profile.duration * 0.48,
+          ease: 'power2.out'
+        }, 0.08)
+        .to(els.world, {
+          x: 0,
+          y: 0,
+          scale: 1,
+          duration: profile.duration,
+          ease: currentEaseFamily
+        }, 0.08)
+        .to(activeCard, {
+          boxShadow: '0 0 0 rgba(0,0,0,0)',
+          duration: profile.duration * 0.72,
+          ease: currentEaseFamily
+        }, 0.08);
+    }
+
+    function positionTargetWindow(target, progress, matteStrength) {
+      if (!target || !activeAsset) {
+        els.targetWindow.style.opacity = '0';
+        return;
+      }
+
+      els.targetWindow.style.left = `${target.left}px`;
+      els.targetWindow.style.top = `${target.top}px`;
+      els.targetWindow.style.width = `${target.width}px`;
+      els.targetWindow.style.height = `${target.height}px`;
+      els.targetWindow.style.opacity = String(progress);
+
+      const unused = Math.max(0, target.height - target.mediaHeight);
+      const split = unused / 2;
+      const matteOpacity = activeAsset.type === 'audio' ? 0 : Math.min(0.95, matteStrength * progress);
+
+      els.matteTop.style.top = '0px';
+      els.matteTop.style.height = `${split}px`;
+      els.matteTop.style.opacity = String(matteOpacity);
+
+      els.matteBottom.style.bottom = '0px';
+      els.matteBottom.style.height = `${split}px`;
+      els.matteBottom.style.opacity = String(matteOpacity);
+    }
+
+    function setCols(n, btn) {
+      if (isFocused) return;
+      els.grid.style.columns = String(n);
+      document.querySelectorAll('.col-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    }
+
+    function setEaseFamily(btn, name) {
+      currentEaseFamily = name;
+      document.querySelectorAll('.lb').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    }
+
+    function setFeelFromSlider(value) {
+      feel = Number(value);
+      els.feelVal.textContent = String(value);
+    }
+
+    function escapeHtml(str) {
+      return String(str)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+    }
+
+    function escapeAttr(str) { return escapeHtml(str); }
+
+    window.addEventListener('resize', () => {
+      if (!isFocused || !activeAsset || !activeCard) return;
+
+      const profile = getProfile();
+      const target = computeTargetRect(activeAsset);
+      const cardRect = activeCard.getBoundingClientRect();
+      const previewScale = Math.min(
+        target.width / cardRect.width,
+        target.mediaHeight / cardRect.height
+      ) * (1 + profile.overshoot);
+
+      const x = target.left - cardRect.left;
+      const y = target.top - cardRect.top;
+
+      gsap.set(els.world, { x, y, scale: previewScale });
+      positionTargetWindow(target, 1, profile.matteOpacity);
+    });
+
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') closeFocus();
+    });
+
+    els.focusMask.addEventListener('click', closeFocus);
+
+    setFeelFromSlider(els.feelSlider.value);
+    buildGrid();
+  </script>
+</body>
+</html>

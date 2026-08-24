@@ -1,0 +1,1198 @@
+/site/tools/COMPOSITOR.html
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>Image/Video Overlay Compositor (drag/scale/rotate + bevel + export)</title>
+  <style>
+    :root{
+      --bg:#0a0f14;
+      --panel:rgba(10,15,20,.55);
+      --ink:#e8f2ff;
+      --muted:rgba(232,242,255,.65);
+      --accent:#00ffe1;
+      --warn:#ffcc00;
+      --danger:#ff3cac;
+      --uiRadius:12px;
+    }
+
+    *{box-sizing:border-box}
+    html,body{
+      height:100%;
+      margin:0;
+      background:var(--bg);
+      color:var(--ink);
+      font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;
+    }
+    body{overflow:hidden}
+    
+    body.ui-hidden #hud,
+    body.ui-hidden #selectionUI{
+      display:none !important;
+    }
+
+    #stage{
+      position:fixed; inset:0;
+      display:grid; place-items:center;
+      background:
+        radial-gradient(1200px 800px at 50% 35%, rgba(0,255,225,.08), transparent 60%),
+        linear-gradient(180deg, rgba(255,60,172,.06), transparent 45%),
+        var(--bg);
+      touch-action:none;
+    }
+
+    #surfaceWrap{
+      position:relative;
+      width:min(96vw, 980px);
+      aspect-ratio:9 / 16;
+      border-radius:18px;
+      overflow:hidden;
+      box-shadow:0 24px 80px rgba(0,0,0,.55);
+      background:#101722;
+    }
+
+    canvas#out{
+      position:absolute; inset:0;
+      width:100%; height:100%;
+      display:block;
+    }
+
+    #hud{
+      position:absolute; left:12px; top:12px;
+      padding:10px 12px;
+      border-radius:var(--uiRadius);
+      background:var(--panel);
+      backdrop-filter:blur(10px);
+      -webkit-backdrop-filter:blur(10px);
+      line-height:1.35;
+      font-size:12px;
+      user-select:none;
+      max-width:min(78vw, 760px);
+      pointer-events:auto;
+      z-index:20;
+    }
+    #hud b{color:var(--accent)}
+    #hud .row{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      align-items:center;
+      margin-top:8px;
+    }
+
+    .btn{
+      border:1px solid rgba(232,242,255,.2);
+      background:rgba(255,255,255,.06);
+      color:var(--ink);
+      padding:8px 10px;
+      border-radius:10px;
+      cursor:pointer;
+      font:inherit;
+    }
+    .btn:hover{border-color:rgba(0,255,225,.55)}
+    .btn.warn:hover{border-color:rgba(255,204,0,.75)}
+    .btn.danger:hover{border-color:rgba(255,60,172,.7)}
+    .btn[disabled]{
+      opacity:.45;
+      cursor:not-allowed;
+    }
+
+    .file{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding:8px 10px;
+      border-radius:10px;
+      border:1px dashed rgba(232,242,255,.25);
+      background:rgba(255,255,255,.04);
+      cursor:pointer;
+    }
+    .file input{display:none}
+
+    .pill{
+      padding:2px 8px;
+      border-radius:999px;
+      background:rgba(0,255,225,.12);
+      border:1px solid rgba(0,255,225,.25);
+      color:var(--accent);
+      font-size:11px;
+    }
+
+    .select{
+      border:1px solid rgba(232,242,255,.2);
+      background:rgba(255,255,255,.06);
+      color:var(--ink);
+      padding:8px 10px;
+      border-radius:10px;
+      font:inherit;
+      outline:none;
+      max-width:100%;
+    }
+
+    .range{
+      width:min(260px, 56vw);
+      accent-color:#00ffe1;
+    }
+
+    .meta{
+      color:var(--muted);
+      font-size:11px;
+    }
+
+    #selectionUI{
+      position:absolute; inset:0;
+      pointer-events:none;
+      z-index:10;
+    }
+
+    .selBox{
+      position:absolute;
+      border:2px dotted rgba(0,0,0,.75);
+      outline:2px dotted rgba(232,242,255,.85);
+      outline-offset:-2px;
+      border-radius:12px;
+      filter:drop-shadow(0 10px 20px rgba(0,0,0,.25));
+      transform-origin:center center;
+    }
+    .selBox.base{
+      outline-color:rgba(255,204,0,.95);
+      border-color:rgba(0,0,0,.8);
+    }
+
+    #mediaBin{
+      display:none;
+    }
+
+    body.exporting #hud,
+    body.exporting #selectionUI{
+      display:none !important;
+    }
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <div id="surfaceWrap">
+      <canvas id="out"></canvas>
+      <div id="selectionUI"></div>
+
+      <div id="hud">
+        <div><b>Compositor</b> — base (A) + overlays (B) (images/videos). Drag / pinch / rotate, then export.</div>
+        <div style="color:var(--muted);margin-top:6px">
+          • Tap overlay to select<br>
+          • Tap empty = select base (A) (auto-flips cover→free on first edit)<br>
+          • 1-finger drag = move • 2-finger = scale+rotate • wheel = scale
+        </div>
+
+        <div class="row">
+          <label class="file" title="Load base image or video">
+            <span>Load Base (A)</span>
+            <input id="baseFile" type="file" accept="image/*,video/*">
+          </label>
+
+          <label class="file" title="Add overlay images or videos">
+            <span>Add Overlay (B)</span>
+            <input id="overlayFile" type="file" accept="image/*,video/*" multiple>
+          </label>
+
+          <button class="btn" id="resetBaseBtn" title="Reset base to full-page cover mode">Base: Cover</button>
+          <button class="btn warn" id="toggleUIBtn" title="Toggle selection outline UI">Toggle Outline</button>
+          <button class="btn danger" id="deleteBtn" title="Delete selected overlay (not base)">Delete</button>
+        </div>
+
+        <div class="row">
+          <span class="pill">Video Controls</span>
+          <button class="btn" id="playPauseSelectedBtn" title="Play or pause selected video">Play Selected</button>
+          <button class="btn" id="restartSelectedBtn" title="Restart selected video">Restart</button>
+          <button class="btn" id="muteSelectedBtn" title="Mute or unmute selected video">Muted</button>
+          <button class="btn" id="playPauseAllBtn" title="Play or pause all videos">Play All</button>
+        </div>
+
+        <div class="row">
+          <input id="videoSeek" class="range" type="range" min="0" max="1" step="0.001" value="0" />
+          <span id="videoTime" class="meta">No video selected</span>
+        </div>
+
+        <div class="row">
+          <span class="pill">Export Frame</span>
+          <select class="select" id="exportSize">
+            <option value="viewport1080" selected>Viewport (1080p long-edge)</option>
+            <option value="viewport2k">Viewport (2K long-edge)</option>
+            <option value="previewExact">Match Preview Pixels</option>
+            <option value="baseNative">Base Native Pixels</option>
+          </select>
+          <button class="btn" id="exportBtn" title="Download a clean PNG snapshot">Export PNG</button>
+        </div>
+
+        <div style="color:var(--muted);margin-top:8px">
+          PNG export is a still snapshot. Videos render from real hidden <code>&lt;video&gt;</code> elements, so they need JS controls rather than native browser controls once drawn into canvas.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="mediaBin" aria-hidden="true"></div>
+
+  <script>
+    const $ = (sel, root=document) => root.querySelector(sel);
+
+    const stage = $('#stage');
+    const wrap  = $('#surfaceWrap');
+    const out   = $('#out');
+    const ctx   = out.getContext('2d', { alpha: true });
+
+    const baseFile     = $('#baseFile');
+    const overlayFile  = $('#overlayFile');
+
+    const exportBtn    = $('#exportBtn');
+    const exportSizeEl = $('#exportSize');
+
+    const deleteBtn    = $('#deleteBtn');
+    const toggleUIBtn  = $('#toggleUIBtn');
+    const resetBaseBtn = $('#resetBaseBtn');
+    const selectionUI  = $('#selectionUI');
+    const hud          = $('#hud');
+    const mediaBin     = $('#mediaBin');
+
+    const playPauseSelectedBtn = $('#playPauseSelectedBtn');
+    const restartSelectedBtn   = $('#restartSelectedBtn');
+    const muteSelectedBtn      = $('#muteSelectedBtn');
+    const playPauseAllBtn      = $('#playPauseAllBtn');
+    const videoSeek            = $('#videoSeek');
+    const videoTime            = $('#videoTime');
+
+    const BASE_ID = '__base__';
+    let showOutlineUI = true;
+
+    let baseMedia = null;
+    let baseLayer = { mode:'cover', x:0, y:0, scale:1, rot:0 };
+
+    const overlays = [];
+    let selectedId = null;
+
+    const pointers = new Map();
+    let gesture = { mode:'none', targetId:null, start:null };
+
+    let uiHidden = false;
+
+    function setUIHidden(hidden){
+      uiHidden = hidden;
+      document.body.classList.toggle('ui-hidden', hidden);
+    }
+    
+    let threeFingerTapStart = null;
+    let threeFingerTapMoved = false;
+    
+    window.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 3) {
+        threeFingerTapStart = {
+          time: Date.now(),
+          points: Array.from(e.touches).map(t => ({ x: t.clientX, y: t.clientY }))
+        };
+        threeFingerTapMoved = false;
+      }
+    }, { passive: true });
+    
+    window.addEventListener('touchmove', (e) => {
+      if (!threeFingerTapStart || e.touches.length !== 3) return;
+    
+      const nowPts = Array.from(e.touches);
+      for (let i = 0; i < 3; i++) {
+        const dx = nowPts[i].clientX - threeFingerTapStart.points[i].x;
+        const dy = nowPts[i].clientY - threeFingerTapStart.points[i].y;
+        if ((dx * dx + dy * dy) > 400) { // 20px threshold
+          threeFingerTapMoved = true;
+          break;
+        }
+      }
+    }, { passive: true });
+    
+    window.addEventListener('touchend', (e) => {
+      if (!threeFingerTapStart) return;
+    
+      const dt = Date.now() - threeFingerTapStart.time;
+      const wasTap = dt < 300 && !threeFingerTapMoved;
+    
+      if (wasTap && e.touches.length === 0) {
+        setUIHidden(!uiHidden);
+      }
+    
+      if (e.touches.length < 3) {
+        threeFingerTapStart = null;
+        threeFingerTapMoved = false;
+      }
+    }, { passive: true });
+    
+    // Prevent HUD interactions from bubbling into stage gesture handling
+    ['pointerdown','pointermove','pointerup','pointercancel','click','dblclick','touchstart','touchmove','touchend'].forEach(type => {
+      hud.addEventListener(type, (e) => e.stopPropagation(), { passive:false });
+    });
+
+    function uid(){ return Math.random().toString(16).slice(2) + Date.now().toString(16); }
+    function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
+    function getCanvasRect(){ return out.getBoundingClientRect(); }
+
+    function toCanvasXY(clientX, clientY){
+      const r = getCanvasRect();
+      return {
+        x: (clientX - r.left) * (out.width / r.width),
+        y: (clientY - r.top)  * (out.height / r.height),
+      };
+    }
+
+    function isVideoMedia(m){
+      return m instanceof HTMLVideoElement;
+    }
+
+    function getMediaWH(m){
+      if (!m) return { w:0, h:0 };
+      if (isVideoMedia(m)) return { w: m.videoWidth || 0, h: m.videoHeight || 0 };
+      return { w: m.naturalWidth || m.width || 0, h: m.naturalHeight || m.height || 0 };
+    }
+
+    function setSurfaceAspectFromBase(){
+      if (!baseMedia) return;
+      const { w, h } = getMediaWH(baseMedia);
+      if (!w || !h) return;
+      wrap.style.aspectRatio = `${w} / ${h}`;
+    }
+
+    function resizeOutToWrap(){
+      const r = wrap.getBoundingClientRect();
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const w = Math.max(2, Math.floor(r.width  * dpr));
+      const h = Math.max(2, Math.floor(r.height * dpr));
+      if (out.width !== w || out.height !== h){
+        out.width = w;
+        out.height = h;
+        if (baseMedia && baseLayer.mode === 'free'){
+          baseLayer.x = out.width * 0.5;
+          baseLayer.y = out.height * 0.5;
+        }
+      }
+    }
+
+    new ResizeObserver(resizeOutToWrap).observe(wrap);
+    window.addEventListener('resize', resizeOutToWrap);
+
+    function getOverlayById(id){
+      return overlays.find(o => o.id === id) || null;
+    }
+
+    function getSelectedItem(){
+      if (selectedId === BASE_ID && baseMedia){
+        return { id: BASE_ID, media: baseMedia, kind: isVideoMedia(baseMedia) ? 'video' : 'image', base: true };
+      }
+      const o = getOverlayById(selectedId);
+      if (!o) return null;
+      return { id: o.id, media: o.media, kind: o.kind, base: false, overlay: o };
+    }
+
+    function getAllVideos(){
+      const vids = [];
+      if (baseMedia && isVideoMedia(baseMedia)) vids.push(baseMedia);
+      for (const o of overlays){
+        if (o.kind === 'video' && isVideoMedia(o.media)) vids.push(o.media);
+      }
+      return vids;
+    }
+
+    function hitTestOverlay(px, py){
+      for (let i = overlays.length - 1; i >= 0; i--){
+        const o = overlays[i];
+        const cos = Math.cos(-o.rot);
+        const sin = Math.sin(-o.rot);
+
+        const dx = px - o.x;
+        const dy = py - o.y;
+
+        const lx = dx * cos - dy * sin;
+        const ly = dx * sin + dy * cos;
+
+        const ux = lx / o.scale;
+        const uy = ly / o.scale;
+
+        if (Math.abs(ux) <= o.w/2 && Math.abs(uy) <= o.h/2){
+          return o.id;
+        }
+      }
+      return null;
+    }
+
+    function roundRectPath(c, x, y, w, h, r){
+      r = Math.min(r, w/2, h/2);
+      c.beginPath();
+      c.moveTo(x+r, y);
+      c.arcTo(x+w, y, x+w, y+h, r);
+      c.arcTo(x+w, y+h, x, y+h, r);
+      c.arcTo(x, y+h, x, y, r);
+      c.arcTo(x, y, x+w, y, r);
+      c.closePath();
+    }
+
+    function drawPlaceholder(c, W, H, text){
+      c.clearRect(0,0,W,H);
+      c.fillStyle = '#4fb0ff';
+      c.fillRect(0,0,W,H);
+      c.fillStyle = 'rgba(255,255,255,.15)';
+      c.font = `${Math.floor(H*0.06)}px ui-monospace, monospace`;
+      c.textAlign = 'center';
+      c.textBaseline = 'middle';
+      c.fillText(text, W/2, H/2);
+    }
+
+    function canDrawVideoFrame(v){
+      return !!(v && v.readyState >= 2 && v.videoWidth && v.videoHeight);
+    }
+
+    function drawMediaCover(c, media, W, H){
+      const { w:iw, h:ih } = getMediaWH(media);
+      if (!iw || !ih){
+        drawPlaceholder(c, W, H, 'Loading…');
+        return;
+      }
+
+      if (isVideoMedia(media) && !canDrawVideoFrame(media)){
+        drawPlaceholder(c, W, H, 'Video Loading…');
+        return;
+      }
+
+      const s = Math.max(W/iw, H/ih);
+      const dw = iw * s;
+      const dh = ih * s;
+      const dx = (W - dw) * 0.5;
+      const dy = (H - dh) * 0.5;
+      c.drawImage(media, dx, dy, dw, dh);
+    }
+
+    function drawMediaFree(c, media, W, H, layer){
+      const { w:iw, h:ih } = getMediaWH(media);
+      if (!iw || !ih){
+        drawPlaceholder(c, W, H, 'Loading…');
+        return;
+      }
+
+      if (isVideoMedia(media) && !canDrawVideoFrame(media)){
+        drawPlaceholder(c, W, H, 'Video Loading…');
+        return;
+      }
+
+      const fit = Math.min(W/iw, H/ih);
+      const dw0 = iw * fit;
+      const dh0 = ih * fit;
+
+      c.save();
+      c.translate(layer.x, layer.y);
+      c.rotate(layer.rot);
+      c.scale(layer.scale, layer.scale);
+      c.drawImage(media, -dw0/2, -dh0/2, dw0, dh0);
+      c.restore();
+    }
+
+    function drawBase(c, W, H){
+      if (!baseMedia){
+        drawPlaceholder(c, W, H, 'Load Base (A)');
+        return;
+      }
+
+      c.clearRect(0,0,W,H);
+      if (baseLayer.mode === 'cover') drawMediaCover(c, baseMedia, W, H);
+      else drawMediaFree(c, baseMedia, W, H, baseLayer);
+    }
+
+    function drawOverlay(c, o, isSelected){
+      c.save();
+      c.translate(o.x, o.y);
+      c.rotate(o.rot);
+      c.scale(o.scale, o.scale);
+
+      const w = o.w, h = o.h;
+      const x = -w/2, y = -h/2;
+
+      c.shadowColor = 'rgba(0,0,0,0.42)';
+      c.shadowBlur  = 28;
+      c.shadowOffsetX = 0;
+      c.shadowOffsetY = 16;
+
+      const radius = Math.min(18, Math.min(w,h) * 0.08);
+      roundRectPath(c, x, y, w, h, radius);
+      c.clip();
+
+      if (o.kind === 'video' && !canDrawVideoFrame(o.media)){
+        c.fillStyle = '#161c29';
+        c.fillRect(x, y, w, h);
+        c.fillStyle = 'rgba(232,242,255,.45)';
+        c.font = `${Math.max(12, Math.floor(h * 0.08))}px ui-monospace, monospace`;
+        c.textAlign = 'center';
+        c.textBaseline = 'middle';
+        c.fillText('Video Loading…', 0, 0);
+      } else {
+        c.drawImage(o.media, x, y, w, h);
+      }
+
+      c.shadowColor = 'transparent';
+      c.shadowBlur = 0;
+      c.shadowOffsetX = 0;
+      c.shadowOffsetY = 0;
+
+      const g1 = c.createLinearGradient(x, y, x+w, y+h);
+      g1.addColorStop(0.00, 'rgba(255,255,255,0.28)');
+      g1.addColorStop(0.35, 'rgba(255,255,255,0.06)');
+      g1.addColorStop(1.00, 'rgba(0,0,0,0.10)');
+      c.fillStyle = g1;
+      c.fillRect(x, y, w, h);
+
+      c.globalAlpha = 0.95;
+      c.lineWidth = Math.max(2, Math.min(w,h) * 0.012);
+      const rim = c.createLinearGradient(x, y, x+w, y+h);
+      rim.addColorStop(0.00, 'rgba(255,255,255,0.55)');
+      rim.addColorStop(0.30, 'rgba(255,255,255,0.22)');
+      rim.addColorStop(0.70, 'rgba(0,0,0,0.18)');
+      rim.addColorStop(1.00, 'rgba(0,0,0,0.30)');
+      c.strokeStyle = rim;
+
+      roundRectPath(c, x + c.lineWidth*0.5, y + c.lineWidth*0.5, w - c.lineWidth, h - c.lineWidth, Math.max(2, radius - c.lineWidth*0.5));
+      c.stroke();
+
+      if (isSelected){
+        c.globalAlpha = 1.0;
+        c.lineWidth = Math.max(3, Math.min(w,h)*0.018);
+        c.strokeStyle = 'rgba(0,255,225,0.35)';
+        roundRectPath(c, x + c.lineWidth*0.5, y + c.lineWidth*0.5, w - c.lineWidth, h - c.lineWidth, Math.max(2, radius - c.lineWidth*0.5));
+        c.stroke();
+      }
+
+      c.restore();
+    }
+
+    function updateSelectionUI(){
+      selectionUI.innerHTML = '';
+      if (!showOutlineUI || !selectedId) return;
+
+      const r = out.getBoundingClientRect();
+      const sx = r.width / out.width;
+      const sy = r.height / out.height;
+
+      if (selectedId === BASE_ID){
+        if (!baseMedia) return;
+
+        const box = document.createElement('div');
+        box.className = 'selBox base';
+
+        if (baseLayer.mode === 'cover'){
+          box.style.left = `0px`;
+          box.style.top = `0px`;
+          box.style.width = `${r.width}px`;
+          box.style.height = `${r.height}px`;
+          box.style.transform = `rotate(0rad)`;
+        } else {
+          const { w:iw, h:ih } = getMediaWH(baseMedia);
+          if (!iw || !ih) return;
+
+          const W = out.width, H = out.height;
+          const fit = Math.min(W/iw, H/ih);
+          const dw0 = iw * fit;
+          const dh0 = ih * fit;
+
+          const w = dw0 * baseLayer.scale * sx;
+          const h = dh0 * baseLayer.scale * sy;
+          const cx = baseLayer.x * sx;
+          const cy = baseLayer.y * sy;
+
+          box.style.left = `${cx - w/2}px`;
+          box.style.top  = `${cy - h/2}px`;
+          box.style.width  = `${w}px`;
+          box.style.height = `${h}px`;
+          box.style.transform = `rotate(${baseLayer.rot}rad)`;
+        }
+
+        box.style.transformOrigin = 'center center';
+        selectionUI.appendChild(box);
+        return;
+      }
+
+      const o = getOverlayById(selectedId);
+      if (!o) return;
+
+      const w = o.w * o.scale * sx;
+      const h = o.h * o.scale * sy;
+      const cx = o.x * sx;
+      const cy = o.y * sy;
+
+      const box = document.createElement('div');
+      box.className = 'selBox';
+      box.style.left = `${cx - w/2}px`;
+      box.style.top  = `${cy - h/2}px`;
+      box.style.width  = `${w}px`;
+      box.style.height = `${h}px`;
+      box.style.transform = `rotate(${o.rot}rad)`;
+      selectionUI.appendChild(box);
+    }
+
+    function render(){
+      const W = out.width;
+      const H = out.height;
+      drawBase(ctx, W, H);
+      for (const o of overlays) drawOverlay(ctx, o, o.id === selectedId);
+      updateSelectionUI();
+    }
+
+    let raf = 0;
+    function tick(){
+      render();
+      syncSelectedVideoUI();
+      raf = requestAnimationFrame(tick);
+    }
+    function ensureTick(){
+      if (!raf) raf = requestAnimationFrame(tick);
+    }
+    ensureTick();
+
+    function guessKind(file){
+      return file.type.startsWith('video/') ? 'video' : 'image';
+    }
+
+    async function waitEventOnce(el, okEvent, errEvent){
+      return new Promise((resolve, reject) => {
+        const onOk = () => { cleanup(); resolve(); };
+        const onErr = () => { cleanup(); reject(new Error(errEvent || 'media error')); };
+        const cleanup = () => {
+          el.removeEventListener(okEvent, onOk);
+          if (errEvent) el.removeEventListener(errEvent, onErr);
+        };
+        el.addEventListener(okEvent, onOk, { once:true });
+        if (errEvent) el.addEventListener(errEvent, onErr, { once:true });
+      });
+    }
+
+    async function primeVideoFrame(v){
+      if (!isVideoMedia(v)) return;
+
+      try{
+        if (v.readyState < 2){
+          await waitEventOnce(v, 'loadeddata', 'error');
+        }
+      } catch (_) {}
+
+      // Safari/iPhone often needs a tiny seek to get a drawable first frame.
+      try{
+        if (Number.isFinite(v.duration) && v.duration > 0){
+          const target = Math.min(0.001, Math.max(0, v.duration - 0.001));
+          if (Math.abs(v.currentTime - target) > 0.0005){
+            const seekPromise = waitEventOnce(v, 'seeked');
+            v.currentTime = target;
+            await seekPromise.catch(() => {});
+          }
+        }
+      } catch (_) {}
+
+      try{ v.pause(); } catch (_) {}
+    }
+
+    async function safePlayVideo(v){
+      if (!isVideoMedia(v)) return false;
+      try{
+        await v.play();
+        return true;
+      } catch (err) {
+        console.warn('play() blocked or failed', err);
+        return false;
+      }
+    }
+
+    async function fileToMedia(file){
+      const kind = guessKind(file);
+      const url = URL.createObjectURL(file);
+
+      if (kind === 'image'){
+        const img = new Image();
+        img.decoding = 'async';
+        img.src = url;
+        await img.decode();
+        return { kind, media: img };
+      }
+
+      const v = document.createElement('video');
+      v.src = url;
+      v.muted = true;
+      v.defaultMuted = true;
+      v.playsInline = true;
+      v.loop = true;
+      v.preload = 'auto';
+      v.controls = false;
+      v.crossOrigin = 'anonymous';
+
+      mediaBin.appendChild(v);
+      v.load();
+
+      await waitEventOnce(v, 'loadedmetadata', 'error');
+      await primeVideoFrame(v);
+
+      return { kind, media: v };
+    }
+
+    function addOverlayFromMedia(kind, media){
+      const W = out.width;
+      const H = out.height;
+      const id = uid();
+
+      const { w:mw, h:mh } = getMediaWH(media);
+      const srcW = mw || 1280;
+      const srcH = mh || 720;
+
+      const maxSide = Math.min(W, H) * 0.55;
+      const s = Math.min(maxSide / srcW, maxSide / srcH);
+
+      overlays.push({
+        id,
+        kind,
+        media,
+        x: W * 0.5,
+        y: H * 0.68,
+        w: srcW * s,
+        h: srcH * s,
+        scale: 1.0,
+        rot: (Math.random()*0.18 - 0.09)
+      });
+
+      selectedId = id;
+      syncSelectedVideoUI();
+    }
+
+    function dist(a,b){ return Math.hypot(a.x-b.x, a.y-b.y); }
+    function angle(a,b){ return Math.atan2(b.y-a.y, b.x-a.x); }
+    function midpoint(a,b){ return { x:(a.x+b.x)/2, y:(a.y+b.y)/2 }; }
+
+    stage.addEventListener('pointerdown', (e) => {
+      stage.setPointerCapture(e.pointerId);
+      const p = toCanvasXY(e.clientX, e.clientY);
+      pointers.set(e.pointerId, p);
+
+      if (pointers.size === 1){
+        const hit = hitTestOverlay(p.x, p.y);
+
+        if (hit){
+          selectedId = hit;
+          gesture.mode = 'drag';
+          gesture.targetId = hit;
+          const o = getOverlayById(hit);
+          gesture.start = { px:p.x, py:p.y, ox:o.x, oy:o.y };
+        } else if (baseMedia){
+          selectedId = BASE_ID;
+          gesture.mode = 'drag';
+          gesture.targetId = BASE_ID;
+
+          if (baseLayer.mode === 'cover'){
+            baseLayer.mode = 'free';
+            baseLayer.x = out.width * 0.5;
+            baseLayer.y = out.height * 0.5;
+            baseLayer.scale = 1;
+            baseLayer.rot = 0;
+          }
+
+          gesture.start = { px:p.x, py:p.y, ox:baseLayer.x, oy:baseLayer.y };
+        } else {
+          selectedId = null;
+          gesture.mode = 'none';
+          gesture.targetId = null;
+          gesture.start = null;
+        }
+
+        syncSelectedVideoUI();
+        return;
+      }
+
+      if (pointers.size === 2 && selectedId){
+        const pts = Array.from(pointers.values());
+        const a0 = pts[0], b0 = pts[1];
+
+        gesture.mode = 'transform';
+        gesture.targetId = selectedId;
+
+        if (selectedId === BASE_ID){
+          if (!baseMedia) return;
+          if (baseLayer.mode === 'cover'){
+            baseLayer.mode = 'free';
+            baseLayer.x = out.width * 0.5;
+            baseLayer.y = out.height * 0.5;
+            baseLayer.scale = 1;
+            baseLayer.rot = 0;
+          }
+          gesture.start = {
+            oX: baseLayer.x, oY: baseLayer.y,
+            oScale: baseLayer.scale,
+            oRot: baseLayer.rot,
+            d0: dist(a0,b0),
+            ang0: angle(a0,b0),
+            mid0: midpoint(a0,b0)
+          };
+        } else {
+          const o = getOverlayById(selectedId);
+          if (!o) return;
+          gesture.start = {
+            oX: o.x, oY: o.y,
+            oScale: o.scale,
+            oRot: o.rot,
+            d0: dist(a0,b0),
+            ang0: angle(a0,b0),
+            mid0: midpoint(a0,b0)
+          };
+        }
+      }
+    });
+
+    stage.addEventListener('pointermove', (e) => {
+      if (!pointers.has(e.pointerId)) return;
+      const p = toCanvasXY(e.clientX, e.clientY);
+      pointers.set(e.pointerId, p);
+
+      if (!gesture.targetId) return;
+
+      if (gesture.targetId === BASE_ID){
+        if (!baseMedia) return;
+
+        if (gesture.mode === 'drag' && pointers.size === 1){
+          const { px, py, ox, oy } = gesture.start;
+          baseLayer.x = ox + (p.x - px);
+          baseLayer.y = oy + (p.y - py);
+          return;
+        }
+
+        if (gesture.mode === 'transform' && pointers.size >= 2){
+          const pts = Array.from(pointers.values());
+          const a = pts[0], b = pts[1];
+          const d1 = dist(a,b);
+          const ang1 = angle(a,b);
+          const mid1 = midpoint(a,b);
+
+          const s = gesture.start;
+          baseLayer.scale = clamp(s.oScale * (d1 / (s.d0 || 1e-6)), 0.05, 20.0);
+          baseLayer.rot   = s.oRot + (ang1 - s.ang0);
+          baseLayer.x     = s.oX + (mid1.x - s.mid0.x);
+          baseLayer.y     = s.oY + (mid1.y - s.mid0.y);
+          return;
+        }
+
+        return;
+      }
+
+      const o = getOverlayById(gesture.targetId);
+      if (!o) return;
+
+      if (gesture.mode === 'drag' && pointers.size === 1){
+        const { px, py, ox, oy } = gesture.start;
+        o.x = ox + (p.x - px);
+        o.y = oy + (p.y - py);
+        return;
+      }
+
+      if (gesture.mode === 'transform' && pointers.size >= 2){
+        const pts = Array.from(pointers.values());
+        const a = pts[0], b = pts[1];
+
+        const s = gesture.start;
+        o.scale = clamp(s.oScale * (dist(a,b) / (s.d0 || 1e-6)), 0.08, 8.0);
+        o.rot   = s.oRot + (angle(a,b) - s.ang0);
+
+        const mid1 = midpoint(a,b);
+        o.x = s.oX + (mid1.x - s.mid0.x);
+        o.y = s.oY + (mid1.y - s.mid0.y);
+      }
+    });
+
+    stage.addEventListener('pointerup', (e) => {
+      pointers.delete(e.pointerId);
+      if (pointers.size === 0){
+        gesture.mode = 'none';
+        gesture.targetId = null;
+        gesture.start = null;
+      }
+    });
+
+    stage.addEventListener('pointercancel', (e) => {
+      pointers.delete(e.pointerId);
+      if (pointers.size === 0){
+        gesture.mode = 'none';
+        gesture.targetId = null;
+        gesture.start = null;
+      }
+    });
+
+    stage.addEventListener('wheel', (e) => {
+      if (!selectedId) return;
+      e.preventDefault();
+      const k = Math.exp(-e.deltaY * 0.0012);
+
+      if (selectedId === BASE_ID){
+        if (!baseMedia) return;
+        if (baseLayer.mode === 'cover'){
+          baseLayer.mode = 'free';
+          baseLayer.x = out.width * 0.5;
+          baseLayer.y = out.height * 0.5;
+          baseLayer.scale = 1;
+          baseLayer.rot = 0;
+        }
+        baseLayer.scale = clamp(baseLayer.scale * k, 0.05, 20.0);
+        return;
+      }
+
+      const o = getOverlayById(selectedId);
+      if (!o) return;
+      o.scale = clamp(o.scale * k, 0.08, 8.0);
+    }, { passive:false });
+
+    baseFile.addEventListener('change', async () => {
+      const f = baseFile.files?.[0];
+      if (!f) return;
+
+      const { media } = await fileToMedia(f);
+      baseMedia = media;
+
+      setSurfaceAspectFromBase();
+      requestAnimationFrame(() => {
+        resizeOutToWrap();
+        baseLayer.mode = 'cover';
+        baseLayer.rot = 0;
+        baseLayer.scale = 1;
+        baseLayer.x = out.width * 0.5;
+        baseLayer.y = out.height * 0.5;
+        selectedId = BASE_ID;
+        syncSelectedVideoUI();
+      });
+    });
+
+    overlayFile.addEventListener('change', async () => {
+      const files = Array.from(overlayFile.files || []);
+      for (const f of files){
+        const { kind, media } = await fileToMedia(f);
+        addOverlayFromMedia(kind, media);
+      }
+      overlayFile.value = '';
+      syncSelectedVideoUI();
+    });
+
+    toggleUIBtn.addEventListener('click', () => {
+      showOutlineUI = !showOutlineUI;
+    });
+
+    resetBaseBtn.addEventListener('click', () => {
+      if (!baseMedia) return;
+      baseLayer.mode = 'cover';
+      baseLayer.rot = 0;
+      baseLayer.scale = 1;
+      baseLayer.x = out.width * 0.5;
+      baseLayer.y = out.height * 0.5;
+      selectedId = BASE_ID;
+      syncSelectedVideoUI();
+    });
+
+    deleteBtn.addEventListener('click', () => {
+      if (!selectedId || selectedId === BASE_ID) return;
+      const idx = overlays.findIndex(o => o.id === selectedId);
+      if (idx >= 0){
+        const [removed] = overlays.splice(idx, 1);
+        if (removed?.kind === 'video' && removed.media && removed.media.parentNode === mediaBin){
+          try{ removed.media.pause(); } catch(_) {}
+          removed.media.remove();
+        }
+        selectedId = overlays.length ? overlays[overlays.length - 1].id : (baseMedia ? BASE_ID : null);
+      }
+      syncSelectedVideoUI();
+    });
+
+    async function toggleSelectedPlayback(){
+      const item = getSelectedItem();
+      if (!item || item.kind !== 'video' || !isVideoMedia(item.media)) return;
+
+      const v = item.media;
+      if (v.paused || v.ended){
+        await safePlayVideo(v);
+      } else {
+        try{ v.pause(); } catch(_) {}
+      }
+      syncSelectedVideoUI();
+    }
+
+    async function restartSelectedVideo(){
+      const item = getSelectedItem();
+      if (!item || item.kind !== 'video' || !isVideoMedia(item.media)) return;
+      try{
+        item.media.currentTime = 0;
+      } catch(_) {}
+      await safePlayVideo(item.media);
+      syncSelectedVideoUI();
+    }
+
+    function toggleSelectedMute(){
+      const item = getSelectedItem();
+      if (!item || item.kind !== 'video' || !isVideoMedia(item.media)) return;
+      item.media.muted = !item.media.muted;
+      item.media.defaultMuted = item.media.muted;
+      syncSelectedVideoUI();
+    }
+
+    async function toggleAllPlayback(){
+      const vids = getAllVideos();
+      if (!vids.length) return;
+
+      const anyPaused = vids.some(v => v.paused || v.ended);
+      if (anyPaused){
+        for (const v of vids) await safePlayVideo(v);
+      } else {
+        for (const v of vids){
+          try{ v.pause(); } catch(_) {}
+        }
+      }
+      syncSelectedVideoUI();
+    }
+
+    function formatTime(sec){
+      if (!Number.isFinite(sec)) return '--:--';
+      const s = Math.max(0, Math.floor(sec));
+      const m = Math.floor(s / 60);
+      const r = s % 60;
+      return `${m}:${String(r).padStart(2,'0')}`;
+    }
+
+    function syncSelectedVideoUI(){
+      const item = getSelectedItem();
+      const hasVideo = !!(item && item.kind === 'video' && isVideoMedia(item.media));
+
+      playPauseSelectedBtn.disabled = !hasVideo;
+      restartSelectedBtn.disabled   = !hasVideo;
+      muteSelectedBtn.disabled      = !hasVideo;
+
+      if (!hasVideo){
+        playPauseSelectedBtn.textContent = 'Play Selected';
+        restartSelectedBtn.textContent   = 'Restart';
+        muteSelectedBtn.textContent      = 'Muted';
+        videoSeek.disabled = true;
+        videoSeek.value = 0;
+        videoTime.textContent = 'No video selected';
+      } else {
+        const v = item.media;
+        playPauseSelectedBtn.textContent = (v.paused || v.ended) ? 'Play Selected' : 'Pause Selected';
+        muteSelectedBtn.textContent      = v.muted ? 'Muted' : 'Unmuted';
+
+        const dur = Number.isFinite(v.duration) && v.duration > 0 ? v.duration : 0;
+        const cur = Number.isFinite(v.currentTime) ? v.currentTime : 0;
+        videoSeek.disabled = false;
+        videoSeek.max = String(dur || 1);
+        videoSeek.value = String(Math.min(cur, dur || 1));
+        videoTime.textContent = `${formatTime(cur)} / ${formatTime(dur)}`;
+      }
+
+      const vids = getAllVideos();
+      const anyPaused = vids.some(v => v.paused || v.ended);
+      playPauseAllBtn.disabled = !vids.length;
+      playPauseAllBtn.textContent = anyPaused ? 'Play All' : 'Pause All';
+    }
+
+    playPauseSelectedBtn.addEventListener('click', toggleSelectedPlayback);
+    restartSelectedBtn.addEventListener('click', restartSelectedVideo);
+    muteSelectedBtn.addEventListener('click', toggleSelectedMute);
+    playPauseAllBtn.addEventListener('click', toggleAllPlayback);
+
+    videoSeek.addEventListener('input', async () => {
+      const item = getSelectedItem();
+      if (!item || item.kind !== 'video' || !isVideoMedia(item.media)) return;
+      const v = item.media;
+      const target = Number(videoSeek.value);
+      try{
+        const seekPromise = waitEventOnce(v, 'seeked');
+        v.currentTime = target;
+        await seekPromise.catch(() => {});
+      } catch (_) {}
+      syncSelectedVideoUI();
+    });
+
+    function downloadBlob(blob, filename){
+      const a = document.createElement('a');
+      const url = URL.createObjectURL(blob);
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    function computeExportWH(mode){
+      const ar = out.width / out.height;
+
+      if (mode === 'previewExact'){
+        return { W: out.width, H: out.height };
+      }
+
+      if (mode === 'baseNative' && baseMedia){
+        const { w, h } = getMediaWH(baseMedia);
+        if (w && h) return { W: w, H: h };
+      }
+
+      const longEdge = (mode === 'viewport2k') ? 2048 : 1920;
+
+      if (ar >= 1){
+        const W = longEdge;
+        const H = Math.round(W / ar);
+        return { W, H };
+      } else {
+        const H = longEdge;
+        const W = Math.round(H * ar);
+        return { W, H };
+      }
+    }
+
+    async function exportPNG(){
+      document.body.classList.add('exporting');
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+      const mode = exportSizeEl.value;
+      const { W, H } = computeExportWH(mode);
+
+      const c = document.createElement('canvas');
+      c.width = W;
+      c.height = H;
+      const g = c.getContext('2d', { alpha:true });
+
+      const sx = W / out.width;
+      const sy = H / out.height;
+
+      if (!baseMedia){
+        drawPlaceholder(g, W, H, 'No Base');
+      } else if (baseLayer.mode === 'cover'){
+        drawMediaCover(g, baseMedia, W, H);
+      } else {
+        const layer = {
+          ...baseLayer,
+          x: baseLayer.x * sx,
+          y: baseLayer.y * sy,
+          scale: baseLayer.scale * ((sx + sy) * 0.5)
+        };
+        drawMediaFree(g, baseMedia, W, H, layer);
+      }
+
+      for (const o of overlays){
+        const tmp = {
+          ...o,
+          x: o.x * sx,
+          y: o.y * sy,
+          w: o.w * sx,
+          h: o.h * sy
+        };
+        drawOverlay(g, tmp, false);
+      }
+
+      const blob = await new Promise(res => c.toBlob(res, 'image/png', 1.0));
+      downloadBlob(blob, `composite_${mode}_${Date.now()}.png`);
+
+      document.body.classList.remove('exporting');
+    }
+
+    exportBtn.addEventListener('click', exportPNG);
+
+    resizeOutToWrap();
+    render();
+    syncSelectedVideoUI();
+  </script>
+</body>
+</html>

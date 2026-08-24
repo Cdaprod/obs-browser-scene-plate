@@ -1,0 +1,1652 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>FullscreenPreview · ThatDAMToolbox</title>
+<style>
+  /* GLOBAL SCALE VARIABLE – adjust this to shrink/enlarge UI */
+  :root {
+    --ui-scale: 1;
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --top-bar: calc(48px * var(--ui-scale));
+    --glass-bg: rgba(0,0,0,0.40);
+    --glass-border: rgba(255,255,255,0.10);
+    --text-dim: rgba(255,255,255,0.60);
+    --text-mid: rgba(255,255,255,0.80);
+    --accent: #fff;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    overflow: hidden;
+    overscroll-behavior: none;
+    touch-action: none;
+    background: #000;
+    color: #fff;
+    font-family: 'SF Pro Display', 'Helvetica Neue', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    height: 100%;
+    width: 100%;
+  }
+
+  /* LAYER CONTRACT */
+  #root {
+    position: fixed;
+    inset: 0;
+    z-index: 45;
+    background: #000;
+    overflow: hidden;
+    isolation: isolate;
+  }
+
+  #video-bg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transform: translateZ(0);
+    will-change: transform;
+    z-index: 0;
+  }
+
+  #fx-canvas {
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    pointer-events: none;
+    z-index: 2 !important;
+    display: block;
+  }
+
+  .gradient-vignette {
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(to bottom, rgba(0,0,0,0.35) 0%, rgba(0,0,0,0.08) 45%, rgba(0,0,0,0.22) 100%);
+    z-index: 3;
+  }
+
+  /* SCOPES HUD (overlay on video) */
+  .scope-hud {
+    position: absolute;
+    right: calc(14px * var(--ui-scale));
+    top: calc(var(--safe-top) + 96px * var(--ui-scale));
+    z-index: 12;
+    display: flex;
+    flex-direction: column;
+    gap: calc(8px * var(--ui-scale));
+    pointer-events: none;
+    background: transparent;
+  }
+  .scope-hud.hidden { display: none; }
+  .scope-hud canvas {
+    display: block;
+    border-radius: calc(12px * var(--ui-scale));
+    background: rgba(0,0,0,0.55);
+    border: 1px solid rgba(255,255,255,0.12);
+    backdrop-filter: blur(10px);
+    width: calc(260px * var(--ui-scale));
+    height: auto;
+  }
+  #hud-histogram-canvas { height: calc(70px * var(--ui-scale)); }
+  #hud-waveform-canvas { height: calc(48px * var(--ui-scale)); }
+  #hud-vectorscope-canvas { width: calc(120px * var(--ui-scale)); height: calc(120px * var(--ui-scale)); }
+
+  /* OVERLAY LAYER (intro/error/autoplay) */
+  #overlay-layer {
+    pointer-events: auto;
+    position: absolute;
+    inset: 0;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0,0,0,0.55);
+    backdrop-filter: blur(8px);
+    padding: calc(24px * var(--ui-scale));
+    transition: opacity .25s;
+  }
+  #overlay-layer.hidden { display: none; }
+
+  .overlay-card {
+    width: 100%;
+    max-width: calc(360px * var(--ui-scale));
+    border-radius: calc(26px * var(--ui-scale));
+    border: 1px solid var(--glass-border);
+    background: rgba(255,255,255,0.05);
+    padding: calc(24px * var(--ui-scale));
+    box-shadow: 0 32px 80px rgba(0,0,0,0.7);
+    backdrop-filter: blur(16px);
+  }
+  .overlay-card h2 {
+    font-size: calc(1.1rem * var(--ui-scale));
+    font-weight: 600;
+  }
+  .overlay-card p {
+    margin-top: calc(8px * var(--ui-scale));
+    font-size: calc(0.875rem * var(--ui-scale));
+    color: var(--text-mid);
+    line-height: 1.5;
+  }
+  .overlay-card .btn-stack {
+    margin-top: calc(22px * var(--ui-scale));
+    display: flex;
+    flex-direction: column;
+    gap: calc(10px * var(--ui-scale));
+  }
+  .overlay-card.error-card {
+    border-color: rgba(248,113,113,.35);
+    background: rgba(239,68,68,.08);
+  }
+  .overlay-card.error-card p { color: #fecaca; }
+
+  .btn-overlay {
+    border-radius: 999px;
+    padding: calc(12px * var(--ui-scale)) calc(24px * var(--ui-scale));
+    font-size: calc(1rem * var(--ui-scale));
+    font-weight: 600;
+    background: rgba(255,255,255,.12);
+    color: #fff;
+    border: none;
+    cursor: pointer;
+    transition: opacity .15s, transform .1s;
+  }
+  .btn-overlay:active { transform: scale(.97); opacity: .85; }
+  .btn-overlay.primary { background: #fff; color: #000; }
+  .btn-overlay.primary:hover { background: rgba(255,255,255,.88); }
+  .btn-overlay.ghost { background: rgba(255,255,255,.12); }
+  .btn-overlay.ghost:hover { background: rgba(255,255,255,.22); }
+
+  /* Shared pill buttons */
+  .btn-pill {
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,.18);
+    background: rgba(255,255,255,.10);
+    padding: calc(6px * var(--ui-scale)) calc(16px * var(--ui-scale));
+    font-size: calc(0.72rem * var(--ui-scale));
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--text-mid);
+    cursor: pointer;
+    transition: background .15s;
+    backdrop-filter: blur(4px);
+  }
+  .btn-pill:hover { background: rgba(255,255,255,.22); }
+  .btn-pill:disabled { opacity: .35; cursor: not-allowed; }
+  .btn-pill.solid { background: #fff; color: #000; border-color: transparent; }
+  .btn-pill.solid:hover { background: rgba(255,255,255,.84); }
+
+  /* Top cluster */
+  #top-cluster {
+    pointer-events: none;
+    position: fixed;
+    left: 0; right: 0;
+    z-index: 46;
+    padding: 0 calc(20px * var(--ui-scale));
+    top: calc(var(--safe-top) + var(--top-bar) + 6px);
+    transition: opacity .3s;
+  }
+  #top-cluster.hidden { opacity: 0; pointer-events: none; }
+  #top-cluster.visible { opacity: 1; pointer-events: auto; }
+
+  .top-inner {
+    display: flex;
+    flex-direction: column;
+    gap: calc(12px * var(--ui-scale));
+    border-radius: calc(26px * var(--ui-scale));
+    border: 1px solid rgba(255,255,255,.11);
+    background: var(--glass-bg);
+    padding: calc(16px * var(--ui-scale)) calc(20px * var(--ui-scale));
+    backdrop-filter: blur(16px);
+  }
+  @media (min-width: 600px) {
+    .top-inner { flex-direction: row; align-items: flex-start; justify-content: space-between; }
+  }
+
+  .top-meta { min-width: 0; }
+  .top-meta .facing {
+    font-size: calc(0.7rem * var(--ui-scale));
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--text-dim);
+  }
+  .top-meta .cam-label {
+    font-size: calc(0.875rem * var(--ui-scale));
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-top: 2px;
+  }
+  .top-meta .perm-label {
+    font-size: calc(0.72rem * var(--ui-scale));
+    color: rgba(255,255,255,.65);
+    margin-top: 2px;
+  }
+  .top-meta .err-label {
+    font-size: calc(0.72rem * var(--ui-scale));
+    color: #fca5a5;
+    margin-top: 2px;
+  }
+
+  .top-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: calc(8px * var(--ui-scale));
+  }
+
+  /* Bottom bar */
+  #bottom-bar {
+    pointer-events: none;
+    position: fixed;
+    left: 0; right: 0;
+    z-index: 46;
+    padding: 0 calc(20px * var(--ui-scale)) calc(24px * var(--ui-scale));
+    bottom: calc(var(--safe-bottom) + 0px);
+    transition: opacity .3s;
+  }
+  #bottom-bar.hidden { opacity: 0; pointer-events: none; }
+  #bottom-bar.visible { opacity: 1; pointer-events: auto; }
+
+  .bottom-inner {
+    margin: 0 auto;
+    max-width: calc(720px * var(--ui-scale));
+    display: flex;
+    flex-direction: column;
+    gap: calc(12px * var(--ui-scale));
+    border-radius: calc(28px * var(--ui-scale));
+    border: 1px solid rgba(255,255,255,.11);
+    background: var(--glass-bg);
+    padding: calc(16px * var(--ui-scale)) calc(20px * var(--ui-scale));
+    box-shadow: 0 8px 40px rgba(0,0,0,.45);
+    backdrop-filter: blur(16px);
+  }
+
+  .bottom-main-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: calc(10px * var(--ui-scale));
+  }
+
+  .btn-record {
+    border-radius: 999px;
+    padding: calc(8px * var(--ui-scale)) calc(20px * var(--ui-scale));
+    font-size: calc(0.875rem * var(--ui-scale));
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    transition: background .15s, transform .1s;
+  }
+  .btn-record:active { transform: scale(.96); }
+  .btn-record.idle { background: #fff; color: #000; }
+  .btn-record.idle:hover { background: rgba(255,255,255,.82); }
+  .btn-record.recording { background: #ef4444; color: #fff; }
+  .btn-record.recording:hover { background: #f87171; }
+  .btn-record:disabled { opacity: .35; cursor: not-allowed; }
+
+  .btn-action {
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,.20);
+    background: rgba(255,255,255,.10);
+    padding: calc(8px * var(--ui-scale)) calc(20px * var(--ui-scale));
+    font-size: calc(0.875rem * var(--ui-scale));
+    font-weight: 600;
+    color: #fff;
+    cursor: pointer;
+    transition: background .15s;
+  }
+  .btn-action:hover { background: rgba(255,255,255,.22); }
+  .btn-action:disabled { opacity: .35; cursor: not-allowed; }
+  .btn-action.subtle {
+    padding: calc(8px * var(--ui-scale)) calc(14px * var(--ui-scale));
+    opacity: .72;
+  }
+
+  .bottom-sub-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: calc(8px * var(--ui-scale));
+    flex-wrap: wrap;
+  }
+  .bottom-sub-row span {
+    font-size: calc(0.68rem * var(--ui-scale));
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    color: var(--text-dim);
+  }
+  .bottom-sub-row .sub-btns { display: flex; gap: calc(8px * var(--ui-scale)); }
+
+  /* Shelf (right panel) */
+  #shelf {
+    position: fixed;
+    top: 0; right: 0;
+    z-index: 47;
+    height: 100%;
+    width: min(calc(420px * var(--ui-scale)), 100vw);
+    display: flex;
+    flex-direction: column;
+    border-left: 1px solid rgba(255,255,255,.11);
+    background: rgba(0,0,0,.55);
+    backdrop-filter: blur(24px);
+    transform: translateX(100%);
+    transition: transform .32s cubic-bezier(.22,1,.36,1);
+    padding-top: calc(var(--safe-top) + var(--top-bar) + 8px);
+    padding-bottom: calc(var(--safe-bottom) + 16px);
+  }
+  #shelf.open { transform: translateX(0); }
+
+  .shelf-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 calc(20px * var(--ui-scale)) calc(12px * var(--ui-scale));
+    font-size: calc(0.72rem * var(--ui-scale));
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--text-dim);
+    border-bottom: 1px solid rgba(255,255,255,.08);
+  }
+
+  .shelf-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: calc(20px * var(--ui-scale));
+    display: flex;
+    flex-direction: column;
+    gap: calc(20px * var(--ui-scale));
+  }
+
+  .shelf-section-title {
+    font-size: calc(0.68rem * var(--ui-scale));
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    color: var(--text-dim);
+    margin-bottom: calc(8px * var(--ui-scale));
+  }
+
+  .scope-card {
+    border-radius: calc(18px * var(--ui-scale));
+    border: 1px solid rgba(255,255,255,.09);
+    background: rgba(0,0,0,.45);
+    padding: calc(14px * var(--ui-scale));
+  }
+  .scope-card-label {
+    font-size: calc(0.68rem * var(--ui-scale));
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--text-dim);
+    margin-bottom: calc(10px * var(--ui-scale));
+  }
+
+  /* Histogram / Vectorscope canvas */
+  #histogram-canvas, #vectorscope-canvas, #waveform-canvas {
+    width: 100%;
+    background: #000;
+    display: block;
+    border-radius: calc(10px * var(--ui-scale));
+  }
+  #histogram-canvas { height: calc(80px * var(--ui-scale)); }
+  #vectorscope-canvas { width: calc(192px * var(--ui-scale)); height: calc(192px * var(--ui-scale)); border-radius: 50%; margin: 0 auto; }
+  #waveform-canvas { height: calc(48px * var(--ui-scale)); }
+
+  /* Audio meter */
+  .audio-meter-wrap {
+    display: flex;
+    gap: calc(6px * var(--ui-scale));
+    height: calc(14px * var(--ui-scale));
+    align-items: center;
+  }
+  .audio-bar-track {
+    flex: 1;
+    height: calc(8px * var(--ui-scale));
+    border-radius: calc(4px * var(--ui-scale));
+    background: rgba(255,255,255,.08);
+    overflow: hidden;
+    position: relative;
+  }
+  .audio-bar-fill {
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    border-radius: calc(4px * var(--ui-scale));
+    background: linear-gradient(to right, #22c55e, #facc15, #ef4444);
+    transition: width .04s linear;
+  }
+  .audio-peak-marker {
+    position: absolute;
+    top: 0; bottom: 0;
+    width: 2px;
+    background: #fff;
+    border-radius: 1px;
+    transition: left .1s linear;
+  }
+
+  /* Monitor toggles */
+  .toggle-row {
+    display: flex;
+    flex-direction: column;
+    gap: calc(8px * var(--ui-scale));
+  }
+  .toggle-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: calc(0.8rem * var(--ui-scale));
+    color: var(--text-mid);
+  }
+  .toggle-switch {
+    position: relative;
+    width: calc(40px * var(--ui-scale));
+    height: calc(22px * var(--ui-scale));
+  }
+  .toggle-switch input { opacity: 0; width: 0; height: 0; }
+  .toggle-track {
+    position: absolute;
+    inset: 0;
+    border-radius: 999px;
+    background: rgba(255,255,255,.15);
+    cursor: pointer;
+    transition: background .2s;
+  }
+  .toggle-switch input:checked + .toggle-track { background: #22c55e; }
+  .toggle-track::after {
+    content: '';
+    position: absolute;
+    left: calc(3px * var(--ui-scale));
+    top: calc(3px * var(--ui-scale));
+    width: calc(16px * var(--ui-scale));
+    height: calc(16px * var(--ui-scale));
+    border-radius: 50%;
+    background: #fff;
+    transition: transform .2s;
+  }
+  .toggle-switch input:checked + .toggle-track::after { transform: translateX(calc(18px * var(--ui-scale))); }
+
+  /* Device picker sheet */
+  #picker-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 48;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    background: rgba(0,0,0,.60);
+    padding: calc(16px * var(--ui-scale)) calc(16px * var(--ui-scale)) calc(28px * var(--ui-scale));
+    transition: opacity .2s;
+  }
+  #picker-backdrop.hidden { display: none; }
+  @media (min-width: 600px) {
+    #picker-backdrop { align-items: center; }
+  }
+
+  .picker-sheet {
+    width: 100%;
+    max-width: calc(460px * var(--ui-scale));
+    border-radius: calc(26px * var(--ui-scale));
+    border: 1px solid rgba(255,255,255,.11);
+    background: rgba(12,12,14,.97);
+    box-shadow: 0 32px 80px rgba(0,0,0,.8);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    max-height: 85vh;
+  }
+
+  .picker-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid rgba(255,255,255,.09);
+    padding: calc(16px * var(--ui-scale)) calc(20px * var(--ui-scale));
+  }
+  .picker-header h2 {
+    font-size: calc(0.75rem * var(--ui-scale));
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .07em;
+  }
+
+  .picker-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: calc(16px * var(--ui-scale)) calc(20px * var(--ui-scale));
+    display: flex;
+    flex-direction: column;
+    gap: calc(20px * var(--ui-scale));
+  }
+
+  .picker-section-title {
+    font-size: calc(0.68rem * var(--ui-scale));
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    color: var(--text-dim);
+    margin-bottom: calc(8px * var(--ui-scale));
+  }
+
+  .device-list { display: flex; flex-direction: column; gap: calc(8px * var(--ui-scale)); }
+
+  .device-btn {
+    width: 100%;
+    border-radius: calc(14px * var(--ui-scale));
+    border: 1px solid rgba(255,255,255,.09);
+    background: rgba(255,255,255,.04);
+    padding: calc(10px * var(--ui-scale)) calc(14px * var(--ui-scale));
+    text-align: left;
+    font-size: calc(0.85rem * var(--ui-scale));
+    color: #fff;
+    cursor: pointer;
+    transition: background .15s, border-color .15s;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .device-btn:hover { background: rgba(255,255,255,.09); }
+  .device-btn.active {
+    border-color: rgba(255,255,255,.38);
+    background: rgba(255,255,255,.13);
+  }
+  .device-btn .device-desc {
+    font-size: calc(0.68rem * var(--ui-scale));
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--text-dim);
+  }
+
+  .device-empty, .device-warn {
+    border-radius: calc(14px * var(--ui-scale));
+    border: 1px solid rgba(255,255,255,.08);
+    background: rgba(255,255,255,.03);
+    padding: calc(10px * var(--ui-scale)) calc(14px * var(--ui-scale));
+    font-size: calc(0.85rem * var(--ui-scale));
+    color: rgba(255,255,255,.55);
+  }
+  .device-warn { border-color: rgba(251,191,36,.35); background: rgba(245,158,11,.08); color: #fde68a; }
+
+  .picker-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: calc(10px * var(--ui-scale));
+    border-top: 1px solid rgba(255,255,255,.09);
+    padding: calc(14px * var(--ui-scale)) calc(20px * var(--ui-scale));
+  }
+  .picker-footer .right { display: flex; gap: calc(8px * var(--ui-scale)); }
+
+  /* Modal */
+  #modal-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0,0,0,.65);
+    backdrop-filter: blur(6px);
+    padding: calc(24px * var(--ui-scale));
+  }
+  #modal-backdrop.hidden { display: none; }
+
+  .modal-card {
+    width: 100%;
+    max-width: calc(420px * var(--ui-scale));
+    border-radius: calc(22px * var(--ui-scale));
+    border: 1px solid rgba(255,255,255,.11);
+    background: #0f0f11;
+    box-shadow: 0 24px 60px rgba(0,0,0,.8);
+    overflow: hidden;
+  }
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: calc(16px * var(--ui-scale)) calc(20px * var(--ui-scale));
+    border-bottom: 1px solid rgba(255,255,255,.09);
+    font-size: calc(0.875rem * var(--ui-scale));
+    font-weight: 600;
+  }
+  .modal-body { padding: calc(16px * var(--ui-scale)) calc(20px * var(--ui-scale)); display: flex; flex-direction: column; gap: calc(14px * var(--ui-scale)); }
+  .modal-field label {
+    font-size: calc(0.68rem * var(--ui-scale));
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: rgba(255,255,255,.45);
+    display: block;
+    margin-bottom: calc(4px * var(--ui-scale));
+  }
+  .modal-field .field-val {
+    border-radius: calc(10px * var(--ui-scale));
+    border: 1px solid rgba(255,255,255,.12);
+    background: rgba(0,0,0,.6);
+    padding: calc(8px * var(--ui-scale)) calc(12px * var(--ui-scale));
+    font-size: calc(0.8rem * var(--ui-scale));
+    color: #e5e7eb;
+    font-family: 'SF Mono', ui-monospace, monospace;
+    word-break: break-all;
+  }
+  .modal-footer {
+    padding: calc(12px * var(--ui-scale)) calc(20px * var(--ui-scale));
+    display: flex;
+    justify-content: flex-end;
+    border-top: 1px solid rgba(255,255,255,.08);
+  }
+
+  #rec-dot {
+    display: inline-block;
+    width: calc(8px * var(--ui-scale));
+    height: calc(8px * var(--ui-scale));
+    border-radius: 50%;
+    background: #ef4444;
+    margin-right: calc(6px * var(--ui-scale));
+    animation: pulse-dot 1s ease-in-out infinite;
+  }
+  @keyframes pulse-dot {
+    0%,100% { opacity: 1; }
+    50% { opacity: .35; }
+  }
+
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.18); border-radius: 2px; }
+
+  /* Pseudo fullscreen fallback */
+  #root.app-fullscreen {
+    position: fixed !important;
+    inset: 0 !important;
+    width: 100vw !important;
+    height: 100dvh !important;
+    z-index: 999999 !important;
+    background: #000;
+  }
+  #root.app-fullscreen #video-bg {
+    object-fit: contain;
+  }
+</style>
+</head>
+<body>
+<div id="root">
+
+  <!-- Video background -->
+  <video id="video-bg" autoplay playsinline muted webkit-playsinline disablepictureinpicture controlslist="nodownload nofullscreen noremoteplayback"></video>
+
+  <!-- FX overlay canvas (zebra/peaking/false color) -->
+  <canvas id="fx-canvas"></canvas>
+
+  <!-- Scope HUD canvases (overlay on video) -->
+  <div id="scope-hud" class="scope-hud hidden">
+    <canvas id="hud-histogram-canvas" width="260" height="70"></canvas>
+    <canvas id="hud-waveform-canvas" width="260" height="48"></canvas>
+    <canvas id="hud-vectorscope-canvas" width="120" height="120"></canvas>
+  </div>
+
+  <div class="gradient-vignette"></div>
+
+  <!-- Overlay layer (intro/error/autoplay) -->
+  <div id="overlay-layer"></div>
+
+  <!-- Top cluster -->
+  <div id="top-cluster" class="hidden">
+    <div class="top-inner">
+      <div class="top-meta">
+        <p class="facing" id="tc-facing">Camera</p>
+        <p class="cam-label" id="tc-label">No camera selected</p>
+        <p class="perm-label" id="tc-perm">Permission: prompt</p>
+        <p class="err-label" id="tc-err" style="display:none"></p>
+      </div>
+      <div class="top-actions">
+        <button class="btn-pill" onclick="openModal('cam-info')">Camera Info</button>
+        <button class="btn-pill" onclick="openShelf()">Scopes · Overlays · Controls</button>
+        <button class="btn-pill" id="btn-top-resume" onclick="handleResume()" style="display:none">Resume</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bottom bar -->
+  <div id="bottom-bar" class="hidden">
+    <div class="bottom-inner">
+      <div class="bottom-main-row">
+        <button id="btn-record" class="btn-record idle" onclick="toggleRecord()">Record</button>
+        <button class="btn-action" onclick="handleStopPreview()">Stop Preview</button>
+        <button class="btn-action subtle" id="btn-app-fullscreen" onclick="toggleAppFullscreen()">⛶</button>
+        <button class="btn-action" id="btn-bottom-resume" onclick="handleResume()" style="display:none" disabled>Resume</button>
+      </div>
+      <div class="bottom-sub-row">
+        <span>Remote inventory</span>
+        <div class="sub-btns">
+          <button class="btn-pill" onclick="openPicker()">Switch</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Overlay shelf (right panel) -->
+  <div id="shelf">
+    <div class="shelf-header">
+      <span>Scopes · Overlays · Controls</span>
+      <button class="btn-pill" onclick="closeShelf()">Close</button>
+    </div>
+    <div class="shelf-body">
+      <section>
+        <p class="shelf-section-title">Scopes (panel)</p>
+        <div class="scope-card"><canvas id="histogram-canvas" width="300" height="80"></canvas></div>
+        <div class="scope-card"><canvas id="vectorscope-canvas" width="192" height="192"></canvas></div>
+      </section>
+      <section>
+        <p class="shelf-section-title">Audio</p>
+        <div class="scope-card">
+          <div class="audio-meter-wrap">
+            <div class="audio-bar-track"><div class="audio-bar-fill" id="audio-fill"></div><div class="audio-peak-marker" id="audio-peak"></div></div>
+          </div>
+          <canvas id="waveform-canvas" width="300" height="48"></canvas>
+        </div>
+      </section>
+      <section>
+        <p class="shelf-section-title">Monitor Overlays</p>
+        <div class="scope-card">
+          <div class="toggle-row">
+            <div class="toggle-item"><span>Zebra stripes</span><label class="toggle-switch"><input type="checkbox" id="tog-zebra" onchange="updateOverlays()"><div class="toggle-track"></div></label></div>
+            <div class="toggle-item"><span>Focus peaking</span><label class="toggle-switch"><input type="checkbox" id="tog-peaking" onchange="updateOverlays()"><div class="toggle-track"></div></label></div>
+            <div class="toggle-item"><span>False color</span><label class="toggle-switch"><input type="checkbox" id="tog-falsecolor" onchange="updateOverlays()"><div class="toggle-track"></div></label></div>
+            <div class="toggle-item"><span>Scope HUD (over video)</span><label class="toggle-switch"><input type="checkbox" id="tog-scopehud" onchange="toggleScopeHud()"><div class="toggle-track"></div></label></div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- Device picker sheet -->
+  <div id="picker-backdrop" class="hidden" onclick="pickerBackdropClick(event)">
+    <div class="picker-sheet" onclick="event.stopPropagation()">
+      <div class="picker-header">
+        <h2>Select a device</h2>
+        <button class="btn-pill" onclick="closePicker()">Close</button>
+      </div>
+      <div class="picker-body" id="picker-body"></div>
+      <div class="picker-footer">
+        <button class="btn-pill" onclick="handleRefresh()">Refresh</button>
+        <div class="right">
+          <button class="btn-pill" onclick="closePicker()">Cancel</button>
+          <button class="btn-pill solid" id="btn-use-selected" onclick="commitSelection()" disabled>Use selected</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal -->
+  <div id="modal-backdrop" class="hidden" onclick="modalBackdropClick(event)">
+    <div class="modal-card" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <span id="modal-title">Modal</span>
+        <button class="btn-pill" onclick="closeModal()">Done</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+      <div class="modal-footer">
+        <button class="btn-pill" onclick="closeModal()">Close</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* ═══════════════════════════════════════════
+   STATE
+═══════════════════════════════════════════ */
+const state = {
+  stream: null,
+  devices: [],
+  selectedDeviceId: null,
+  pendingDeviceId: null,
+  permission: 'prompt',
+  phase: 'intro',        // intro, requesting, active, autoplay, error, stopped
+  error: null,
+  recording: false,
+  recorderTimer: null,
+  recSeconds: 0,
+  mediaRecorder: null,
+  chunks: [],
+  shelfOpen: false,
+  pickerOpen: false,
+  modalOpen: false,
+  overlaysVisible: true,
+  idleTimer: null,
+  overlays: { zebra: false, peaking: false, falseColor: false, scopeHud: false },
+  histRaf: null,
+  vecRaf: null,
+  audioRaf: null,
+  waveRaf: null,
+  fxRaf: null,
+  audioCtx: null,
+  analyser: null,
+  audioSource: null,
+  peakHold: 0,
+  peakDecay: 0,
+  userRequestedStop: false
+};
+
+/* ═══════════════════════════════════════════
+   RESUME BUTTON SYNC
+═══════════════════════════════════════════ */
+function syncResumeButtons() {
+  const show = state.phase === 'autoplay' || state.phase === 'error';
+  const topBtn = document.getElementById('btn-top-resume');
+  const bottomBtn = document.getElementById('btn-bottom-resume');
+  if (topBtn) topBtn.style.display = show ? '' : 'none';
+  if (bottomBtn) {
+    bottomBtn.style.display = show ? '' : 'none';
+    bottomBtn.disabled = !show;
+  }
+}
+
+/* ═══════════════════════════════════════════
+   OVERLAY / IDLE
+═══════════════════════════════════════════ */
+function showOverlays() {
+  state.overlaysVisible = true;
+  document.getElementById('top-cluster').className = 'visible';
+  document.getElementById('bottom-bar').className = 'visible';
+  resetIdleTimer();
+  syncResumeButtons();
+}
+
+function hideOverlays() {
+  if (state.pickerOpen || state.shelfOpen || state.modalOpen) return;
+  if (state.phase !== 'active') return;
+  state.overlaysVisible = false;
+  document.getElementById('top-cluster').className = 'hidden';
+  document.getElementById('bottom-bar').className = 'hidden';
+}
+
+function resetIdleTimer() {
+  clearTimeout(state.idleTimer);
+  state.idleTimer = setTimeout(hideOverlays, 4000);
+}
+
+document.getElementById('root').addEventListener('pointermove', () => {
+  if (!state.overlaysVisible) showOverlays();
+  else resetIdleTimer();
+});
+document.getElementById('root').addEventListener('pointerdown', () => {
+  if (!state.overlaysVisible) showOverlays();
+  else resetIdleTimer();
+});
+
+/* ═══════════════════════════════════════════
+   OVERLAY LAYER RENDER
+═══════════════════════════════════════════ */
+function renderOverlay() {
+  const layer = document.getElementById('overlay-layer');
+  const { phase, error } = state;
+  const show = phase !== 'active' && phase !== 'stopped';
+  layer.classList.toggle('hidden', !show);
+  if (!show) { syncResumeButtons(); return; }
+
+  let html = '';
+  if (phase === 'intro') {
+    html = `<div class="overlay-card">
+      <h2>Enable your camera</h2>
+      <p>Tap once to grant access and pick which device to preview.</p>
+      <div class="btn-stack">
+        <button class="btn-overlay ghost" onclick="beginEnable()">Tap to enable camera</button>
+      </div>
+    </div>`;
+  } else if (phase === 'requesting') {
+    html = `<div class="overlay-card">
+      <h2>Requesting permission</h2>
+      <p>Approve the browser prompt to continue.</p>
+    </div>`;
+  } else if (phase === 'autoplay') {
+    html = `<div class="overlay-card">
+      <h2>Preview paused</h2>
+      <p>Resume the stream to continue monitoring.</p>
+      <div class="btn-stack">
+        <button class="btn-overlay primary" onclick="handleResume()">Resume preview</button>
+        <button class="btn-overlay ghost" onclick="openPicker()">Pick another device</button>
+      </div>
+    </div>`;
+  } else if (phase === 'error') {
+    html = `<div class="overlay-card error-card">
+      <h2>Camera unavailable</h2>
+      <p>${error || 'Unknown error'}</p>
+      <div class="btn-stack">
+        <button class="btn-overlay primary" onclick="openPicker()">Pick a device</button>
+        <button class="btn-overlay ghost" onclick="handleResume()">Retry current camera</button>
+      </div>
+    </div>`;
+  }
+  layer.innerHTML = html;
+  syncResumeButtons();
+}
+
+/* ═══════════════════════════════════════════
+   TOP CLUSTER
+═══════════════════════════════════════════ */
+function updateTopCluster() {
+  const dev = state.devices.find(d => d.deviceId === state.selectedDeviceId);
+  const label = dev ? (dev.label || `Camera ${dev.deviceId.slice(0,6)}`) : 'No camera selected';
+  const facing = dev?.getCapabilities?.()?.facingMode?.[0] ?? 'Camera';
+  document.getElementById('tc-label').textContent = label;
+  document.getElementById('tc-facing').textContent =
+    facing === 'environment' ? 'Back camera' : facing === 'user' ? 'Front camera' : 'Camera';
+  document.getElementById('tc-perm').textContent = `Permission: ${state.permission}`;
+  const errEl = document.getElementById('tc-err');
+  if (state.error && state.phase !== 'active') {
+    errEl.textContent = state.error;
+    errEl.style.display = '';
+  } else {
+    errEl.style.display = 'none';
+  }
+}
+
+/* ═══════════════════════════════════════════
+   CAMERA LOGIC (patched lifecycle)
+═══════════════════════════════════════════ */
+async function getDevices() {
+  try {
+    const all = await navigator.mediaDevices.enumerateDevices();
+    state.devices = all.filter(d => d.kind === 'videoinput');
+  } catch { state.devices = []; }
+}
+
+async function beginEnable() {
+  state.phase = 'requesting';
+  renderOverlay();
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    stream.getTracks().forEach(t => t.stop());
+    state.permission = 'granted';
+  } catch (e) {
+    state.permission = 'denied';
+    state.error = e.message || 'Permission denied';
+    state.phase = 'error';
+    renderOverlay();
+    updateTopCluster();
+    return;
+  }
+  await getDevices();
+  openPicker();
+}
+
+async function keepPreviewPlaying() {
+  const video = document.getElementById('video-bg');
+  if (state.userRequestedStop) return;
+  if (!state.stream) return;
+  if (video.srcObject !== state.stream) video.srcObject = state.stream;
+  video.muted = true;
+  video.autoplay = true;
+  video.playsInline = true;
+  video.setAttribute('playsinline', '');
+  video.setAttribute('webkit-playsinline', '');
+  try {
+    await video.play();
+    if (state.phase === 'autoplay') {
+      state.phase = 'active';
+      renderOverlay();
+      showOverlays();
+    }
+  } catch {
+    state.phase = 'autoplay';
+    renderOverlay();
+  }
+}
+
+async function startStream(deviceId) {
+  state.userRequestedStop = false;
+  stopStream({ stopTracks: true });
+  state.phase = 'requesting';
+  renderOverlay();
+  try {
+    const constraints = {
+      video: deviceId ? { deviceId: { exact: deviceId } } : true,
+      audio: true,
+    };
+    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    state.stream = stream;
+    state.selectedDeviceId = deviceId ?? stream.getVideoTracks()[0]?.getSettings().deviceId ?? null;
+    state.permission = 'granted';
+    state.phase = 'active';
+    state.error = null;
+    attachStream(stream);
+    startTelemetry(stream);
+    showOverlays();
+    updateTopCluster();
+    renderOverlay();
+    await keepPreviewPlaying();
+  } catch (e) {
+    state.error = e.message || 'Could not start camera';
+    state.phase = 'error';
+    renderOverlay();
+    updateTopCluster();
+  }
+}
+
+function stopStream(options = { stopTracks: true }) {
+  const video = document.getElementById('video-bg');
+  if (options.stopTracks && state.stream) {
+    state.stream.getTracks().forEach(t => t.stop());
+    state.stream = null;
+  }
+  video.srcObject = null;
+  stopTelemetry();
+  stopAudioCtx();
+}
+
+function attachStream(stream) {
+  const video = document.getElementById('video-bg');
+  video.controls = false;
+  video.muted = true;
+  video.autoplay = true;
+  video.playsInline = true;
+  video.setAttribute('playsinline', '');
+  video.setAttribute('webkit-playsinline', '');
+  video.srcObject = stream;
+  keepPreviewPlaying();
+}
+
+function handleStopPreview() {
+  state.userRequestedStop = true;
+  stopRecording();
+  stopStream({ stopTracks: true });
+  state.phase = 'stopped';
+  renderOverlay();
+  document.getElementById('top-cluster').className = 'hidden';
+  document.getElementById('bottom-bar').className = 'hidden';
+  setTimeout(() => {
+    state.phase = 'intro';
+    renderOverlay();
+  }, 600);
+}
+
+async function handleResume() {
+  if (!state.selectedDeviceId && state.devices.length === 0) await getDevices();
+  await startStream(state.selectedDeviceId);
+}
+
+/* ═══════════════════════════════════════════
+   FULLSCREEN (with iOS fallback)
+═══════════════════════════════════════════ */
+async function toggleAppFullscreen() {
+  const root = document.getElementById('root');
+  try {
+    if (document.fullscreenEnabled && root.requestFullscreen) {
+      if (!document.fullscreenElement) {
+        await root.requestFullscreen();
+        root.classList.add('app-fullscreen');
+      } else {
+        await document.exitFullscreen();
+        root.classList.remove('app-fullscreen');
+      }
+    } else {
+      root.classList.toggle('app-fullscreen');
+    }
+  } catch {
+    root.classList.toggle('app-fullscreen');
+  }
+  await keepPreviewPlaying();
+}
+
+document.addEventListener('fullscreenchange', async () => {
+  const root = document.getElementById('root');
+  if (document.fullscreenElement) {
+    root.classList.add('app-fullscreen');
+  } else {
+    root.classList.remove('app-fullscreen');
+  }
+  await keepPreviewPlaying();
+});
+
+/* ═══════════════════════════════════════════
+   RECORDING
+═══════════════════════════════════════════ */
+function formatTime(s) {
+  const h = Math.floor(s / 3600).toString().padStart(2, '0');
+  const m = Math.floor((s % 3600) / 60).toString().padStart(2, '0');
+  const sec = (s % 60).toString().padStart(2, '0');
+  return `${h}:${m}:${sec}`;
+}
+
+function toggleRecord() {
+  if (state.recording) stopRecording();
+  else startRec();
+}
+
+function startRec() {
+  if (!state.stream) return;
+  state.chunks = [];
+  try {
+    state.mediaRecorder = new MediaRecorder(state.stream, { mimeType: 'video/webm;codecs=vp9' });
+  } catch {
+    try { state.mediaRecorder = new MediaRecorder(state.stream); } catch { return; }
+  }
+  state.mediaRecorder.ondataavailable = e => { if (e.data.size > 0) state.chunks.push(e.data); };
+  state.mediaRecorder.onstop = () => {
+    const blob = new Blob(state.chunks, { type: 'video/webm' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `capture_${Date.now()}.webm`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+  state.mediaRecorder.start(100);
+  state.recording = true;
+  state.recSeconds = 0;
+  state.recorderTimer = setInterval(() => { state.recSeconds++; updateRecButton(); }, 1000);
+  updateRecButton();
+}
+
+function stopRecording() {
+  if (!state.recording) return;
+  clearInterval(state.recorderTimer);
+  state.recording = false;
+  if (state.mediaRecorder && state.mediaRecorder.state !== 'inactive') state.mediaRecorder.stop();
+  updateRecButton();
+}
+
+function updateRecButton() {
+  const btn = document.getElementById('btn-record');
+  if (state.recording) {
+    btn.className = 'btn-record recording';
+    btn.innerHTML = `<span id="rec-dot"></span>Stop · ${formatTime(state.recSeconds)}`;
+  } else {
+    btn.className = 'btn-record idle';
+    btn.textContent = 'Record';
+  }
+}
+
+/* ═══════════════════════════════════════════
+   DEVICE PICKER
+═══════════════════════════════════════════ */
+function openPicker() {
+  state.pickerOpen = true;
+  state.pendingDeviceId = state.selectedDeviceId;
+  renderPicker();
+  document.getElementById('picker-backdrop').classList.remove('hidden');
+  showOverlays();
+}
+
+function closePicker() {
+  state.pickerOpen = false;
+  document.getElementById('picker-backdrop').classList.add('hidden');
+}
+
+function pickerBackdropClick(e) {
+  if (e.target === document.getElementById('picker-backdrop')) closePicker();
+}
+
+async function handleRefresh() {
+  await getDevices();
+  renderPicker();
+}
+
+function renderPicker() {
+  const body = document.getElementById('picker-body');
+  const devs = state.devices;
+  let html = `<section><p class="picker-section-title">Local cameras</p><div class="device-list">`;
+  if (devs.length === 0) html += `<div class="device-empty">No local cameras detected.</div>`;
+  else {
+    devs.forEach(d => {
+      const lbl = d.label || `Camera ${d.deviceId.slice(0,8)}`;
+      const active = state.pendingDeviceId === d.deviceId;
+      html += `<button class="device-btn ${active ? 'active' : ''}" onclick="selectDevice('${d.deviceId}')"><span>${lbl}</span></button>`;
+    });
+  }
+  html += `</div></section><section><p class="picker-section-title">Remote cameras</p><div class="device-list"><div class="device-warn">Remote inventory requires a running capture-daemon node.</div></div></section>`;
+  body.innerHTML = html;
+  document.getElementById('btn-use-selected').disabled = !state.pendingDeviceId;
+}
+
+function selectDevice(deviceId) {
+  state.pendingDeviceId = deviceId;
+  renderPicker();
+  document.getElementById('btn-use-selected').disabled = false;
+}
+
+async function commitSelection() {
+  const id = state.pendingDeviceId;
+  closePicker();
+  await startStream(id);
+}
+
+/* ═══════════════════════════════════════════
+   SHELF
+═══════════════════════════════════════════ */
+function openShelf() {
+  state.shelfOpen = true;
+  document.getElementById('shelf').classList.add('open');
+}
+function closeShelf() {
+  state.shelfOpen = false;
+  document.getElementById('shelf').classList.remove('open');
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { closeShelf(); closeModal(); closePicker(); }
+});
+
+function updateOverlays() {
+  state.overlays.zebra = document.getElementById('tog-zebra').checked;
+  state.overlays.peaking = document.getElementById('tog-peaking').checked;
+  state.overlays.falseColor = document.getElementById('tog-falsecolor').checked;
+  // FX shader will pick up these values automatically in its animation loop
+}
+
+function toggleScopeHud() {
+  state.overlays.scopeHud = document.getElementById('tog-scopehud').checked;
+  document.getElementById('scope-hud').classList.toggle('hidden', !state.overlays.scopeHud);
+}
+
+/* ═══════════════════════════════════════════
+   MODAL
+═══════════════════════════════════════════ */
+function openModal(type) {
+  state.modalOpen = true;
+  const title = document.getElementById('modal-title');
+  const body = document.getElementById('modal-body');
+  if (type === 'cam-info') {
+    title.textContent = 'Camera info';
+    const dev = state.devices.find(d => d.deviceId === state.selectedDeviceId);
+    const label = dev ? (dev.label || `Camera ${dev.deviceId.slice(0,8)}`) : 'None';
+    body.innerHTML = `
+      <div class="modal-field"><label>Selected camera</label><div class="field-val">${label}</div></div>
+      <div class="modal-field"><label>Permission</label><div class="field-val">${state.permission}</div></div>
+      <div class="modal-field"><label>Device ID</label><div class="field-val">${state.selectedDeviceId || '—'}</div></div>
+      <p style="font-size:0.72rem;color:rgba(255,255,255,.4);line-height:1.5">Recording saves a WebM clip locally. Use remote capture for lossless ingest.</p>
+    `;
+  }
+  document.getElementById('modal-backdrop').classList.remove('hidden');
+}
+
+function closeModal() {
+  state.modalOpen = false;
+  document.getElementById('modal-backdrop').classList.add('hidden');
+}
+
+function modalBackdropClick(e) {
+  if (e.target === document.getElementById('modal-backdrop')) closeModal();
+}
+
+/* ═══════════════════════════════════════════
+   TELEMETRY — HISTOGRAM (panel + HUD)
+═══════════════════════════════════════════ */
+let histOffscreen = null, histOffCtx = null;
+function initHistOffscreen() {
+  if (!histOffscreen) {
+    histOffscreen = document.createElement('canvas');
+    histOffscreen.width = 256;
+    histOffscreen.height = 144;
+    histOffCtx = histOffscreen.getContext('2d');
+  }
+}
+
+function drawHistogramOnCanvas(targetCanvas, video) {
+  if (!histOffCtx) initHistOffscreen();
+  if (video.readyState < 2) return;
+  try {
+    histOffCtx.drawImage(video, 0, 0, 256, 144);
+    const data = histOffCtx.getImageData(0, 0, 256, 144).data;
+    const rBins = new Uint32Array(256);
+    const gBins = new Uint32Array(256);
+    const bBins = new Uint32Array(256);
+    for (let i = 0; i < data.length; i += 4) {
+      rBins[data[i]]++;
+      gBins[data[i+1]]++;
+      bBins[data[i+2]]++;
+    }
+    const maxC = Math.max(Math.max(...rBins), Math.max(...gBins), Math.max(...bBins)) || 1;
+    const ctx = targetCanvas.getContext('2d');
+    const W = targetCanvas.width, H = targetCanvas.height;
+    ctx.clearRect(0, 0, W, H);
+    [[rBins,'rgba(239,68,68,0.55)'],[gBins,'rgba(34,197,94,0.55)'],[bBins,'rgba(59,130,246,0.55)']].forEach(([ch, color]) => {
+      ctx.beginPath();
+      ctx.moveTo(0, H);
+      for (let x = 0; x < 256; x++) {
+        const h = (ch[x] / maxC) * H;
+        ctx.lineTo((x / 255) * W, H - h);
+      }
+      ctx.lineTo(W, H);
+      ctx.closePath();
+      ctx.fillStyle = color;
+      ctx.fill();
+    });
+  } catch {}
+}
+
+/* ═══════════════════════════════════════════
+   TELEMETRY — VECTORSCOPE (panel + HUD)
+═══════════════════════════════════════════ */
+let vecOffscreen = null, vecOffCtx = null;
+function initVecOffscreen() {
+  if (!vecOffscreen) {
+    vecOffscreen = document.createElement('canvas');
+    vecOffscreen.width = 64;
+    vecOffscreen.height = 36;
+    vecOffCtx = vecOffscreen.getContext('2d');
+  }
+}
+
+function drawVectorscopeOnCanvas(targetCanvas, video) {
+  if (!vecOffCtx) initVecOffscreen();
+  if (video.readyState < 2) return;
+  try {
+    vecOffCtx.drawImage(video, 0, 0, 64, 36);
+    const data = vecOffCtx.getImageData(0, 0, 64, 36).data;
+    const ctx = targetCanvas.getContext('2d');
+    const S = targetCanvas.width;
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.fillRect(0, 0, S, S);
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.arc(S/2, S/2, S*0.45, 0, Math.PI*2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(S/2, 0); ctx.lineTo(S/2, S);
+    ctx.moveTo(0, S/2); ctx.lineTo(S, S/2);
+    ctx.stroke();
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i], g = data[i+1], b = data[i+2];
+      const cb = -0.169*r - 0.331*g + 0.500*b;
+      const cr =  0.500*r - 0.419*g - 0.081*b;
+      const x = (cb / 128) * S * 0.45 + S / 2;
+      const y = (-cr / 128) * S * 0.45 + S / 2;
+      ctx.fillStyle = `rgba(${r},${g},${b},0.6)`;
+      ctx.fillRect(x, y, 1.5, 1.5);
+    }
+  } catch {}
+}
+
+/* ═══════════════════════════════════════════
+   TELEMETRY — AUDIO METER & WAVEFORM (panel + HUD)
+═══════════════════════════════════════════ */
+function startAudioCtx(stream) {
+  stopAudioCtx();
+  if (!stream) return;
+  const audioTracks = stream.getAudioTracks();
+  if (!audioTracks.length) return;
+  try {
+    state.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    state.analyser = state.audioCtx.createAnalyser();
+    state.analyser.fftSize = 512;
+    state.analyser.smoothingTimeConstant = 0.6;
+    state.audioSource = state.audioCtx.createMediaStreamSource(stream);
+    state.audioSource.connect(state.analyser);
+    state.audioCtx.resume();
+  } catch { return; }
+
+  const timeDomain = new Float32Array(state.analyser.fftSize);
+
+  function audioTick() {
+    state.audioRaf = requestAnimationFrame(audioTick);
+    if (!state.analyser) return;
+    state.analyser.getFloatTimeDomainData(timeDomain);
+    let rms = 0;
+    for (let i = 0; i < timeDomain.length; i++) rms += timeDomain[i] * timeDomain[i];
+    rms = Math.sqrt(rms / timeDomain.length);
+    const db = 20 * Math.log10(rms + 1e-10);
+    const pct = Math.max(0, Math.min(100, ((db + 60) / 60) * 100));
+    if (pct > state.peakHold) { state.peakHold = pct; state.peakDecay = 0; }
+    else { state.peakDecay++; if (state.peakDecay > 30) state.peakHold = Math.max(0, state.peakHold - 0.5); }
+    document.getElementById('audio-fill').style.width = pct + '%';
+    document.getElementById('audio-peak').style.left = state.peakHold + '%';
+  }
+  audioTick();
+
+  const waveCanvas = document.getElementById('waveform-canvas');
+  const waveCtx = waveCanvas.getContext('2d');
+  function waveTick() {
+    state.waveRaf = requestAnimationFrame(waveTick);
+    if (!state.analyser) return;
+    state.analyser.getFloatTimeDomainData(timeDomain);
+    const W = waveCanvas.width, H = waveCanvas.height;
+    waveCtx.fillStyle = '#000';
+    waveCtx.fillRect(0, 0, W, H);
+    waveCtx.strokeStyle = 'rgba(34,197,94,0.85)';
+    waveCtx.lineWidth = 1.5;
+    waveCtx.beginPath();
+    const sliceW = W / timeDomain.length;
+    for (let i = 0; i < timeDomain.length; i++) {
+      const x = i * sliceW;
+      const y = ((timeDomain[i] + 1) / 2) * H;
+      i === 0 ? waveCtx.moveTo(x, y) : waveCtx.lineTo(x, y);
+    }
+    waveCtx.stroke();
+  }
+  waveTick();
+
+  // HUD waveform
+  const hudWaveCanvas = document.getElementById('hud-waveform-canvas');
+  if (hudWaveCanvas) {
+    const hudWaveCtx = hudWaveCanvas.getContext('2d');
+    function hudWaveTick() {
+      requestAnimationFrame(hudWaveTick);
+      if (!state.analyser || !state.overlays.scopeHud) return;
+      state.analyser.getFloatTimeDomainData(timeDomain);
+      const W = hudWaveCanvas.width, H = hudWaveCanvas.height;
+      hudWaveCtx.fillStyle = 'rgba(0,0,0,0.55)';
+      hudWaveCtx.fillRect(0, 0, W, H);
+      hudWaveCtx.strokeStyle = '#22c55e';
+      hudWaveCtx.lineWidth = 1.5;
+      hudWaveCtx.beginPath();
+      const sliceW = W / timeDomain.length;
+      for (let i = 0; i < timeDomain.length; i++) {
+        const x = i * sliceW;
+        const y = ((timeDomain[i] + 1) / 2) * H;
+        i === 0 ? hudWaveCtx.moveTo(x, y) : hudWaveCtx.lineTo(x, y);
+      }
+      hudWaveCtx.stroke();
+    }
+    hudWaveTick();
+  }
+}
+
+function stopAudioCtx() {
+  cancelAnimationFrame(state.audioRaf);
+  cancelAnimationFrame(state.waveRaf);
+  if (state.audioSource) { try { state.audioSource.disconnect(); } catch {} }
+  if (state.audioCtx) { try { state.audioCtx.close(); } catch {} }
+  state.audioCtx = null;
+  state.analyser = null;
+  state.audioSource = null;
+  state.peakHold = 0;
+  state.peakDecay = 0;
+}
+
+/* ═══════════════════════════════════════════
+   TELEMETRY — LOOP (calls all drawing functions)
+═══════════════════════════════════════════ */
+function startHistogram() {
+  const video = document.getElementById('video-bg');
+  const panelCanvas = document.getElementById('histogram-canvas');
+  const hudCanvas = document.getElementById('hud-histogram-canvas');
+  function tick() {
+    state.histRaf = requestAnimationFrame(tick);
+    if (video.readyState >= 2) {
+      drawHistogramOnCanvas(panelCanvas, video);
+      if (state.overlays.scopeHud && hudCanvas) drawHistogramOnCanvas(hudCanvas, video);
+    }
+  }
+  tick();
+}
+
+function startVectorscope() {
+  const video = document.getElementById('video-bg');
+  const panelCanvas = document.getElementById('vectorscope-canvas');
+  const hudCanvas = document.getElementById('hud-vectorscope-canvas');
+  function tick() {
+    state.vecRaf = requestAnimationFrame(tick);
+    if (video.readyState >= 2) {
+      drawVectorscopeOnCanvas(panelCanvas, video);
+      if (state.overlays.scopeHud && hudCanvas) drawVectorscopeOnCanvas(hudCanvas, video);
+    }
+  }
+  tick();
+}
+
+function startTelemetry(stream) {
+  startHistogram();
+  startVectorscope();
+  startAudioCtx(stream);
+  initFxGL();
+}
+
+function stopTelemetry() {
+  cancelAnimationFrame(state.histRaf);
+  cancelAnimationFrame(state.vecRaf);
+  cancelAnimationFrame(state.fxRaf);
+}
+
+/* ═══════════════════════════════════════════
+   WEBGL FX OVERLAY (zebra / peaking / false color)
+═══════════════════════════════════════════ */
+let fxGL = null, fxProgram = null, fxUniforms = {};
+
+function initFxGL() {
+  const canvas = document.getElementById('fx-canvas');
+  canvas.style.display = 'block';
+
+  const gl = canvas.getContext('webgl', { alpha: true });
+  if (!gl) return;
+  fxGL = gl;
+
+  const vsrc = `
+    attribute vec2 a_pos;
+    varying vec2 v_uv;
+    void main() {
+      v_uv = a_pos * 0.5 + 0.5;
+      v_uv.y = 1.0 - v_uv.y;
+      gl_Position = vec4(a_pos, 0.0, 1.0);
+    }`;
+
+  const fsrc = `
+    precision mediump float;
+    varying vec2 v_uv;
+    uniform sampler2D u_tex;
+    uniform float u_zebra;
+    uniform float u_peaking;
+    uniform float u_falseColor;
+    uniform float u_time;
+
+    float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
+
+    vec3 peakColor(vec3 c) {
+      float lum = luma(c);
+      vec2 dx = dFdx(vec2(lum));
+      vec2 dy = dFdy(vec2(lum));
+      float edge = length(vec2(length(dx), length(dy)));
+      float peak = smoothstep(0.02, 0.06, edge);
+      return mix(c, vec3(1.0, 0.0, 0.5), peak);
+    }
+
+    vec3 falseColorMap(float lum) {
+      if (lum < 0.1)  return vec3(0.0, 0.0, 0.5);
+      if (lum < 0.3)  return vec3(0.0, 0.3, 0.9);
+      if (lum < 0.55) return vec3(0.0, 0.7, 0.2);
+      if (lum < 0.75) return vec3(1.0, 0.9, 0.0);
+      if (lum < 0.9)  return vec3(1.0, 0.4, 0.0);
+      return vec3(1.0, 0.0, 0.0);
+    }
+
+    void main() {
+      vec4 samp = texture2D(u_tex, v_uv);
+      vec3 c = samp.rgb;
+      float lum = luma(c);
+
+      if (u_zebra > 0.5) {
+        if (lum > 0.90) {
+          float stripe = step(0.5, fract((v_uv.x + v_uv.y) * 20.0 + u_time * 0.5));
+          c = mix(c, vec3(1.0, 0.85, 0.0), stripe * 0.85);
+        }
+      }
+
+      if (u_peaking > 0.5) c = peakColor(c);
+      if (u_falseColor > 0.5) c = falseColorMap(lum);
+
+      gl_FragColor = vec4(c, samp.a);
+    }`;
+
+  function compileShader(src, type) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s));
+    return s;
+  }
+  const prog = gl.createProgram();
+  gl.attachShader(prog, compileShader(vsrc, gl.VERTEX_SHADER));
+  gl.attachShader(prog, compileShader(fsrc, gl.FRAGMENT_SHADER));
+  gl.linkProgram(prog);
+  fxProgram = prog;
+
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+  const aPos = gl.getAttribLocation(prog, 'a_pos');
+  gl.enableVertexAttribArray(aPos);
+  gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+  fxUniforms = {
+    tex: gl.getUniformLocation(prog, 'u_tex'),
+    zebra: gl.getUniformLocation(prog, 'u_zebra'),
+    peaking: gl.getUniformLocation(prog, 'u_peaking'),
+    falseColor: gl.getUniformLocation(prog, 'u_falseColor'),
+    time: gl.getUniformLocation(prog, 'u_time'),
+  };
+
+  const texture = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+  const video = document.getElementById('video-bg');
+  let t0 = performance.now();
+
+  function fxTick() {
+    state.fxRaf = requestAnimationFrame(fxTick);
+    const { zebra, peaking, falseColor } = state.overlays;
+    const active = zebra || peaking || falseColor;
+    canvas.style.display = active ? 'block' : 'none';
+    if (!active || video.readyState < 2) return;
+
+    canvas.width = canvas.clientWidth;
+    canvas.height = canvas.clientHeight;
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    gl.useProgram(prog);
+    try {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+    } catch { return; }
+    gl.uniform1i(fxUniforms.tex, 0);
+    gl.uniform1f(fxUniforms.zebra, zebra ? 1 : 0);
+    gl.uniform1f(fxUniforms.peaking, peaking ? 1 : 0);
+    gl.uniform1f(fxUniforms.falseColor, falseColor ? 1 : 0);
+    gl.uniform1f(fxUniforms.time, (performance.now() - t0) / 1000);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  }
+  fxTick();
+}
+
+/* ═══════════════════════════════════════════
+   INIT
+═══════════════════════════════════════════ */
+(async function init() {
+  await getDevices();
+  state.phase = 'intro';
+  renderOverlay();
+})();
+</script>
+</body>
+</html>

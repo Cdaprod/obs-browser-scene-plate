@@ -1,0 +1,744 @@
+i was looking at doing my preview panel animation the way i choregraphed it in this demo
+
+```html
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Explorer -- Zoom v3</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&family=Syne:wght@400;600;700;800&display=swap');
+
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+:root{
+–bg:#09090f;
+–card:#0f0f1c;
+–border:rgba(255,255,255,.07);
+–text:#e6e6f0;
+–muted:rgba(255,255,255,.38);
+–accent:#5b7fff;
+–gap:5px;
+–r:10px;
+–header-h:46px;
+}
+
+html,body{
+width:100%;height:100%;
+background:var(–bg);
+color:var(–text);
+font-family:‘Syne’,sans-serif;
+overflow:hidden;
+-webkit-font-smoothing:antialiased;
+-webkit-tap-highlight-color:transparent;
+}
+
+/* ── HEADER ─────────────────────── */
+#header{
+position:fixed;top:0;left:0;right:0;
+height:var(–header-h);
+display:flex;align-items:center;justify-content:space-between;
+padding:0 14px;
+background:rgba(9,9,15,.75);
+backdrop-filter:blur(16px);
+-webkit-backdrop-filter:blur(16px);
+border-bottom:1px solid var(–border);
+z-index:40;
+transition:opacity .3s;
+}
+#header.dimmed{opacity:0;pointer-events:none}
+.logo{font-size:12px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}
+.logo b{color:var(–accent)}
+.hdr-right{display:flex;gap:6px;align-items:center}
+.pill{
+font-family:‘DM Mono’,monospace;font-size:9px;
+padding:3px 9px;border-radius:20px;
+border:1px solid var(–border);
+background:transparent;color:var(–muted);
+cursor:pointer;transition:all .2s;letter-spacing:.05em;
+}
+.pill.on,.pill:hover{border-color:var(–accent);color:var(–accent);background:rgba(91,127,255,.1)}
+#item-count{font-family:‘DM Mono’,monospace;font-size:10px;color:var(–muted);letter-spacing:.05em}
+
+/* ── SCROLL VIEWPORT ────────────── */
+#viewport{
+position:fixed;
+top:var(–header-h);left:0;right:0;bottom:0;
+overflow-y:auto;
+overflow-x:hidden;
+-webkit-overflow-scrolling:touch;
+z-index:1;
+}
+#viewport.locked{overflow:hidden}
+
+/* ── WORLD (scaled element) ─────── */
+/*
+KEY INSIGHT:
+transform-origin is set in WORLD-LOCAL coordinates (i.e. accounting for scrollTop).
+We use scale() + NO translate on world -- the browser handles visual centering
+by setting transform-origin to the card center.
+We then compensate for the card not being at viewport center with a translate
+applied BEFORE scale in the transform stack.
+*/
+#world{
+padding:var(–gap);
+will-change:transform;
+transform-origin:0 0; /* overridden per-click */
+}
+
+/* ── MASONRY GRID ───────────────── */
+#grid{
+columns:4;
+column-gap:var(–gap);
+}
+@media(max-width:500px){#grid{columns:3}}
+
+/* ── CARDS ──────────────────────── */
+.card{
+break-inside:avoid;
+margin-bottom:var(–gap);
+border-radius:var(–r);
+overflow:hidden;
+cursor:pointer;
+background:var(–card);
+border:1px solid var(–border);
+position:relative;
+will-change:transform,opacity;
+-webkit-user-select:none;
+user-select:none;
+}
+.card img{width:100%;display:block;object-fit:cover;pointer-events:none;draggable:false}
+.card.tall img{aspect-ratio:9/16}
+.card.wide img{aspect-ratio:16/9}
+.card.sq   img{aspect-ratio:1}
+.card.audio{
+display:flex;flex-direction:column;
+align-items:center;justify-content:center;
+gap:5px;min-height:70px;
+}
+.card.audio .aico{
+width:22px;height:22px;border-radius:50%;
+border:1px solid var(–border);
+display:flex;align-items:center;justify-content:center;
+font-size:10px;color:var(–muted);
+}
+.card.audio .albl{
+font-family:‘DM Mono’,monospace;font-size:8px;
+letter-spacing:.12em;color:var(–muted);text-transform:uppercase;
+}
+
+/* Focused card gets a subtle ring */
+.card.is-focus{outline:1.5px solid rgba(91,127,255,.5);outline-offset:-1px}
+
+/* ── CINEMATIC LETTERBOX BARS ───── */
+/* These are fixed, ABOVE the world, BELOW the preview panel */
+#bar-top,#bar-bottom{
+position:fixed;left:0;right:0;
+background:var(–bg);
+height:0;
+z-index:20;
+pointer-events:none;
+}
+#bar-top{top:0}
+#bar-bottom{bottom:0}
+
+/* ── PREVIEW PANEL (parallax -- fixed, front layer) ── */
+/*
+This panel appears IN FRONT of the zooming world.
+It’s completely decoupled from any transform on #world.
+Appears below the top bar, above the bottom bar.
+*/
+#preview{
+position:fixed;
+inset:0;
+z-index:30;
+pointer-events:none;
+opacity:0;
+display:flex;
+flex-direction:column;
+}
+
+/* Top strip: type badge + filename + nav arrows */
+#preview-top{
+/* positioned by bar-top height via JS */
+position:absolute;
+top:0;left:0;right:0;
+padding:14px 16px 10px;
+display:flex;align-items:flex-start;justify-content:space-between;
+gap:10px;
+opacity:0;
+transform:translateY(-6px);
+}
+#preview-badge{
+font-family:‘DM Mono’,monospace;font-size:9px;letter-spacing:.12em;
+padding:3px 8px;border-radius:4px;
+background:rgba(91,127,255,.2);border:1px solid rgba(91,127,255,.3);
+color:var(–accent);text-transform:uppercase;
+}
+#preview-nav{display:flex;gap:6px}
+.nav-btn{
+width:28px;height:28px;border-radius:50%;
+border:1px solid var(–border);
+background:rgba(255,255,255,.06);
+backdrop-filter:blur(12px);
+-webkit-backdrop-filter:blur(12px);
+display:flex;align-items:center;justify-content:center;
+cursor:pointer;pointer-events:all;
+color:var(–muted);font-size:11px;
+transition:background .2s;
+}
+.nav-btn:hover{background:rgba(255,255,255,.12)}
+
+/* Bottom strip: title + meta */
+#preview-bottom{
+position:absolute;
+bottom:0;left:0;right:0;
+padding:24px 18px 28px;
+opacity:0;
+transform:translateY(10px);
+}
+#preview-title{
+font-size:18px;font-weight:700;
+margin-bottom:5px;
+line-height:1.2;
+}
+#preview-meta{
+font-family:‘DM Mono’,monospace;
+font-size:10px;color:var(–muted);letter-spacing:.06em;
+}
+
+/* Action row */
+#preview-actions{
+display:flex;gap:6px;flex-wrap:wrap;
+margin-top:12px;
+}
+.act{
+font-family:‘DM Mono’,monospace;font-size:9px;
+padding:4px 10px;border-radius:20px;
+border:1px solid var(–border);
+background:rgba(255,255,255,.04);
+color:var(–muted);cursor:pointer;
+pointer-events:all;transition:all .15s;
+letter-spacing:.06em;
+}
+.act:hover{border-color:var(–accent);color:var(–accent);background:rgba(91,127,255,.08)}
+.act.primary{border-color:var(–accent);color:var(–accent);background:rgba(91,127,255,.12)}
+
+/* ── CLOSE BUTTON ───────────────── */
+#close-btn{
+position:fixed;
+top:10px;right:12px;
+width:30px;height:30px;border-radius:50%;
+background:rgba(255,255,255,.08);
+border:1px solid rgba(255,255,255,.1);
+backdrop-filter:blur(12px);
+-webkit-backdrop-filter:blur(12px);
+display:flex;align-items:center;justify-content:center;
+font-size:13px;color:var(–text);
+cursor:pointer;
+opacity:0;pointer-events:none;
+z-index:50;
+transition:background .15s;
+}
+#close-btn.show{opacity:1;pointer-events:all}
+#close-btn:hover{background:rgba(255,255,255,.16)}
+
+/* ── LAB ────────────────────────── */
+#lab{
+position:fixed;bottom:14px;left:50%;
+transform:translateX(-50%);
+z-index:45;
+display:flex;gap:4px;align-items:center;
+background:rgba(9,9,15,.9);
+border:1px solid var(–border);
+border-radius:28px;padding:6px 12px;
+backdrop-filter:blur(20px);
+-webkit-backdrop-filter:blur(20px);
+font-family:‘DM Mono’,monospace;font-size:9px;color:var(–muted);
+transition:opacity .3s,transform .3s;
+white-space:nowrap;
+}
+#lab.gone{opacity:0;transform:translateX(-50%) translateY(8px);pointer-events:none}
+.lb{
+padding:3px 8px;border-radius:16px;border:1px solid transparent;
+background:transparent;color:var(–muted);
+font-family:‘DM Mono’,monospace;font-size:9px;
+cursor:pointer;transition:all .15s;letter-spacing:.04em;
+}
+.lb.on{border-color:var(–accent);color:var(–accent);background:rgba(91,127,255,.1)}
+.lb:hover{color:var(–text)}
+.sep{color:var(–border);margin:0 2px}
+#sc-wrap{display:flex;align-items:center;gap:5px;margin-left:6px;padding-left:6px;border-left:1px solid var(–border)}
+#sc{-webkit-appearance:none;appearance:none;width:60px;height:2px;background:rgba(255,255,255,.1);border-radius:2px;outline:none;cursor:pointer}
+#sc::-webkit-slider-thumb{-webkit-appearance:none;width:9px;height:9px;border-radius:50%;background:var(–accent);cursor:pointer}
+#sc-val{color:var(–accent);min-width:16px;font-size:9px}
+</style>
+
+</head>
+<body>
+
+<div id="header">
+  <div class="logo"><b>C</b>DAPROD · EXPLORER</div>
+  <div class="hdr-right">
+    <span id="item-count"></span>
+    <button class="pill on" onclick="setCols(4,this)">4</button>
+    <button class="pill" onclick="setCols(3,this)">3</button>
+    <button class="pill" onclick="setCols(2,this)">2</button>
+  </div>
+</div>
+
+<div id="viewport">
+  <div id="world">
+    <div id="grid"></div>
+  </div>
+</div>
+
+<!-- Cinematic bars (z:20, above world, below preview) -->
+
+<div id="bar-top"></div>
+<div id="bar-bottom"></div>
+
+<!-- Preview panel (z:30, parallax, fully decoupled from world) -->
+
+<div id="preview">
+  <div id="preview-top">
+    <div id="preview-badge">VIDEO</div>
+    <div id="preview-nav">
+      <button class="nav-btn" id="btn-prev" onclick="stepAsset(-1)">‹</button>
+      <button class="nav-btn" id="btn-next" onclick="stepAsset(1)">›</button>
+    </div>
+  </div>
+  <div id="preview-bottom">
+    <div id="preview-title"></div>
+    <div id="preview-meta"></div>
+    <div id="preview-actions">
+      <button class="act primary">▶ Play</button>
+      <button class="act">⬇ Download</button>
+      <button class="act">+ Select</button>
+      <button class="act">⊕ Program</button>
+    </div>
+  </div>
+</div>
+
+<button id="close-btn" onclick="closeDetail()">✕</button>
+
+<!-- Lab -->
+
+<div id="lab">
+  <span>EASE</span><span class="sep">·</span>
+  <button class="lb on" onclick="setEase(this,'power4.inOut')">power4</button>
+  <button class="lb" onclick="setEase(this,'power2.inOut')">power2</button>
+  <button class="lb" onclick="setEase(this,'expo.inOut')">expo</button>
+  <button class="lb" onclick="setEase(this,'circ.inOut')">circ</button>
+  <div id="sc-wrap">
+    <span>×</span>
+    <input id="sc" type="range" min="1.5" max="9" step=".5" value="4"
+      oninput="document.getElementById('sc-val').textContent=this.value;ZS=+this.value">
+    <span id="sc-val">4</span>
+  </div>
+</div>
+
+<script>
+// ─── CONFIG ────────────────────────────────────────────────
+let EASE = 'power4.inOut';
+let ZS   = 4;        // zoom scale
+const DUR = 1.6;     // zoom duration (s)
+const BAR = 0.11;    // letterbox bar height as fraction of viewport height
+
+// ─── DATA ──────────────────────────────────────────────────
+const ASSETS = [
+  {id:1, type:'wide', src:'https://picsum.photos/seed/b1/600/338',  title:'Setup Overview',     meta:'IMG · 3.2 MB · 2024-03-12', badge:'IMAGE'},
+  {id:2, type:'tall', src:'https://picsum.photos/seed/b2/400/711',  title:'Self Portrait',      meta:'IMG · 2.1 MB · 2024-03-11', badge:'IMAGE'},
+  {id:3, type:'sq',   src:'https://picsum.photos/seed/b3/500/500',  title:'Close Up Study',     meta:'VID · 47 MB  · 2024-03-10', badge:'VIDEO'},
+  {id:4, type:'sq',   src:'https://picsum.photos/seed/b4/500/500',  title:'Night Drive',        meta:'VID · 91 MB  · 2024-03-09', badge:'VIDEO'},
+  {id:5, type:'tall', src:'https://picsum.photos/seed/b5/400/711',  title:'Street Sign',        meta:'IMG · 1.4 MB · 2024-03-09', badge:'IMAGE'},
+  {id:6, type:'sq',   src:'https://picsum.photos/seed/b6/500/500',  title:'Trash Day',          meta:'VID · 34 MB  · 2024-03-08', badge:'VIDEO'},
+  {id:7, type:'wide', src:'https://picsum.photos/seed/b7/600/338',  title:'Walking Trail',      meta:'VID · 62 MB  · 2024-03-07', badge:'VIDEO'},
+  {id:8, type:'tall', src:'https://picsum.photos/seed/b8/400/711',  title:'Lava Lamp Green',    meta:'VID · 29 MB  · 2024-03-06', badge:'VIDEO'},
+  {id:9, type:'sq',   src:'https://picsum.photos/seed/b9/500/500',  title:'Kids at Target',     meta:'IMG · 1.9 MB · 2024-03-06', badge:'IMAGE'},
+  {id:10,type:'wide', src:'https://picsum.photos/seed/b10/600/338', title:'Black Car Snow',     meta:'VID · 55 MB  · 2024-03-05', badge:'VIDEO'},
+  {id:11,type:'tall', src:'https://picsum.photos/seed/b11/400/711', title:'Drink Closeup',      meta:'VID · 22 MB  · 2024-03-05', badge:'VIDEO'},
+  {id:12,type:'sq',   src:'https://picsum.photos/seed/b12/500/500', title:'Sand Pour',          meta:'VID · 18 MB  · 2024-03-04', badge:'VIDEO'},
+  {id:13,type:'audio',src:null,                                      title:'Voice Memo 01',      meta:'AUD · 4.2 MB · 2024-03-04', badge:'AUDIO'},
+  {id:14,type:'tall', src:'https://picsum.photos/seed/b14/400/711', title:'Camera Rig',         meta:'IMG · 3.1 MB · 2024-03-03', badge:'IMAGE'},
+  {id:15,type:'wide', src:'https://picsum.photos/seed/b15/600/338', title:'Toys Aisle',         meta:'VID · 77 MB  · 2024-03-03', badge:'VIDEO'},
+  {id:16,type:'sq',   src:'https://picsum.photos/seed/b16/500/500', title:'Lava Lamp Blue',     meta:'VID · 48 MB  · 2024-03-02', badge:'VIDEO'},
+  {id:17,type:'tall', src:'https://picsum.photos/seed/b17/400/711', title:'Smoke Driveway',     meta:'VID · 91 MB  · 2024-03-02', badge:'VIDEO'},
+  {id:18,type:'sq',   src:'https://picsum.photos/seed/b18/500/500', title:'Paulding County',    meta:'IMG · 1.2 MB · 2024-03-01', badge:'IMAGE'},
+  {id:19,type:'audio',src:null,                                      title:'Voice Memo 02',      meta:'AUD · 2.8 MB · 2024-03-01', badge:'AUDIO'},
+  {id:20,type:'tall', src:'https://picsum.photos/seed/b20/400/711', title:'Sunglasses Selfie',  meta:'IMG · 2.3 MB · 2024-02-28', badge:'IMAGE'},
+  {id:21,type:'wide', src:'https://picsum.photos/seed/b21/600/338', title:'Code Screenshot',    meta:'SCN · 0.9 MB · 2024-02-27', badge:'IMAGE'},
+  {id:22,type:'sq',   src:'https://picsum.photos/seed/b22/500/500', title:'Shopping Carts',     meta:'IMG · 1.7 MB · 2024-02-27', badge:'IMAGE'},
+  {id:23,type:'audio',src:null,                                      title:'Voice Memo 03',      meta:'AUD · 6.1 MB · 2024-02-26', badge:'AUDIO'},
+  {id:24,type:'wide', src:'https://picsum.photos/seed/b24/600/338', title:'County Sign Wide',   meta:'IMG · 2.0 MB · 2024-02-26', badge:'IMAGE'},
+  {id:25,type:'sq',   src:'https://picsum.photos/seed/b25/500/500', title:'Holding Device',     meta:'IMG · 1.5 MB · 2024-02-25', badge:'IMAGE'},
+  {id:26,type:'tall', src:'https://picsum.photos/seed/b26/400/711', title:'Concert Lights',     meta:'VID · 48 MB  · 2024-02-25', badge:'VIDEO'},
+  {id:27,type:'audio',src:null,                                      title:'Voice Memo 04',      meta:'AUD · 3.4 MB · 2024-02-24', badge:'AUDIO'},
+  {id:28,type:'sq',   src:'https://picsum.photos/seed/b28/500/500', title:'Document Scan',      meta:'DOC · 0.4 MB · 2024-02-24', badge:'DOC'},
+  {id:29,type:'wide', src:'https://picsum.photos/seed/b29/600/338', title:'Road at Night',      meta:'VID · 61 MB  · 2024-02-23', badge:'VIDEO'},
+  {id:30,type:'tall', src:'https://picsum.photos/seed/b30/400/711', title:'Lava Close',         meta:'VID · 19 MB  · 2024-02-23', badge:'VIDEO'},
+];
+
+// ─── STATE ─────────────────────────────────────────────────
+let isOpen     = false;
+let activeTL   = null;
+let focusIdx   = -1;   // index in ASSETS
+
+// ─── ELEMENTS ──────────────────────────────────────────────
+const viewport   = document.getElementById('viewport');
+const world      = document.getElementById('world');
+const gridEl     = document.getElementById('grid');
+const barTop     = document.getElementById('bar-top');
+const barBot     = document.getElementById('bar-bottom');
+const preview    = document.getElementById('preview');
+const pvTop      = document.getElementById('preview-top');
+const pvBot      = document.getElementById('preview-bottom');
+const pvBadge    = document.getElementById('preview-badge');
+const pvTitle    = document.getElementById('preview-title');
+const pvMeta     = document.getElementById('preview-meta');
+const closeBtn   = document.getElementById('close-btn');
+const headerEl   = document.getElementById('header');
+const labEl      = document.getElementById('lab');
+
+// ─── BUILD GRID ─────────────────────────────────────────────
+function buildGrid(){
+  gridEl.innerHTML = '';
+  document.getElementById('item-count').textContent = `${ASSETS.length} items`;
+
+  ASSETS.forEach((a, i) => {
+    const card = document.createElement('div');
+    card.className = `card ${a.type}`;
+    card.dataset.idx = i;
+
+    if(a.type === 'audio'){
+      card.innerHTML = `<div class="aico">♪</div><div class="albl">AUDIO</div>`;
+    } else {
+      card.innerHTML = `<img src="${a.src}" alt="${a.title}" loading="lazy" draggable="false">`;
+    }
+
+    gsap.set(card, {opacity:0, y:10, scale:.97});
+    gsap.to(card, {opacity:1, y:0, scale:1, duration:.45, ease:'power3.out', delay:.02 + i*.02});
+
+    card.addEventListener('click', () => openDetail(i));
+    gridEl.appendChild(card);
+  });
+}
+
+// ─── CORE ZOOM ──────────────────────────────────────────────
+/*
+  The fundamental equation to zoom into a card's center without
+  translating #world (which breaks because world doesn't fill viewport
+  at scale:1 -- it overflows and its coordinate system is wrong):
+
+  We use transform-origin set to the card's center in DOCUMENT space
+  (relative to #world's top-left, accounting for world padding and scrollTop).
+  Then we ONLY scale -- no translate. The origin point stays pinned
+  at the screen position of the card center, and the scale radiates outward.
+
+  This is stable across any scroll position.
+*/
+function openDetail(idx){
+  if(isOpen) return;
+  isOpen   = true;
+  focusIdx = idx;
+
+  const asset   = ASSETS[idx];
+  const cards   = gridEl.querySelectorAll('.card');
+  const cardEl  = cards[idx];
+  const vp      = viewport;
+
+  // Card rect in VIEWPORT-RELATIVE space (screen coords minus header)
+  const rect    = cardEl.getBoundingClientRect();
+  const vpRect  = vp.getBoundingClientRect();
+
+  // Card center in SCREEN space
+  const screenCX = rect.left + rect.width  / 2;
+  const screenCY = rect.top  + rect.height / 2;
+
+  // Card center in WORLD-LOCAL space (what transform-origin needs)
+  // world padding = gap px, but world starts at top of #viewport content
+  const worldLocalX = screenCX - vpRect.left;
+  const worldLocalY = screenCY - vpRect.top + vp.scrollTop;
+
+  // Set transform-origin on world to card center (world-local coords)
+  world.style.transformOrigin = `${worldLocalX}px ${worldLocalY}px`;
+
+  // After scaling, the card center stays at its original screen position.
+  // We want it centered on viewport -- translate world so card center hits vp center.
+  const vpCX = vpRect.width  / 2;
+  const vpCY = vpRect.height / 2;
+  // Delta from card-center screen position to viewport center
+  const tx = vpCX - screenCX;
+  const ty = vpCY - screenCY;
+
+  const barH = window.innerHeight * BAR;
+
+  // Populate preview panel
+  pvBadge.textContent = asset.badge || 'FILE';
+  pvTitle.textContent = asset.title;
+  pvMeta.textContent  = asset.meta;
+
+  // Lock viewport scroll
+  vp.classList.add('locked');
+
+  // Mark card
+  cardEl.classList.add('is-focus');
+
+  // Kill any running animation
+  if(activeTL) activeTL.kill();
+
+  const tl = gsap.timeline();
+  activeTL = tl;
+
+  // 1. Zoom world in -- origin-anchored scale + center-compensation translate
+  //    Using gsap's x/y for the translate layer
+  tl.to(world, {
+    x: tx,
+    y: ty,
+    scale: ZS,
+    duration: DUR,
+    ease: EASE,
+  }, 0);
+
+  // 2. World fades as it fully zooms (starts at 40% through)
+  tl.to(world, {
+    opacity: 0,
+    duration: DUR * .55,
+    ease: 'power2.in',
+  }, DUR * .4);
+
+  // 3. Letterbox bars
+  tl.to(barTop, {height: barH, duration: DUR * .6, ease: 'power3.inOut'}, DUR * .05);
+  tl.to(barBot, {height: barH, duration: DUR * .6, ease: 'power3.inOut'}, DUR * .05);
+
+  // 4. Header dims
+  tl.to(headerEl, {opacity:0, duration:.25, ease:'power2.in'}, DUR * .1);
+
+  // 5. Preview panel -- fade in (parallax: fixed, no transform)
+  tl.to(preview, {opacity:1, duration:.01}, 0);
+
+  // Update pvTop position based on bar height (it lives below the top bar)
+  gsap.to(pvTop, {top: barH, opacity:1, y:0, duration:.4, ease:'power3.out'}, DUR * .55);
+
+  // Preview bottom info rises in
+  tl.to(pvBot, {
+    opacity:1, y:0, duration:.5, ease:'power3.out',
+  }, DUR * .6);
+
+  // 6. Close button
+  tl.to(closeBtn, {opacity:1, duration:.25}, DUR * .5);
+  closeBtn.classList.add('show');
+
+  // 7. Hide lab
+  labEl.classList.add('gone');
+}
+
+// ─── CLOSE ──────────────────────────────────────────────────
+function closeDetail(){
+  if(!isOpen) return;
+
+  const cardEl = gridEl.querySelectorAll('.card')[focusIdx];
+  const collapseDur = DUR * .7;
+
+  if(activeTL) activeTL.kill();
+
+  const tl = gsap.timeline({
+    onComplete(){
+      isOpen = false;
+      focusIdx = -1;
+      viewport.classList.remove('locked');
+      cardEl && cardEl.classList.remove('is-focus');
+      gsap.set(world, {clearProps:'x,y,scale,opacity,transformOrigin'});
+      gsap.set(preview, {opacity:0});
+      gsap.set([pvTop, pvBot], {opacity:0, y:function(i){return i===0?-6:10}});
+      labEl.classList.remove('gone');
+    }
+  });
+
+  activeTL = tl;
+
+  // Hide preview text instantly
+  tl.to([pvTop, pvBot, closeBtn], {opacity:0, duration:.18, ease:'power2.in'}, 0);
+  closeBtn.classList.remove('show');
+
+  // Bars retract
+  tl.to(barTop, {height:0, duration:collapseDur * .75, ease:'power3.inOut'}, .05);
+  tl.to(barBot, {height:0, duration:collapseDur * .75, ease:'power3.inOut'}, .05);
+
+  // Header returns
+  tl.to(headerEl, {opacity:1, duration:.3, ease:'power2.out'}, .15);
+
+  // World un-fades then retracts
+  tl.to(world, {opacity:1, duration:collapseDur * .35, ease:'power2.out'}, .05);
+  tl.to(world, {x:0, y:0, scale:1, duration:collapseDur, ease:'power3.inOut'}, .08);
+}
+
+// ─── STEP ASSET (prev/next while open) ─────────────────────
+function stepAsset(dir){
+  if(!isOpen) return;
+  const next = (focusIdx + dir + ASSETS.length) % ASSETS.length;
+
+  // Quick close current, reopen next
+  if(activeTL) activeTL.kill();
+  const cardEl = gridEl.querySelectorAll('.card')[focusIdx];
+  if(cardEl) cardEl.classList.remove('is-focus');
+
+  // Reset world instantly to neutral and re-open
+  gsap.set(world, {clearProps:'x,y,scale,opacity,transformOrigin'});
+  viewport.classList.remove('locked');
+  isOpen = false;
+
+  // Re-open next with tiny delay
+  requestAnimationFrame(() => openDetail(next));
+}
+
+// ─── UTILS ──────────────────────────────────────────────────
+function setCols(n, btn){
+  gridEl.style.columns = n;
+  document.querySelectorAll('.pill').forEach(p => p.classList.remove('on'));
+  btn.classList.add('on');
+}
+function setEase(btn, name){
+  EASE = name;
+  document.querySelectorAll('.lb').forEach(b => b.classList.remove('on'));
+  btn.classList.add('on');
+}
+
+// ESC
+document.addEventListener('keydown', e => { if(e.key==='Escape') closeDetail(); });
+
+// Init preview panel to hidden state
+gsap.set(preview, {opacity:0});
+gsap.set(pvTop, {opacity:0, y:-6});
+gsap.set(pvBot, {opacity:0, y:10});
+gsap.set(closeBtn, {opacity:0});
+
+buildGrid();
+</script>
+
+</body>
+</html>
+``` 
+
+Yes -- that’s the right move.
+
+Do **not** invent a whole new preview system if you already have one.  
+Instead:
+
+- keep your existing preview content
+- keep your existing data flow
+- keep your existing asset selection/open logic
+
+And only transplant:
+
+- the **transition choreography**
+- the **letterbox / world-zoom staging**
+- the **preview entrance timing**
+- the **close/retract timing**
+
+## Best way to think about it
+
+Your current Explorer already has:
+
+- asset cards
+- active asset state
+- preview panel / drawer content
+- metadata/actions
+- navigation logic
+
+So the new work should be:
+
+### Keep
+- preview shell structure
+- preview media/content elements
+- current actions
+- current asset state ownership
+
+### Replace / adapt
+- how preview opens
+- how preview closes
+- how the world/card zooms
+- how the bars and overlays stage the scene
+
+## That means
+
+You are not building:
+- "a new preview"
+
+You are building:
+- **a cinematic opening/closing transition for the existing preview**
+
+## Why that’s better
+
+Because it avoids:
+- duplicating preview markup
+- duplicating asset state
+- duplicating action handlers
+- breaking the now-stable interaction baseline
+
+## What to tell Codex
+
+Tell it to:
+
+- **adapt the motion language**
+- **reuse existing preview elements**
+- **not replace the preview feature architecture**
+
+Something like:
+
+Branch: codex/adapt-cinematic-preview-transition  
+Repo: Cdaprod/media-sync-api
+
+Use the provided zoom/detail demo as a transition reference only.
+
+Do NOT build a separate preview system.
+Do NOT duplicate preview state or actions.
+
+Goal:
+Adapt the existing Explorer preview/opened-asset experience so it opens/closes with the cinematic zoom/letterbox/preview choreography from the demo.
+
+Implementation intent:
+- keep existing preview content/components/state ownership
+- keep existing asset selection/open logic
+- transplant only the transition behavior and staging
+
+Reuse existing Explorer elements where possible:
+- existing preview shell
+- existing preview media/content
+- existing preview metadata/actions
+- existing active asset state
+
+Adapt from the demo:
+- zooming/open transition feel
+- letterbox bars
+- preview layer entrance timing
+- close/retract choreography
+- prev/next while open only if Explorer already has a compatible path
+
+Do not:
+- replace the current preview architecture
+- create a second parallel preview implementation
+- break the stabilized gesture/tap/hold/pinch/scroll baseline
+- tightly couple the cinematic transition to the gesture engine
+
+The gesture engine should only decide:
+- open asset
+- close asset
+- step asset
+
+The cinematic layer should only decide:
+- how the preview visually enters/exits
+
+Report back with:
+- exact files changed
+- which existing preview elements were reused
+- which demo behaviors were adapted
+- any compromises made because of current Explorer structure
+- commit SHA## My recommendation
+
+Exactly what you said:
+**transplant the existing elements into the animated way**  
+--not the other way around.

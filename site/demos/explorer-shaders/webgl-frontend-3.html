@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Explorer — WebGL AssetGrid</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@800&family=DM+Mono:ital,wght@1,300;0,400&display=swap" rel="stylesheet">
+<style>
+/*
+ * ARCHITECTURE OVERVIEW
+ * ─────────────────────
+ * DOM layer (z-index 2+):  .masonry-card  absolute-positioned, never destroyed.
+ *   ├─ .card-shader-canvas  WebGL, fills the thumb rect, IS the visual skin.
+ *   └─ .asset-overlay       DOM: badges, title, selector — always interactive.
+ *
+ * WebGL stage canvas (z-index 0):  one shared canvas behind all cards.
+ *   reads getBoundingClientRect() every frame → tracks live interpolated positions.
+ *   renders: ambient depth field + per-card SDF energy rings.
+ *   because it reads BCR during CSS transition, the rings chase the cards
+ *   through the entire reflow with no JS coordination needed.
+ *
+ * Density transition:
+ *   applyLayout() writes card.style.left/top/width/height.
+ *   CSS cubic-bezier eases the four geometry properties.
+ *   No DOM teardown. No opacity flash. No repaint gap.
+ *   The per-card shader canvases resize via ResizeObserver.
+ *   The stage shader sees the mid-flight BCR → continuous energy field.
+ */
+
+*, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
+:root {
+–mint:#4fffce; –mint-dim:rgba(79,255,206,0.18); –mint-glow:rgba(79,255,206,0.06);
+–void:#060810; –surface:#0b0f1a; –surface2:#0d1220;
+–text:#c8d4e8; –text-dim:#4a5878; –amber:#ffb340; –blue:#8ab4f8;
+}
+html,body { width:100%; height:100%; background:var(–void); color:var(–text);
+font-family:‘DM Mono’,monospace; overflow:hidden; -webkit-tap-highlight-color:transparent; }
+
+/* ── TOPBAR ── */
+.topbar {
+position:fixed; top:0; left:0; right:0; height:44px;
+display:flex; align-items:center; padding:0 14px; gap:10px;
+background:rgba(6,8,16,0.94); backdrop-filter:blur(16px) saturate(1.4);
+-webkit-backdrop-filter:blur(16px) saturate(1.4);
+border-bottom:1px solid rgba(79,255,206,0.09); z-index:200;
+}
+.topbar-title { font-family:‘Syne’,sans-serif; font-weight:800; font-size:13px;
+letter-spacing:0.13em; color:var(–mint); text-transform:uppercase; }
+.topbar-sub { font-size:10px; color:var(–text-dim); font-style:italic; letter-spacing:0.06em; }
+.topbar-spacer { flex:1; }
+.density-ctrl { display:flex; gap:3px; align-items:center; }
+.density-label { font-size:9px; color:var(–text-dim); letter-spacing:0.08em; margin-right:4px; font-style:italic; }
+.density-btn {
+width:26px; height:26px; border:1px solid rgba(79,255,206,0.18);
+background:transparent; color:var(–text-dim); border-radius:3px; cursor:pointer;
+display:flex; align-items:center; justify-content:center; font-size:11px;
+transition:border-color 0.15s, color 0.15s, background 0.15s;
+font-family:‘DM Mono’,monospace; user-select:none; -webkit-user-select:none;
+}
+.density-btn:hover { border-color:rgba(79,255,206,0.4); color:var(–mint); }
+.density-btn.active { border-color:var(–mint); color:var(–mint); background:var(–mint-glow); }
+
+/* ── SCROLL ── */
+.scroll {
+position:fixed; top:44px; left:0; right:0; bottom:22px;
+overflow-y:auto; overflow-x:hidden; -webkit-overflow-scrolling:touch;
+}
+.scroll::-webkit-scrollbar { width:3px; }
+.scroll::-webkit-scrollbar-thumb { background:rgba(79,255,206,0.18); border-radius:2px; }
+
+/* ── STAGE CANVAS (shared WebGL, behind everything) ── */
+#stage-canvas {
+position:absolute; top:0; left:0; width:100%;
+pointer-events:none; z-index:0; display:block;
+}
+
+/* ── MASONRY ── */
+.masonry-host { position:relative; padding:8px; }
+.masonry-columns { position:relative; width:100%; }
+
+/*
+
+- KEY: position properties are CSS-transitioned.
+- No opacity/transform transition after initial reveal (class .settled).
+- This means density changes animate geometry only, nothing else flashes.
+  */
+  .masonry-card {
+  position:absolute; border-radius:5px; cursor:pointer; overflow:hidden;
+  background:var(–surface); z-index:1;
+  will-change:left,top,width,height;
+  /* entrance only */
+  opacity:0; transform:translateY(6px) scale(0.98);
+  transition:
+  left   0.46s cubic-bezier(0.4,0,0.2,1),
+  top    0.46s cubic-bezier(0.4,0,0.2,1),
+  width  0.46s cubic-bezier(0.4,0,0.2,1),
+  height 0.46s cubic-bezier(0.4,0,0.2,1),
+  opacity 0.28s ease,
+  transform 0.28s ease;
+  }
+  .masonry-card.revealed { opacity:1; transform:translateY(0) scale(1); }
+  /* After initial reveal, strip opacity/transform from transition list entirely.
+  Only geometry transitions remain. No flash possible on density change. */
+  .masonry-card.settled {
+  transition:
+  left   0.46s cubic-bezier(0.4,0,0.2,1),
+  top    0.46s cubic-bezier(0.4,0,0.2,1),
+  width  0.46s cubic-bezier(0.4,0,0.2,1),
+  height 0.46s cubic-bezier(0.4,0,0.2,1);
+  }
+  .masonry-card:hover .asset-overlay { opacity:1; }
+  .masonry-card.is-active { z-index:20; }
+  .masonry-card.is-active .cshell::after { opacity:1; }
+  .masonry-card.is-selected .cshell::before { opacity:1; }
+
+/* cinematic shell */
+.cshell { position:relative; width:100%; height:100%; overflow:hidden; border-radius:5px; }
+/* active border */
+.cshell::after {
+content:’’; position:absolute; inset:0; border-radius:5px; z-index:6;
+border:1.5px solid var(–mint); opacity:0; pointer-events:none;
+transition:opacity 0.2s;
+box-shadow:inset 0 0 14px rgba(79,255,206,0.10), 0 0 10px rgba(79,255,206,0.14);
+}
+/* selection border */
+.cshell::before {
+content:’’; position:absolute; inset:0; border-radius:5px; z-index:6;
+border:1.5px solid var(–blue); opacity:0; pointer-events:none;
+transition:opacity 0.18s;
+box-shadow:inset 0 0 10px rgba(138,180,248,0.08);
+}
+
+/* per-card WebGL canvas = the visual skin of the card */
+.csc {
+position:absolute; inset:0; width:100%; height:100%;
+display:block; pointer-events:none; z-index:0; border-radius:5px;
+}
+
+/* DOM overlay — always on top of shader canvas */
+.asset-overlay {
+position:absolute; inset:0; z-index:4; opacity:0; transition:opacity 0.18s;
+background:linear-gradient(
+to bottom,
+rgba(6,8,16,0.54) 0%, transparent 30%,
+transparent 56%, rgba(6,8,16,0.74) 100%);
+display:flex; flex-direction:column; justify-content:space-between; padding:5px;
+}
+.masonry-card:hover .asset-overlay,
+.masonry-card.is-active .asset-overlay { opacity:1; }
+.ov-top { display:flex; justify-content:space-between; align-items:flex-start; gap:4px; }
+.ov-bot { display:flex; flex-direction:column; gap:1px; }
+
+.badge {
+font-size:8px; letter-spacing:0.1em; text-transform:uppercase;
+padding:2px 4px; border-radius:2px; font-family:‘DM Mono’,monospace; font-style:italic;
+white-space:nowrap;
+}
+.bv { background:rgba(79,255,206,0.13); color:var(–mint); border:1px solid rgba(79,255,206,0.26); }
+.bi { background:rgba(138,180,248,0.12); color:var(–blue); border:1px solid rgba(138,180,248,0.24); }
+.br { background:rgba(255,179,64,0.11);  color:var(–amber); border:1px solid rgba(255,179,64,0.22); }
+.bd { background:rgba(6,8,16,0.55); color:var(–text-dim); border:none; }
+.asset-title { font-size:9px; color:var(–text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.asset-sub   { font-size:8px; color:var(–text-dim); font-style:italic; }
+
+/* selector */
+.sel-wrap { width:18px; height:18px; flex-shrink:0; display:flex; align-items:center; justify-content:center; }
+.sel-ring {
+width:16px; height:16px; border-radius:50%; border:1.5px solid rgba(79,255,206,0.38);
+background:rgba(6,8,16,0.6); display:flex; align-items:center; justify-content:center;
+transition:background 0.16s, border-color 0.16s; cursor:pointer;
+}
+.sel-ring input { display:none; }
+.sel-num { font-size:7px; color:var(–mint); opacity:0; transition:opacity 0.12s; font-weight:700; }
+.is-selected .sel-ring { background:var(–mint); border-color:var(–mint); }
+.is-selected .sel-num  { opacity:1; color:var(–void); }
+
+/* ── STATUS ── */
+.statusbar {
+position:fixed; bottom:0; left:0; right:0; height:22px;
+display:flex; align-items:center; padding:0 10px; gap:12px;
+background:rgba(6,8,16,0.92); border-top:1px solid rgba(79,255,206,0.05);
+font-size:9px; color:var(–text-dim); letter-spacing:0.05em; z-index:200;
+}
+.statusbar .hi { color:var(–mint); }
+.statusbar .sep { color:var(–text-dim); opacity:0.3; }
+
+/* ── TRANSITION FLASH INDICATOR ── */
+.reflow-flash {
+position:fixed; top:44px; left:0; right:0; height:1px;
+background:linear-gradient(90deg, transparent, var(–mint), transparent);
+z-index:300; opacity:0; pointer-events:none;
+transition:opacity 0.08s;
+}
+.reflow-flash.active { opacity:1; }
+</style>
+
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-title">Explorer</div>
+  <div class="topbar-sub">WebGL · hybrid cards</div>
+  <div class="topbar-spacer"></div>
+  <div class="density-ctrl">
+    <span class="density-label">density</span>
+    <button class="density-btn active" data-cols="2">2</button>
+    <button class="density-btn" data-cols="3">3</button>
+    <button class="density-btn" data-cols="4">4</button>
+    <button class="density-btn" data-cols="5">5</button>
+  </div>
+</div>
+
+<div class="scroll" id="scroll">
+  <div class="masonry-host" id="masonryHost">
+    <canvas id="stage-canvas"></canvas>
+    <div class="masonry-columns" id="masonryColumns"></div>
+  </div>
+</div>
+
+<div class="reflow-flash" id="reflowFlash"></div>
+
+<div class="statusbar">
+  <span>cols <span class="hi" id="sCols">2</span></span>
+  <span class="sep">|</span>
+  <span><span class="hi" id="sCards">0</span> assets</span>
+  <span class="sep">|</span>
+  <span id="sState">initialising</span>
+  <div style="flex:1"></div>
+  <span>stage <span class="hi">WebGL</span></span>
+  <span class="sep">|</span>
+  <span>cards <span class="hi">WebGL</span></span>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════════════════════════
+//  DATA MODEL
+//  48 assets with stable identity. Never regenerated.
+//  Each asset has: id, kind, orient, ratio, title, size, hue, sat
+// ════════════════════════════════════════════════════════════════════════════
+(function(){
+
+const KINDS   = ['video','video','image','image','video','raw','image','video'];
+const ORIENTS = ['portrait','landscape','square','portrait','landscape','portrait','square','landscape'];
+const TITLES  = [
+  'SHOT_4K_0012.mov','beach_drone_r01.mp4','studio_bts_v2.mp4','DSC_0447.ARW',
+  'portrait_final.jpg','BTS_wide_09.tif','interview_cut.mov','gradient_test.png',
+  'LOG_C_00234.mxf','backstage_reel.mp4','DSC_8812.NEF','aerial_seq3.mp4',
+  'comp_v7_master.mov','raw_scan_01.tif','event_recap.mp4','thumb_frame.jpg',
+  'colorgrd_test.mov','DSC_0991.ARW','teaser_v3.mp4','stills_01.ARW',
+  'interview_b.mov','landscape_dng.DNG','studio_wide.mp4','closeup_01.jpg',
+];
+const SIZES=['1.2 GB','340 MB','2.1 GB','28 MB','4 MB','180 MB','890 MB','2 MB',
+             '1.8 GB','460 MB','34 MB','1.1 GB','3.4 GB','220 MB','700 MB','890 KB',
+             '540 MB','19 MB','2.4 GB','56 MB','1.6 GB','44 MB','980 MB','8 MB'];
+
+const rng = (function(seed){ // seeded rand for reproducibility
+  let s=seed;
+  return function(){ s=(s*1664525+1013904223)&0xffffffff; return (s>>>0)/4294967296; };
+})(0xdeadbeef);
+
+const ASSETS = Array.from({length:48},(_,i)=>{
+  const orient=ORIENTS[i%8];
+  return {
+    id:`a${i}`, kind:KINDS[i%8], orient,
+    ratio: orient==='portrait' ? 1.22+rng()*0.38
+         : orient==='landscape'? 0.52+rng()*0.30
+         : 0.86+rng()*0.26,
+    title:TITLES[i%24], size:SIZES[i%24],
+    hue:rng(), sat:0.45+rng()*0.55,
+    selected:false, selOrder:0, active:false,
+  };
+});
+
+let selOrder=[], colCount=2;
+
+// ════════════════════════════════════════════════════════════════════════════
+//  MASONRY LAYOUT  (pure function)
+// ════════════════════════════════════════════════════════════════════════════
+function computeLayout(items, cw, cols, gap){
+  const colW=(cw - gap*(cols+1)) / cols;
+  const colH=new Array(cols).fill(gap);
+  const out=items.map(item=>{
+    const ci=colH.indexOf(Math.min(...colH));
+    const x=gap+ci*(colW+gap), y=colH[ci], h=colW*item.ratio;
+    colH[ci]=y+h+gap;
+    return {item,x,y,w:colW,h};
+  });
+  return {items:out, stageH:Math.max(...colH)};
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  GLSL HELPERS
+// ════════════════════════════════════════════════════════════════════════════
+function createShader(gl, type, src){
+  const s=gl.createShader(type);
+  gl.shaderSource(s,src); gl.compileShader(s);
+  if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)){
+    console.error('shader compile error:', gl.getShaderInfoLog(s), '\n---\n', src);
+    return null;
+  }
+  return s;
+}
+function createProgram(gl, vs, fs){
+  const p=gl.createProgram();
+  gl.attachShader(p,vs); gl.attachShader(p,fs); gl.linkProgram(p);
+  if(!gl.getProgramParameter(p,gl.LINK_STATUS)){
+    console.error('program link error:', gl.getProgramInfoLog(p)); return null;
+  }
+  return p;
+}
+function fullscreenQuad(gl, prog){
+  const buf=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
+  const loc=gl.getAttribLocation(prog,'a');
+  gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
+  return buf;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  PER-CARD SHADER
+//  Each card gets ONE WebGL canvas that covers its thumb area entirely.
+//  The shader IS the visual skin — not a decoration on top of a CSS gradient.
+//
+//  Safari/iOS GLSL ES 1.0 compliance:
+//    - All loop bounds are integer literals.
+//    - No dynamic array indexing inside loops.
+//    - All palette constants are baked into the GLSL source at JS build time.
+//    - fbm uses a fixed 3-octave unrolled loop.
+// ════════════════════════════════════════════════════════════════════════════
+const CARD_VERT = `attribute vec2 a; void main(){ gl_Position=vec4(a,0.,1.); }`;
+
+function buildCardFrag(hue, sat, kindIdx){
+  // bake constants into source — avoids uniform arrays entirely
+  const H  = hue.toFixed(5);
+  const S  = sat.toFixed(5);
+  // kind-tuned secondary hue + speed
+  const H2 = (hue + (kindIdx===0?0.07 : kindIdx===1?-0.05 : 0.13)).toFixed(5);
+  const spd= (kindIdx===0?'0.055' : kindIdx===1?'0.040' : '0.072');
+  return `
+precision highp float;
+uniform float u_t;
+uniform vec2  u_sz;
+
+float h21(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+float noise(vec2 p){
+  vec2 i=floor(p), f=fract(p); f=f*f*(3.-2.*f);
+  float a=h21(i),b=h21(i+vec2(1,0)),c=h21(i+vec2(0,1)),d=h21(i+vec2(1,1));
+  return mix(mix(a,b,f.x),mix(c,d,f.x),f.y);
+}
+float fbm(vec2 p){
+  float v=0.,a=0.5;
+  v+=a*noise(p); p=p*2.13+vec2(1.7,9.2); a*=0.5;
+  v+=a*noise(p); p=p*2.13+vec2(8.3,2.8); a*=0.5;
+  v+=a*noise(p);
+  return v;
+}
+vec3 hsl(float h,float s,float l){
+  vec3 r=clamp(abs(mod(h*6.+vec3(0,4,2),6.)-3.)-1.,0.,1.);
+  return l+s*(r-.5)*(1.-abs(2.*l-1.));
+}
+void main(){
+  vec2 uv=gl_FragCoord.xy/u_sz; uv.y=1.-uv.y;
+  // domain warp
+  float ox=fbm(uv*2.6+vec2(u_t*${spd},1.9));
+  float oy=fbm(uv*2.6+vec2(2.1,u_t*${spd}*0.8));
+  vec2  wuv=uv+0.25*vec2(ox,oy);
+  float f=fbm(wuv*3.1+u_t*0.03);
+  // palette from baked hue
+  vec3 cA=hsl(${H}, ${S}*0.85, 0.10+f*0.10);
+  vec3 cB=hsl(${H2},${S},      0.16+f*0.09);
+  vec3 col=mix(cA,cB,f);
+  // mint vein
+  float vein=smoothstep(0.46,0.54,fbm(wuv*5.2-u_t*0.05));
+  col=mix(col,vec3(0.31,1.0,0.80)*0.32, vein*0.38);
+  // edge pulse
+  float ed=min(min(uv.x,1.-uv.x),min(uv.y,1.-uv.y));
+  float ep=sin(u_t*2.1+ed*16.)*0.5+0.5;
+  col+=vec3(0.31,1.0,0.80)*smoothstep(0.07,0.,ed)*0.16*(0.5+ep*0.5);
+  // scanlines
+  col-=step(0.5,fract(gl_FragCoord.y*0.5))*0.016;
+  // vignette
+  float vg=1.-smoothstep(0.28,0.82,length((uv-0.5)*1.38));
+  col*=vg*0.68+0.32;
+  gl_FragColor=vec4(col,1.);
+}`;
+}
+
+// card GL registry: id → {canvas, gl, prog, uT, uSz, vbo, t0, ro}
+const cgm = new Map();
+
+function initCardShader(asset, cvs){
+  const gl=cvs.getContext('webgl',{alpha:false,antialias:false,depth:false,preserveDrawingBuffer:false});
+  if(!gl) return;
+  const ki = asset.kind==='video'?0 : asset.kind==='image'?1 : 2;
+  const vs=createShader(gl,gl.VERTEX_SHADER,CARD_VERT);
+  const fs=createShader(gl,gl.FRAGMENT_SHADER,buildCardFrag(asset.hue,asset.sat,ki));
+  if(!vs||!fs) return;
+  const prog=createProgram(gl,vs,fs);
+  if(!prog) return;
+  gl.useProgram(prog);
+  const vbo=fullscreenQuad(gl,prog);
+  const uT=gl.getUniformLocation(prog,'u_t');
+  const uSz=gl.getUniformLocation(prog,'u_sz');
+  // ResizeObserver to handle card size changes during reflow
+  let w=0, h=0;
+  const ro=new ResizeObserver(()=>{
+    const r=cvs.getBoundingClientRect();
+    const nw=Math.round(r.width)||cvs.offsetWidth||1;
+    const nh=Math.round(r.height)||cvs.offsetHeight||1;
+    if(nw===w&&nh===h) return;
+    w=nw; h=nh;
+    cvs.width=w; cvs.height=h;
+    gl.viewport(0,0,w,h);
+  });
+  ro.observe(cvs);
+  cgm.set(asset.id,{cvs,gl,prog,uT,uSz,vbo,t0:Date.now(),ro,w:0,h:0});
+}
+
+function tickCard(id){
+  const c=cgm.get(id); if(!c) return;
+  const {cvs,gl,prog,uT,uSz,vbo,t0}=c;
+  const w=cvs.width, h=cvs.height;
+  if(w<2||h<2) return;
+  gl.useProgram(prog);
+  gl.uniform1f(uT,(Date.now()-t0)/1000.0);
+  gl.uniform2f(uSz,w,h);
+  gl.bindBuffer(gl.ARRAY_BUFFER,vbo);
+  gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+}
+
+// single RAF loop ticks all card shaders
+let cRaf=0;
+(function cLoop(){ cRaf=requestAnimationFrame(cLoop); cgm.forEach((_,id)=>tickCard(id)); })();
+
+// ════════════════════════════════════════════════════════════════════════════
+//  STAGE SHADER
+//  One shared canvas behind the entire grid.
+//  Reads getBCR() each frame → energy rings track cards mid-CSS-transition.
+//
+//  Safari fix: the loop is fully unrolled at JS template time.
+//  No dynamic loop bound → no GLSL ES 1.0 compile error.
+//  We generate N=48 unrolled iterations with if(i < u_n) guards.
+// ════════════════════════════════════════════════════════════════════════════
+const STAGE_VERT=`attribute vec2 a; void main(){ gl_Position=vec4(a,0.,1.); }`;
+const MAX_CARDS=48;
+
+function buildStageFrag(N){
+  // generate N unrolled SDF card contributions
+  let loop='';
+  for(let i=0;i<N;i++){
+    loop+=`
+  if(${i}<u_n){
+    vec4 r=u_c[${i}]; float hue=u_e[${i}].x; float act=u_e[${i}].y;
+    vec2 ctr=r.xy+r.zw*0.5; vec2 hf=r.zw*0.5;
+    vec2 dv=abs(px-ctr)-hf;
+    float sdf=length(max(dv,0.))+min(max(dv.x,dv.y),0.);
+    float brd=exp(-abs(sdf)*0.13)*0.058;
+    float inn=exp(sdf*0.030)*0.019;
+    float pls=sin(u_t*1.65+hue*6.28+sdf*0.030)*0.5+0.5;
+    float g=(brd+inn)*(0.48+pls*0.52);
+    if(act>0.5) g*=3.4;
+    vec3 col=hsl(hue,0.62,0.54); col=mix(col,vec3(0.31,1.0,0.80),0.26);
+    lgt+=col*g;
+  }`;
+  }
+  return `
+precision mediump float;
+uniform float u_t;
+uniform vec2  u_res;
+uniform float u_scroll;
+uniform vec4  u_c[${N}];
+uniform vec4  u_e[${N}];
+uniform int   u_n;
+
+float h21(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5); }
+float noise(vec2 p){
+  vec2 i=floor(p),f=fract(p); f=f*f*(3.-2.*f);
+  return mix(mix(h21(i),h21(i+vec2(1,0)),f.x),mix(h21(i+vec2(0,1)),h21(i+vec2(1)),f.x),f.y);
+}
+vec3 hsl(float h,float s,float l){
+  vec3 r=clamp(abs(mod(h*6.+vec3(0,4,2),6.)-3.)-1.,0.,1.);
+  return l+s*(r-0.5)*(1.-abs(2.*l-1.));
+}
+void main(){
+  vec2 px=vec2(gl_FragCoord.x, u_res.y-gl_FragCoord.y+u_scroll);
+  vec2 uv=gl_FragCoord.xy/u_res;
+  vec2 nv=px/u_res;
+  float n=noise(nv*3.1+u_t*0.048)*0.78+noise(nv*6.9-u_t*0.082)*0.22;
+  vec3 base=vec3(0.021+n*0.009, 0.029+n*0.013, 0.050+n*0.021);
+  base-=step(0.5,fract(gl_FragCoord.y*0.5))*0.011;
+  vec3 lgt=vec3(0.);
+  ${loop}
+  float vg=pow(clamp(1.-length((uv-0.5)*1.52),0.,1.),2.2);
+  gl_FragColor=vec4((base+lgt)*(vg*0.80+0.20),1.);
+}`;
+}
+
+const stageCvs=document.getElementById('stage-canvas');
+let sgl=null, sProg=null, sReady=false;
+let suT,suRes,suScroll,suN;
+const sFlat=new Float32Array(MAX_CARDS*4);
+const sExt =new Float32Array(MAX_CARDS*4);
+const T0=Date.now();
+
+function initStageGL(){
+  sgl=stageCvs.getContext('webgl',{alpha:false,antialias:false,depth:false,preserveDrawingBuffer:false});
+  if(!sgl){ console.warn('stage WebGL unavailable'); return; }
+  const vs=createShader(sgl,sgl.VERTEX_SHADER,STAGE_VERT);
+  const fsSrc=buildStageFrag(MAX_CARDS);
+  const fs=createShader(sgl,sgl.FRAGMENT_SHADER,fsSrc);
+  if(!vs||!fs) return;
+  sProg=createProgram(sgl,vs,fs);
+  if(!sProg) return;
+  sgl.useProgram(sProg);
+  fullscreenQuad(sgl,sProg);
+  suT     =sgl.getUniformLocation(sProg,'u_t');
+  suRes   =sgl.getUniformLocation(sProg,'u_res');
+  suScroll=sgl.getUniformLocation(sProg,'u_scroll');
+  suN     =sgl.getUniformLocation(sProg,'u_n');
+  sReady=true;
+  console.log('stage WebGL ready');
+}
+
+function resizeStage(){
+  const mh=document.getElementById('masonryHost');
+  const scrollEl=document.getElementById('scroll');
+  const h=Math.max(mh.scrollHeight, scrollEl.clientHeight, 400);
+  const w=window.innerWidth;
+  if(stageCvs.width!==w||stageCvs.height!==h){
+    stageCvs.width=w; stageCvs.height=h;
+    stageCvs.style.height=h+'px';
+    if(sgl) sgl.viewport(0,0,w,h);
+  }
+}
+
+function renderStage(scrollY){
+  if(!sReady||!sgl||!sProg) return;
+  const t=(Date.now()-T0)/1000.0;
+  const cw=stageCvs.width, ch=stageCvs.height;
+  // sample all card BCRs — mid-CSS-transition values give us live interpolated positions
+  let n=0;
+  cardMap.forEach((card,id)=>{
+    if(n>=MAX_CARDS) return;
+    const b=card.getBoundingClientRect();
+    // BCR is viewport-relative; convert to scroll-absolute DOM coords
+    sFlat[n*4+0]=b.left;
+    sFlat[n*4+1]=b.top-44+scrollY; // 44 = topbar height
+    sFlat[n*4+2]=b.width;
+    sFlat[n*4+3]=b.height;
+    const a=ASSETS.find(x=>x.id===id);
+    sExt[n*4+0]=a?a.hue:0.46;
+    sExt[n*4+1]=(a&&a.active)?1.0:0.0;
+    sExt[n*4+2]=0.0; sExt[n*4+3]=0.0;
+    n++;
+  });
+  sgl.useProgram(sProg);
+  sgl.uniform1f(suT,t);
+  sgl.uniform2f(suRes,cw,ch);
+  sgl.uniform1f(suScroll,scrollY);
+  sgl.uniform4fv(sgl.getUniformLocation(sProg,'u_c[0]'),sFlat);
+  sgl.uniform4fv(sgl.getUniformLocation(sProg,'u_e[0]'),sExt);
+  sgl.uniform1i(suN,n);
+  sgl.drawArrays(sgl.TRIANGLE_STRIP,0,4);
+}
+
+// stage RAF
+(function sLoop(){ requestAnimationFrame(sLoop); renderStage(document.getElementById('scroll').scrollTop); })();
+
+// ════════════════════════════════════════════════════════════════════════════
+//  CARD POOL
+//  Cards are DOM nodes created once, repositioned forever.
+//  ensureCard() is idempotent.
+//  applyLayout() calls it for every asset, writes geometry, never destroys.
+// ════════════════════════════════════════════════════════════════════════════
+const cardMap=new Map(); // id → div
+const colsEl=document.getElementById('masonryColumns');
+const masonryHost=document.getElementById('masonryHost');
+
+function ensureCard(asset){
+  if(cardMap.has(asset.id)) return cardMap.get(asset.id);
+
+  const card=document.createElement('div');
+  card.className='masonry-card';
+  card.dataset.cardId=asset.id;
+
+  const bc=asset.kind==='video'?'bv':asset.kind==='raw'?'br':'bi';
+
+  card.innerHTML=`
+    <div class="cshell">
+      <canvas class="csc"></canvas>
+      <div class="asset-overlay">
+        <div class="ov-top">
+          <span class="badge ${bc}">${asset.kind}</span>
+          <div class="sel-wrap" data-nop="1">
+            <span class="sel-ring" data-nop="1">
+              <input type="checkbox" tabindex="-1"/>
+              <span class="sel-num js-ord"></span>
+            </span>
+          </div>
+        </div>
+        <div class="ov-bot">
+          <span class="badge bd">${asset.size}</span>
+          <div class="asset-title">${asset.title}</div>
+          <div class="asset-sub">${asset.orient} · ${asset.id}</div>
+        </div>
+      </div>
+    </div>`;
+
+  card.addEventListener('click',e=>{
+    if(e.target.closest('[data-nop]')){ toggleSel(asset.id); return; }
+    toggleActive(asset.id);
+  });
+
+  colsEl.appendChild(card);
+  cardMap.set(asset.id,card);
+
+  // double-rAF: ensure layout has committed before adding revealed class
+  // so the entrance transition actually fires
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{
+    card.classList.add('revealed');
+    // after entrance animation completes, swap to geometry-only transition
+    setTimeout(()=>card.classList.add('settled'), 500);
+    // init per-card WebGL after element has painted
+    const cvs=card.querySelector('.csc');
+    if(cvs) initCardShader(asset,cvs);
+  }));
+
+  return card;
+}
+
+function syncCardDOM(card, asset){
+  card.classList.toggle('is-selected', asset.selected);
+  card.classList.toggle('is-active',   asset.active);
+  const ord=card.querySelector('.js-ord');
+  if(ord) ord.textContent=asset.selected?String(asset.selOrder):'';
+}
+
+// ─── applyLayout: THE ONLY function called on density change ───
+// It writes left/top/width/height. CSS transitions take over.
+// No innerHTML. No removal. No repaint gap. Ever.
+function applyLayout(){
+  const cw=masonryHost.offsetWidth-16; // 8px padding each side
+  const lay=computeLayout(ASSETS,cw,colCount,6);
+  colsEl.style.height=lay.stageH+'px';
+  lay.items.forEach(({item,x,y,w,h})=>{
+    const card=ensureCard(item);
+    card.style.left  =x+'px';
+    card.style.top   =y+'px';
+    card.style.width =w+'px';
+    card.style.height=h+'px';
+    syncCardDOM(card,item);
+  });
+  resizeStage();
+  document.getElementById('sCols').textContent=colCount;
+  document.getElementById('sCards').textContent=ASSETS.length;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  INTERACTIONS
+// ════════════════════════════════════════════════════════════════════════════
+function toggleSel(id){
+  const a=ASSETS.find(x=>x.id===id); if(!a) return;
+  if(a.selected){
+    a.selected=false; selOrder=selOrder.filter(x=>x!==id);
+    ASSETS.forEach(x=>{ if(x.selected) x.selOrder=selOrder.indexOf(x.id)+1; });
+  } else {
+    selOrder.push(id); a.selected=true; a.selOrder=selOrder.length;
+  }
+  ASSETS.forEach(x=>{ const c=cardMap.get(x.id); if(c) syncCardDOM(c,x); });
+}
+
+function toggleActive(id){
+  ASSETS.forEach(a=>a.active=(a.id===id?!a.active:false));
+  ASSETS.forEach(a=>{ const c=cardMap.get(a.id); if(c) syncCardDOM(c,a); });
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  CONTROLS
+// ════════════════════════════════════════════════════════════════════════════
+const flash=document.getElementById('reflowFlash');
+let reflowT=0, flashT=0;
+
+document.querySelectorAll('.density-btn').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    const next=parseInt(btn.dataset.cols);
+    if(next===colCount) return;
+    document.querySelectorAll('.density-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    colCount=next;
+
+    // flash indicator on the seam line — confirms reflow fired without visual tear
+    clearTimeout(flashT);
+    flash.classList.add('active');
+    flashT=setTimeout(()=>flash.classList.remove('active'),120);
+
+    applyLayout();
+
+    const el=document.getElementById('sState');
+    el.innerHTML=`reflow <span class="hi">→ ${colCount} col</span>`;
+    clearTimeout(reflowT);
+    reflowT=setTimeout(()=>{ el.innerHTML=`<span class="hi">settled</span>`; },520);
+  });
+});
+
+window.addEventListener('resize',()=>applyLayout());
+
+// ════════════════════════════════════════════════════════════════════════════
+//  BOOT
+// ════════════════════════════════════════════════════════════════════════════
+initStageGL();
+resizeStage();
+applyLayout();
+
+document.getElementById('sState').innerHTML=`<span class="hi">ready</span>`;
+
+})();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,1193 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>Project City · Mobile Compact UI</title>
+<style>
+:root{
+  --text:#f3ecdf;
+  --muted:rgba(243,236,223,.58);
+  --line:rgba(255,184,116,.16);
+  --panel:rgba(14,11,9,.82);
+  --panel2:rgba(8,7,6,.74);
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --tower-w:126px;
+  --tower-h:420px;
+  --slot-w:84px;
+  --slot-h:32px;
+  --hero-w:min(86vw, 390px);
+}
+*{box-sizing:border-box}
+html,body{
+  margin:0;width:100%;height:100%;overflow:hidden;
+  background:
+    radial-gradient(900px 320px at 50% 8%, rgba(94,132,186,.16), transparent 60%),
+    radial-gradient(900px 260px at 50% 85%, rgba(255,156,72,.08), transparent 62%),
+    linear-gradient(180deg,#070707 0%,#040404 55%,#020202 100%);
+  color:var(--text);
+  font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+button,input,select{font:inherit}
+button{cursor:pointer}
+.hidden{display:none!important}
+.app{position:relative;width:100%;height:100%;overflow:hidden;isolation:isolate}
+canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+#env{z-index:0}
+#fx{z-index:1;mix-blend-mode:screen;opacity:.82}
+.vignette,.grain,.topFade,.bottomGlow{
+  position:absolute;inset:0;pointer-events:none;
+}
+.vignette{
+  z-index:2;
+  background:
+    radial-gradient(circle at 50% 44%, transparent 0 26%, rgba(0,0,0,.10) 58%, rgba(0,0,0,.66) 100%),
+    linear-gradient(180deg, rgba(0,0,0,.28), transparent 20%, transparent 75%, rgba(0,0,0,.44));
+}
+.topFade{z-index:2;background:linear-gradient(180deg, rgba(0,0,0,.18), transparent 20%)}
+.bottomGlow{z-index:2;background:linear-gradient(180deg, transparent 0 74%, rgba(255,170,92,.018) 86%, rgba(0,0,0,.10))}
+.grain{
+  z-index:3;opacity:.05;mix-blend-mode:soft-light;
+  background-image:
+    radial-gradient(circle at 20% 20%, rgba(255,255,255,.35) .45px, transparent .65px),
+    radial-gradient(circle at 70% 40%, rgba(255,255,255,.24) .4px, transparent .64px),
+    radial-gradient(circle at 40% 70%, rgba(255,255,255,.20) .46px, transparent .62px);
+  background-size:180px 180px,220px 220px,200px 200px;
+}
+
+.topRail{
+  position:absolute;left:8px;right:8px;top:calc(6px + var(--safe-top));z-index:30;
+  display:flex;justify-content:center;pointer-events:none;
+}
+.topRailInner{
+  width:min(94vw, 620px);
+  border-radius:14px;border:1px solid rgba(255,184,116,.12);
+  background:linear-gradient(180deg,var(--panel),var(--panel2));
+  box-shadow:0 16px 40px rgba(0,0,0,.32), inset 0 1px 0 rgba(255,255,255,.03);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  pointer-events:auto;
+  overflow:hidden;
+}
+.topRailBar{
+  min-height:42px;padding:7px 9px;
+  display:flex;align-items:center;gap:7px;
+}
+.brand{min-width:0;flex:1}
+.eyebrow{font-size:6px;letter-spacing:.20em;text-transform:uppercase;color:var(--muted)}
+.title{margin-top:1px;font-size:12px;font-weight:800;letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pill{
+  padding:5px 8px;border-radius:999px;border:1px solid rgba(255,184,116,.12);
+  background:linear-gradient(180deg, rgba(255,196,130,.04), rgba(255,196,130,.01));
+  font-size:8px;letter-spacing:.10em;text-transform:uppercase;color:var(--muted);white-space:nowrap;
+}
+.btn{
+  min-height:28px;padding:0 10px;border-radius:999px;
+  border:1px solid rgba(255,184,116,.14);
+  background:linear-gradient(180deg, rgba(255,196,130,.04), rgba(255,196,130,.01));
+  color:var(--text);font-size:10px;font-weight:700;letter-spacing:.03em;
+}
+.btn:disabled{opacity:.4}
+.iconBtn{width:28px;height:28px;padding:0;display:grid;place-items:center}
+.topRailPanel{
+  padding:0 9px 9px;border-top:1px solid rgba(255,184,116,.06);
+  display:none;
+}
+.topRailPanel.show{display:block}
+.row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:7px}
+.input,.select{
+  min-height:28px;border-radius:999px;border:1px solid rgba(255,184,116,.12);
+  background:linear-gradient(180deg, rgba(255,196,130,.04), rgba(255,196,130,.01));
+  color:var(--text);padding:0 12px;
+}
+.input{flex:1;min-width:0}
+.select{width:140px;max-width:38vw}
+
+.stage{
+  position:absolute;left:0;right:0;
+  top:calc(54px + var(--safe-top));
+  bottom:calc(70px + var(--safe-bottom));
+  z-index:10;overflow:hidden;
+}
+.hint{
+  position:absolute;left:12px;right:12px;top:2px;z-index:15;
+  font-size:8px;line-height:1.2;color:rgba(243,236,223,.54);
+  text-shadow:0 2px 12px rgba(0,0,0,.48);
+}
+.world{
+  position:absolute;left:0;right:0;top:22px;bottom:0;
+  display:flex;align-items:center;justify-content:center;
+  perspective:1100px;perspective-origin:50% 42%;
+}
+.floor{
+  position:absolute;left:50%;bottom:-180px;transform:translateX(-50%) rotateX(78deg);
+  width:160vw;height:78vh;border-radius:50%;
+  background:
+    linear-gradient(180deg, rgba(255,182,110,.02), rgba(0,0,0,0) 16%),
+    linear-gradient(90deg, rgba(255,182,110,.008) 0 1px, transparent 1px 70px),
+    linear-gradient(0deg, rgba(255,182,110,.010) 0 1px, transparent 1px 58px),
+    radial-gradient(circle at 50% 45%, rgba(255,164,82,.05), transparent 56%),
+    linear-gradient(180deg, rgba(20,16,12,.95), rgba(4,4,4,.99));
+  box-shadow:inset 0 0 120px rgba(255,180,100,.03);
+}
+.avenue{
+  position:absolute;left:50%;bottom:18%;transform:translateX(-50%);
+  width:min(86vw,560px);height:18px;border-radius:999px;
+  background:linear-gradient(90deg, transparent, rgba(255,190,118,.16) 16%, rgba(255,190,118,.24) 50%, rgba(255,190,118,.16) 84%, transparent);
+  filter:blur(12px);opacity:.82;
+}
+
+.overviewWrap,.projectWrap{position:absolute;inset:0}
+.overviewWrap{display:flex;align-items:center;justify-content:center}
+.towerStrip{display:flex;align-items:flex-end;gap:18px;transition:transform .28s ease}
+.tower{
+  position:relative;flex:0 0 var(--tower-w);width:var(--tower-w);height:var(--tower-h);
+  transition:transform .28s ease, opacity .22s ease, filter .22s ease;
+}
+.towerChip{
+  position:absolute;left:50%;top:-34px;transform:translateX(-50%);
+  min-width:98px;max-width:148px;padding:6px 10px;border-radius:999px;text-align:center;
+  font-size:9px;letter-spacing:.10em;text-transform:uppercase;
+  background:linear-gradient(180deg, rgba(14,11,8,.84), rgba(9,8,6,.70));
+  border:1px solid rgba(255,184,116,.10);box-shadow:0 8px 22px rgba(0,0,0,.22);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:rgba(243,236,223,.76);
+}
+.columnBody{
+  position:absolute;left:50%;top:0;bottom:0;width:96px;transform:translateX(-50%);
+  border-radius:28px;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,0) 10%),
+    linear-gradient(180deg, rgba(20,16,12,.48), rgba(8,8,8,.20));
+  border:1px solid rgba(255,184,116,.05);
+  box-shadow:0 0 40px rgba(255,166,88,.02);
+}
+.spine{
+  position:absolute;left:50%;top:0;bottom:0;width:22px;transform:translateX(-50%);
+  border-radius:12px;
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.04), transparent 8%),
+    linear-gradient(180deg, rgba(28,22,17,.95), rgba(10,9,8,.98));
+  border:1px solid rgba(255,184,116,.08);
+}
+.spine:before{
+  content:"";position:absolute;left:50%;top:12px;bottom:12px;width:1px;transform:translateX(-50%);
+  background:linear-gradient(180deg, rgba(255,200,148,.28), rgba(255,200,148,.06) 20%, rgba(255,200,148,.02) 80%, rgba(255,200,148,.18));
+}
+.slotBand,.slotPanel{
+  position:absolute;left:50%;transform:translateX(-50%);overflow:hidden;cursor:pointer;
+  transition:transform .22s ease, opacity .22s ease;
+}
+.slotBand{
+  width:var(--slot-w);height:10px;border-radius:999px;border:1px solid rgba(255,190,122,.06);
+  background:linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,0) 45%),linear-gradient(180deg, rgba(16,13,10,.96), rgba(10,9,8,.98));
+}
+.slotPanel{
+  width:var(--slot-w);height:var(--slot-h);border-radius:11px;border:1px solid rgba(255,190,122,.10);
+  background:linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,0) 35%),linear-gradient(180deg, rgba(15,12,9,.94), rgba(10,9,8,.95));
+}
+.slotBand .face,.slotPanel .face,.projectCard .thumb,.heroStageMedia{
+  position:absolute;inset:0;overflow:hidden;background-position:center;background-repeat:no-repeat;
+}
+.slotBand .face{inset:2px;border-radius:999px}
+.slotPanel .face{inset:2px;border-radius:8px}
+.slotBand .face:before,.slotPanel .face:before,.projectCard .thumb:before,.heroStageMedia:before{
+  content:"";position:absolute;inset:0;
+  background:
+    linear-gradient(130deg, rgba(255,255,255,.14), transparent 18%),
+    radial-gradient(140px 40px at 14% 10%, rgba(255,255,255,.10), transparent 42%),
+    linear-gradient(90deg, transparent 0 68%, rgba(255,255,255,.07) 74%, transparent 80%),
+    linear-gradient(180deg, transparent 0 74%, rgba(0,0,0,.22));
+  mix-blend-mode:screen;
+}
+.slotPanel .mini{
+  position:absolute;left:6px;right:6px;bottom:4px;display:flex;justify-content:space-between;gap:4px;
+  font-size:6px;letter-spacing:.10em;text-transform:uppercase;color:rgba(248,239,228,.78);
+}
+.slotPanel .mini span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.projectWrap{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(0,var(--hero-w)) minmax(0,1fr);
+  align-items:center;
+  justify-items:center;
+  column-gap:8px;
+  padding:26px 8px 0;
+}
+.ghostTower{
+  width:72px;height:320px;position:relative;opacity:.14;filter:blur(.5px);pointer-events:none;
+  justify-self:center;
+}
+.ghostTower .columnBody{width:72px}
+.ghostTower .spine{width:18px}
+.ghostTower .slotBand,.ghostTower .slotPanel{width:72px}
+.projectCenter{
+  position:relative;width:min(82vw, 400px);height:min(54vh,480px);
+  border-radius:26px;border:1px solid rgba(255,190,122,.14);
+  background:linear-gradient(180deg, rgba(14,11,9,.76), rgba(8,7,6,.68));
+  box-shadow:0 20px 56px rgba(0,0,0,.34), inset 0 1px 0 rgba(255,255,255,.03);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  overflow:hidden;
+}
+.projectCenterHeader{
+  position:absolute;left:0;right:0;top:0;z-index:2;padding:12px 14px 10px;
+  background:linear-gradient(180deg, rgba(12,10,8,.88), rgba(12,10,8,.44), rgba(12,10,8,0));
+}
+.projectCenterTitle{font-size:13px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.projectCenterSub{margin-top:4px;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.projectScroll{
+  position:absolute;left:0;right:0;top:54px;bottom:0;overflow-y:auto;padding:10px 12px 18px;
+  -webkit-overflow-scrolling:touch;scroll-snap-type:y proximity;
+}
+.projectScroll::-webkit-scrollbar{width:0}
+.projectCard{
+  position:relative;min-height:188px;border-radius:22px;margin-bottom:14px;overflow:hidden;
+  border:1px solid rgba(255,190,122,.14);
+  background:linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,0) 35%),linear-gradient(180deg, rgba(15,12,9,.94), rgba(10,9,8,.95));
+  box-shadow:0 16px 32px rgba(0,0,0,.28);
+  cursor:pointer;scroll-snap-align:start;
+}
+.projectCard .thumb{
+  left:10px;right:10px;top:10px;height:102px;border-radius:14px;border:1px solid rgba(255,255,255,.05);
+}
+.projectCard .meta{padding:122px 12px 12px}
+.projectCard .cardTitle{font-size:14px;line-height:1.22;font-weight:800;letter-spacing:.04em}
+.projectCard .sub{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.projectCard .chips{position:absolute;right:10px;top:10px;display:flex;flex-direction:column;gap:6px;align-items:end}
+.projectCard .chip{
+  padding:4px 7px;border-radius:999px;background:rgba(0,0,0,.28);border:1px solid rgba(255,255,255,.06);
+  font-size:8px;letter-spacing:.16em;text-transform:uppercase;
+}
+
+.heroStage{
+  position:absolute;left:50%;transform:translateX(-50%) translateY(18px);width:min(86vw, 420px);right:auto;bottom:calc(82px + var(--safe-bottom));z-index:21;
+  border-radius:26px;padding:14px;max-height:min(58vh,720px);overflow:auto;
+  border:1px solid rgba(255,190,122,.14);
+  background:linear-gradient(180deg, rgba(16,13,10,.86), rgba(8,7,6,.78));
+  box-shadow:0 18px 52px rgba(0,0,0,.34), inset 0 1px 0 rgba(255,255,255,.03);
+  backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+  opacity:0;transform:translateY(18px);pointer-events:none;transition:opacity .22s ease, transform .22s ease;
+}
+.heroStage.show{opacity:1;transform:translateX(-50%) translateY(0);pointer-events:auto}
+.heroStageMedia{
+  position:relative;height:160px;border-radius:18px;border:1px solid rgba(255,255,255,.05);background-size:cover;overflow:hidden;background:#0a0a0a;
+}
+.heroVideo{width:100%;max-height:220px;margin-top:12px;border-radius:16px;background:#000}
+.heroTitle{margin-top:10px;font-size:16px;font-weight:900;line-height:1.12}
+.heroLine{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.heroChip{
+  padding:7px 10px;border-radius:999px;border:1px solid rgba(255,190,122,.12);
+  background:rgba(255,255,255,.03);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);
+}
+.heroCopy{margin-top:10px;font-size:13px;line-height:1.45;color:rgba(243,236,223,.78)}
+.heroActions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+
+.assetPlayBtn{
+  position:absolute;right:10px;bottom:10px;z-index:3;
+  width:34px;height:34px;border-radius:999px;border:1px solid rgba(255,184,116,.18);
+  background:linear-gradient(180deg, rgba(12,12,12,.80), rgba(8,8,8,.72));
+  color:var(--text);display:grid;place-items:center;font-size:14px;font-weight:800;
+  box-shadow:0 10px 20px rgba(0,0,0,.24);
+}
+.thumb.playing .face{opacity:.22}
+.mediaFrame.playing img{opacity:0}
+.mediaFrame.playing video{opacity:1}
+.mediaFrame video{background:#000}
+
+
+.loading{
+  position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:22;
+  width:min(420px, calc(100vw - 20px));border-radius:22px;padding:16px 18px;
+  border:1px solid rgba(255,190,122,.14);
+  background:linear-gradient(180deg, rgba(16,13,10,.84), rgba(8,7,6,.76));
+  box-shadow:0 18px 52px rgba(0,0,0,.34), inset 0 1px 0 rgba(255,255,255,.03);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  opacity:0;pointer-events:none;transition:opacity .22s ease;
+}
+.loading.show{opacity:1;pointer-events:auto}
+.loadingTitle{font-size:15px;font-weight:800;letter-spacing:.08em}
+.loadingSub{margin-top:8px;font-size:12px;line-height:1.44;color:var(--muted)}
+.progress{margin-top:12px;height:8px;border-radius:999px;background:rgba(255,255,255,.05);overflow:hidden;border:1px solid rgba(255,186,114,.08)}
+.progressBar{height:100%;width:0;background:linear-gradient(90deg, rgba(255,178,96,.34), rgba(126,164,216,.34));transition:width .22s ease}
+
+.bottomBar{
+  position:absolute;left:8px;right:8px;bottom:calc(6px + var(--safe-bottom));z-index:19;
+  display:flex;gap:8px;align-items:center;
+}
+.projectChips{flex:1;display:flex;gap:8px;overflow-x:auto;padding-bottom:2px}
+.projectChips::-webkit-scrollbar{display:none}
+.projectChip{
+  flex:0 0 auto;padding:8px 10px;border-radius:999px;
+  border:1px solid rgba(255,184,116,.16);
+  background:linear-gradient(180deg, rgba(18,14,11,.78), rgba(9,8,7,.68));
+  color:var(--text);font-size:10px;letter-spacing:.10em;text-transform:uppercase;white-space:nowrap;
+}
+.projectChip.active{border-color:rgba(255,188,118,.34);box-shadow:0 0 0 1px rgba(255,188,118,.07),0 0 14px rgba(255,160,80,.06)}
+.quickControls{display:grid;grid-template-columns:44px 44px;gap:8px}
+.camBtn{
+  width:40px;height:40px;border-radius:12px;border:1px solid rgba(255,184,116,.14);
+  background:linear-gradient(180deg, rgba(18,14,11,.78), rgba(9,8,7,.68));
+  color:var(--text);display:grid;place-items:center;font-size:18px;font-weight:800;
+  box-shadow:0 10px 30px rgba(0,0,0,.24);
+}
+.statusDot{width:8px;height:8px;border-radius:999px;background:rgba(255,188,118,.82);display:inline-block;margin-left:6px}
+
+.overviewCard{
+  position:absolute;left:50%;transform:translateX(-50%);overflow:hidden;cursor:pointer;
+  width:104px;height:58px;border-radius:13px;border:1px solid rgba(255,190,122,.12);
+  background:linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,0) 35%),linear-gradient(180deg, rgba(15,12,9,.94), rgba(10,9,8,.95));
+  box-shadow:0 10px 18px rgba(0,0,0,.20);
+}
+.overviewCard .face{
+  position:absolute;left:3px;right:3px;top:3px;height:36px;border-radius:9px;overflow:hidden;background-position:center;background-repeat:no-repeat;
+}
+.overviewCard .face:before{
+  content:"";position:absolute;inset:0;
+  background:
+    linear-gradient(130deg, rgba(255,255,255,.14), transparent 18%),
+    radial-gradient(140px 40px at 14% 10%, rgba(255,255,255,.10), transparent 42%),
+    linear-gradient(90deg, transparent 0 68%, rgba(255,255,255,.07) 74%, transparent 80%),
+    linear-gradient(180deg, transparent 0 74%, rgba(0,0,0,.22));
+  mix-blend-mode:screen;
+}
+.overviewCard .mini{
+  position:absolute;left:6px;right:6px;bottom:5px;display:flex;justify-content:space-between;gap:4px;
+  font-size:6px;letter-spacing:.08em;text-transform:uppercase;color:rgba(248,239,228,.80);
+}
+.overviewCard .mini span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+
+
+.mediaFrame{
+  position:absolute;inset:0;overflow:hidden;border-radius:inherit;
+}
+.mediaEl{
+  position:absolute;inset:0;width:100%;height:100%;display:block;border:0;object-fit:cover;background:#0a0a0a;
+}
+.mediaEl.contain{object-fit:contain}
+.mediaEl.videoPreview{object-fit:cover}
+.overviewCard .mediaFrame{left:3px;right:3px;top:3px;height:36px;bottom:auto;border-radius:9px}
+.projectCard .mediaFrame{left:10px;right:10px;top:10px;height:102px;bottom:auto;border-radius:14px}
+.heroStageMedia .mediaFrame{inset:0;border-radius:18px}
+.slotPanel .mediaFrame{inset:2px;border-radius:8px}
+.slotBand .mediaFrame{inset:2px;border-radius:999px}
+
+.mediaPlaceholder{
+  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  font-size:9px;letter-spacing:.14em;text-transform:uppercase;color:rgba(243,236,223,.36);
+  pointer-events:none;
+}
+.mediaPlaceholder strong{
+  font-size:18px;letter-spacing:.08em;color:rgba(243,236,223,.16);font-weight:800;
+}
+
+
+@media (max-width: 430px){
+  .select{width:132px}
+  .btn{padding:0 10px}
+  .projectCenter{width:84vw}
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <canvas id="env"></canvas>
+  <canvas id="fx"></canvas>
+  <div class="vignette"></div><div class="topFade"></div><div class="bottomGlow"></div><div class="grain"></div>
+
+  <div class="topRail">
+    <div class="topRailInner">
+      <div class="topRailBar">
+        <div class="brand">
+          <div class="eyebrow">Luxury cinematic spatial browser</div>
+          <div class="title">Project City</div>
+        </div>
+        <div class="pill">mode <span id="modeText"></span></div>
+        <div class="pill">data <span id="dataText"></span></div>
+        <button class="btn" id="btnHydrate">Hydrate</button>
+        <button class="btn iconBtn" id="railToggle">⋯</button>
+      </div>
+      <div class="topRailPanel" id="topRailPanel">
+        <div class="row">
+          <button class="btn" id="btnOverview">Overview</button>
+          <button class="btn" id="btnBack">Back</button>
+          <button class="btn" id="btnMock">Mock</button>
+        </div>
+        <div class="row">
+          <input class="input" id="apiBase" value="http://192.168.0.25:8787" />
+          <select class="select" id="source">
+            <option value="">Auto source</option>
+            <option value="primary">primary</option>
+            <option value="derived">derived</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="hint" id="hint">Overview: centered hero tower, supporting neighbors, horizontal browsing only.</div>
+    <div class="world">
+      <div class="floor"></div>
+      <div class="avenue"></div>
+      <div class="overviewWrap" id="overviewWrap">
+        <div class="towerStrip" id="towerStrip"></div>
+      </div>
+      <div class="projectWrap hidden" id="projectWrap"></div>
+    </div>
+
+    <div class="loading" id="loading">
+      <div class="loadingTitle" id="loadingTitle">Hydrating assets</div>
+      <div class="loadingSub" id="loadingSub">Fetching projects…</div>
+      <div class="progress"><div class="progressBar" id="progressBar"></div></div>
+    </div>
+
+    <div class="heroStage" id="heroStage"></div>
+  </div>
+
+  <div class="bottomBar">
+    <div class="projectChips" id="projectChips"></div>
+    <div class="quickControls">
+      <button class="camBtn" id="prevProject">◀</button>
+      <button class="camBtn" id="nextProject">▶</button>
+      <button class="camBtn" id="zoomOut">－</button>
+      <button class="camBtn" id="zoomIn">＋</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+const PALETTES = [
+  {a:'#ffb15c',b:'#c56e2f',c:'#5c3117'},
+  {a:'#d4b171',b:'#8e6d33',c:'#4c3b1d'},
+  {a:'#b1a08f',b:'#6a594a',c:'#322823'},
+  {a:'#8ea2b6',b:'#53687b',c:'#253440'},
+  {a:'#8a86aa',b:'#5a5576',c:'#2c2940'},
+  {a:'#c38470',b:'#8f4e40',c:'#4e271f'},
+  {a:'#88a39d',b:'#4d6d65',c:'#243733'},
+  {a:'#9a9182',b:'#6d6455',c:'#322c26'},
+  {a:'#b08f6f',b:'#815532',c:'#422918'},
+  {a:'#7691a6',b:'#425a6d',c:'#1f2e39'}
+];
+const MOCK_NAMES = ['North Dock','Signal House','Archive 9','Foundry Lane','Amber Hall','Quiet Basin','Frame Block','Transit Vault','Copper Index','Lower Gallery'];
+const MOCK_TITLES = ['Arrival Pass','Interior Drift','Vault Motion','Orbit Capture','Index Sweep','Copper Frame','Soft Corridor','Glass Transfer','Signal Bloom','Quiet Lift','Threshold View','Grid Echo','Asset Plate','Reflect Study','Night Array','Story Board','Proxy Render','Surface Roll','Merge Pass','Prime Sequence'];
+
+const state = {
+  mode: 'overview',
+  selectedProjectIndex: 0,
+  selectedAssetId: null,
+  projects: [],
+  dataMode: 'mock',
+  apiBase: 'http://192.168.0.25:8787',
+  preferredSource: '',
+  towerScale: 1,
+  projectScrollTopByProject: new Map(),
+  mediaCache: new Map(),
+  playingAssetIds: new Set()
+};
+
+const els = {
+  railToggle: document.getElementById('railToggle'),
+  topRailPanel: document.getElementById('topRailPanel'),
+  apiBase: document.getElementById('apiBase'),
+  source: document.getElementById('source'),
+  btnHydrate: document.getElementById('btnHydrate'),
+  btnOverview: document.getElementById('btnOverview'),
+  btnBack: document.getElementById('btnBack'),
+  btnMock: document.getElementById('btnMock'),
+  modeText: document.getElementById('modeText'),
+  dataText: document.getElementById('dataText'),
+  hint: document.getElementById('hint'),
+  overviewWrap: document.getElementById('overviewWrap'),
+  towerStrip: document.getElementById('towerStrip'),
+  projectWrap: document.getElementById('projectWrap'),
+  heroStage: document.getElementById('heroStage'),
+  loading: document.getElementById('loading'),
+  loadingTitle: document.getElementById('loadingTitle'),
+  loadingSub: document.getElementById('loadingSub'),
+  progressBar: document.getElementById('progressBar'),
+  projectChips: document.getElementById('projectChips'),
+  prevProject: document.getElementById('prevProject'),
+  nextProject: document.getElementById('nextProject'),
+  zoomIn: document.getElementById('zoomIn'),
+  zoomOut: document.getElementById('zoomOut'),
+  env: document.getElementById('env'),
+  fx: document.getElementById('fx')
+};
+
+function clamp(v, min, max){ return Math.max(min, Math.min(max, v)); }
+function lastPathSegment(path){ return (path || '').split('/').filter(Boolean).pop() || ''; }
+function absUrl(base, u){
+  if(!u) return '';
+  if(/^https?:\/\//i.test(u)) return u;
+  try { return new URL(u, base).toString(); } catch { return u; }
+}
+function hexToRgba(hex, a){
+  const v = hex.replace('#','');
+  const n = parseInt(v, 16);
+  return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`;
+}
+function escapeHtml(s){
+  return String(s ?? '').replace(/[&<>"']/g, m => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
+}
+function inferStatus(i){ return i % 7 === 0 ? 'review' : i % 3 === 0 ? 'wip' : 'ready'; }
+function getAssetTier(index, count, projectIndex){
+  const heroes = new Set([0, Math.floor(count * .33), Math.floor(count * .66)]);
+  if(heroes.has(index)) return 'hero';
+  if((index + projectIndex) % 4 === 0 || index / count > .72) return 'panel';
+  return 'band';
+}
+function faceBg(palette, seed){
+  return `linear-gradient(135deg, ${hexToRgba(palette.a,.62)}, transparent 24%), radial-gradient(160px 48px at ${12+(seed*7)%60}% ${10+(seed*5)%44}%, ${hexToRgba(palette.a,.18)}, transparent 44%), linear-gradient(122deg, ${hexToRgba(palette.b,.94)}, ${hexToRgba(palette.c,.96)} 72%, rgba(9,9,9,.96))`;
+}
+function mediaStyle(asset, palette, seed){
+  if(asset.thumb_url){
+    const fit = asset.aspect && asset.aspect < .88 ? 'contain' : 'cover';
+    return `background-image:url("${asset.thumb_url.replace(/"/g,'%22')}");background-size:${fit};background-position:center;background-repeat:no-repeat;background-color:rgba(10,10,10,.96);`;
+  }
+  return `background:${faceBg(palette, seed)};`;
+}
+function selectedProject(){ return state.projects[state.selectedProjectIndex] || null; }
+function selectedAsset(){
+  const p = selectedProject();
+  return p ? p.assets.find(a => a.id === state.selectedAssetId) || null : null;
+}
+function setLoading(show, title, sub, progress){
+  els.loading.classList.toggle('show', show);
+  if(title) els.loadingTitle.textContent = title;
+  if(sub) els.loadingSub.textContent = sub;
+  if(typeof progress === 'number') els.progressBar.style.width = `${clamp(progress,0,100)}%`;
+}
+function buildAsset(raw, palette, projectName, source, idx, total, projectIndex){
+  const width = raw.width ?? raw.w ?? null;
+  const height = raw.height ?? raw.h ?? null;
+  const type = (raw.kind || raw.type || '').toLowerCase() || 'unknown';
+  return {
+    id: raw.asset_uuid || raw.asset_id || `${projectName}:${raw.relative_path || idx}`,
+    title: raw.filename || lastPathSegment(raw.relative_path) || raw.title || 'untitled',
+    filename: raw.filename || lastPathSegment(raw.relative_path) || 'unnamed',
+    type,
+    status: raw.status || inferStatus(idx),
+    duration: raw.duration || 'N/A',
+    description: raw.description || `${raw.filename || lastPathSegment(raw.relative_path) || 'Asset'} from ${projectName}. Kind ${type}.`,
+    relative_path: raw.relative_path || '',
+    stream_url: raw.stream_url || '',
+    download_url: raw.download_url || '',
+    thumb_url: raw.thumb_url || raw.thumbnail_url || '',
+    width,
+    height,
+    aspect: width && height ? width / Math.max(height, 1) : null,
+    tier: getAssetTier(idx, total, projectIndex),
+    palette,
+    source,
+    raw
+  };
+}
+function makeMockData(){
+  let aid = 1;
+  return MOCK_NAMES.map((name, pIdx) => {
+    const count = 18 + ((pIdx * 3) % 12);
+    const palette = PALETTES[pIdx % PALETTES.length];
+    return {
+      id: `project-${pIdx+1}`,
+      name,
+      apiProjectName: name,
+      palette,
+      source: 'mock',
+      assets: Array.from({length: count}, (_, aIdx) => ({
+        id: `mock-${aid++}`,
+        title: `${MOCK_TITLES[(aIdx*3+pIdx)%MOCK_TITLES.length]} ${String(aIdx+1).padStart(2,'0')}`,
+        filename: `asset-${aIdx+1}.mov`,
+        type: ['video','scene','still','motion','render'][(aIdx+pIdx)%5],
+        status: inferStatus(aIdx),
+        duration: `${String(1+((aIdx*13+pIdx*7)%7)).padStart(2,'0')}:${String((aIdx*17+pIdx*9)%60).padStart(2,'0')}`,
+        description: `Mock asset inside ${name}.`,
+        relative_path: `mock/${name}/asset-${aIdx+1}.mov`,
+        stream_url: '',
+        download_url: '',
+        thumb_url: '',
+        width: aIdx % 3 === 0 ? 1080 : aIdx % 3 === 1 ? 1920 : 1080,
+        height: aIdx % 3 === 0 ? 1920 : aIdx % 3 === 1 ? 1080 : 1080,
+        aspect: aIdx % 3 === 0 ? 1080/1920 : aIdx % 3 === 1 ? 1920/1080 : 1,
+        tier: getAssetTier(aIdx, count, pIdx),
+        palette,
+        source: 'mock'
+      }))
+    };
+  });
+}
+async function loadAllAssets(apiBase, preferredSource=''){
+  setLoading(true, 'Hydrating assets', 'Fetching project list…', 4);
+  const res = await fetch(`${apiBase}/api/projects`);
+  if(!res.ok) throw new Error(`Project list failed: ${res.status}`);
+  const payload = await res.json();
+  const projects = Array.isArray(payload) ? payload : (Array.isArray(payload.projects) ? payload.projects : []);
+  const out = [];
+  for(let i=0;i<projects.length;i++){
+    const p = projects[i];
+    const projectName = p.name || p.project || p.title;
+    if(!projectName) continue;
+    const source = preferredSource || p.source || '';
+    const qs = source ? `?source=${encodeURIComponent(source)}` : '';
+    setLoading(true, 'Hydrating assets', `Fetching ${projectName} (${i+1}/${projects.length})`, 10 + ((i / Math.max(projects.length,1)) * 80));
+    const mediaRes = await fetch(`${apiBase}/api/projects/${encodeURIComponent(projectName)}/media${qs}`);
+    if(!mediaRes.ok) continue;
+    const mediaPayload = await mediaRes.json();
+    const items = Array.isArray(mediaPayload.media) ? mediaPayload.media : [];
+    out.push({
+      id: `project-${i+1}`,
+      name: mediaPayload.project || projectName,
+      apiProjectName: projectName,
+      palette: PALETTES[i % PALETTES.length],
+      source: mediaPayload.source || source || 'unknown',
+      assets: items.map((item, idx) => buildAsset({
+        ...item,
+        stream_url: absUrl(apiBase, item.stream_url),
+        download_url: absUrl(apiBase, item.download_url),
+        thumb_url: absUrl(apiBase, item.thumb_url || item.thumbnail_url)
+      }, PALETTES[i % PALETTES.length], mediaPayload.project || projectName, mediaPayload.source || source || 'unknown', idx, items.length, i))
+    });
+  }
+  setLoading(true, 'Hydrating assets', 'Finalizing scene…', 100);
+  return out.filter(p => p.assets.length > 0);
+}
+
+
+function mediaFallbackLabel(asset){
+  const t = String(asset.type || '').toLowerCase();
+  const name = String(asset.filename || asset.relative_path || '').toLowerCase();
+  if(t.includes('video') || /\.(mp4|mov|m4v|webm|ogg)$/i.test(name)) return 'video';
+  if(t.includes('image') || t.includes('still') || t.includes('photo') || /\.(jpg|jpeg|png|gif|webp|heic)$/i.test(name)) return 'image';
+  if(t.includes('audio') || /\.(mp3|wav|m4a|aac|flac)$/i.test(name)) return 'audio';
+  return 'asset';
+}
+function assetIsImage(asset){
+  const name = String(asset.filename || asset.relative_path || '').toLowerCase();
+  return /\.(jpg|jpeg|png|gif|webp|heic)$/i.test(name) || String(asset.type || '').toLowerCase().includes('image') || String(asset.type || '').toLowerCase().includes('still');
+}
+function assetIsVideo(asset){
+  const name = String(asset.filename || asset.relative_path || '').toLowerCase();
+  return /\.(mp4|mov|m4v|webm|ogg)$/i.test(name) || String(asset.type || '').toLowerCase().includes('video') || String(asset.type || '').toLowerCase().includes('motion') || String(asset.type || '').toLowerCase().includes('scene') || String(asset.type || '').toLowerCase().includes('render');
+}
+function assetPreviewUrl(asset){
+  if(asset.thumb_url) return asset.thumb_url;
+  if(assetIsImage(asset)) return asset.download_url || asset.stream_url || '';
+  return '';
+}
+
+function cachePreviewUrl(asset){
+  const key = asset.id || asset.asset_id || asset.relative_path || asset.filename;
+  const url = assetPreviewUrl(asset);
+  if(key && url && !state.mediaCache.has(key)) state.mediaCache.set(key, url);
+  return key && state.mediaCache.has(key) ? state.mediaCache.get(key) : url;
+}
+function isPlaying(asset){
+  return state.playingAssetIds.has(asset.id);
+}
+function stopAllInlinePlayback(root=document){
+  state.playingAssetIds.clear();
+  root.querySelectorAll('video.videoPreview').forEach(v=>{
+    try{ v.pause(); }catch(e){}
+    v.currentTime = 0;
+  });
+  root.querySelectorAll('.mediaFrame.playing').forEach(el=>el.classList.remove('playing'));
+  root.querySelectorAll('.thumb.playing').forEach(el=>el.classList.remove('playing'));
+  root.querySelectorAll('.assetPlayBtn').forEach(btn=>btn.textContent='▶');
+}
+function toggleInlinePlayback(assetId, rootEl){
+  const frame = rootEl.querySelector('.mediaFrame');
+  const video = rootEl.querySelector('video.videoPreview');
+  const thumb = rootEl.querySelector('.thumb') || rootEl;
+  const btn = rootEl.querySelector('.assetPlayBtn');
+  if(!video || !frame) return;
+  const active = state.playingAssetIds.has(assetId);
+  stopAllInlinePlayback(document);
+  if(active) return;
+  state.playingAssetIds.add(assetId);
+  frame.classList.add('playing');
+  thumb.classList.add('playing');
+  if(btn) btn.textContent='❚❚';
+  video.controls = false;
+  video.muted = false;
+  video.playsInline = true;
+  video.loop = true;
+  video.setAttribute('playsinline','');
+  video.setAttribute('webkit-playsinline','');
+  video.play().catch(()=>{});
+}
+
+function mediaPreviewHtml(asset, className=''){
+  const fitClass = asset.aspect && asset.aspect < .88 ? 'contain' : '';
+  const previewUrl = cachePreviewUrl(asset);
+  if(previewUrl){
+    return `<div class="mediaFrame"><img class="mediaEl ${fitClass} ${className}" loading="lazy" decoding="async" src="${previewUrl.replace(/"/g,'%22')}" alt="${escapeHtml(asset.title || asset.filename || 'asset')}"></div>`;
+  }
+  if(assetIsVideo(asset) && asset.stream_url){
+    return `<div class="mediaFrame"><video class="mediaEl videoPreview ${fitClass} ${className}" playsinline webkit-playsinline muted preload="auto" crossorigin="anonymous" src="${asset.stream_url.replace(/"/g,'%22')}"></video></div>`;
+  }
+  return '';
+}
+function mediaOverlayHtml(asset){
+  if(asset.thumb_url || (assetIsImage(asset) && (asset.download_url || asset.stream_url)) || (assetIsVideo(asset) && asset.stream_url)) return '';
+  const label = mediaFallbackLabel(asset);
+  return `<div class="mediaPlaceholder"><div><strong>${label}</strong></div></div>`;
+}
+
+
+function hydratePreviewVideos(root=document){
+  root.querySelectorAll('video.videoPreview').forEach((v)=>{
+    v.playsInline = true;
+    v.setAttribute('playsinline','');
+    v.setAttribute('webkit-playsinline','');
+    if(!v.dataset.bound){
+      v.dataset.bound = '1';
+      v.addEventListener('loadedmetadata', ()=>{});
+    }
+  });
+}
+
+function renderProjectChips(){
+  els.projectChips.innerHTML = '';
+  state.projects.forEach((p, idx) => {
+    const b = document.createElement('button');
+    b.className = 'projectChip' + (idx === state.selectedProjectIndex ? ' active' : '');
+    b.innerHTML = `${escapeHtml(p.name)}${idx === state.selectedProjectIndex ? '<span class="statusDot"></span>' : ''}`;
+    b.onclick = () => {
+      state.selectedProjectIndex = idx;
+      state.selectedAssetId = null;
+      if(state.mode === 'asset') state.mode = 'project';
+      render();
+    };
+    els.projectChips.appendChild(b);
+  });
+}
+function renderOverview(){
+  els.overviewWrap.classList.remove('hidden');
+  els.projectWrap.classList.add('hidden');
+  els.heroStage.classList.remove('show');
+  els.towerStrip.innerHTML = '';
+
+  const active = state.selectedProjectIndex;
+  const start = Math.max(0, active - 2);
+  const end = Math.min(state.projects.length, active + 3);
+
+  for(let idx=start; idx<end; idx++){
+    const project = state.projects[idx];
+    const offset = idx - active;
+    const tower = document.createElement('div');
+    tower.className = 'tower';
+    tower.style.transform = `translateY(${Math.abs(offset)*8}px) rotateY(${offset*7}deg) scale(${(idx===active?1.0:.82) * state.towerScale})`;
+    tower.style.opacity = String(idx === active ? 1 : .58);
+    tower.style.filter = `blur(${idx === active ? 0 : .35}px)`;
+    tower.innerHTML = `<div class="towerChip">${escapeHtml(project.name)}</div><div class="columnBody"></div><div class="spine"></div>`;
+
+    const maxCards = idx === active ? 8 : 5;
+    const assets = project.assets.slice(0, maxCards);
+    assets.forEach((asset, aIdx) => {
+      const top = 18 + aIdx * (idx === active ? 60 : 64);
+      const useCard = asset.thumb_url || asset.tier !== 'band' || idx === active;
+
+      const node = document.createElement('div');
+      node.className = useCard ? 'overviewCard' : 'slotBand';
+      node.style.top = `${top}px`;
+
+      if(useCard){
+        const thumbStyle = mediaStyle(asset, project.palette, aIdx);
+        node.innerHTML = `${mediaPreviewHtml(asset)}<div class="face" style="${thumbStyle}"></div>${mediaOverlayHtml(asset)}<div class="mini"><span>${escapeHtml(asset.title)}</span><span>${escapeHtml(asset.type)}</span></div>`;
+      } else {
+        node.innerHTML = `${mediaPreviewHtml(asset)}<div class="face" style="${mediaStyle(asset, project.palette, aIdx)}"></div>${mediaOverlayHtml(asset)}`;
+      }
+
+      node.onclick = (e) => {
+        e.stopPropagation();
+        state.selectedProjectIndex = idx;
+        state.selectedAssetId = null;
+        state.mode = 'project';
+        render();
+      };
+      tower.appendChild(node);
+    });
+
+    if(project.assets.length > maxCards){
+      const more = document.createElement('div');
+      more.className = 'slotBand';
+      more.style.top = `${24 + maxCards * (idx === active ? 60 : 64)}px`;
+      more.style.opacity = '.72';
+      more.innerHTML = `<div class="face" style="background:linear-gradient(90deg, rgba(255,184,116,.18), rgba(255,184,116,.06));"></div>`;
+      tower.appendChild(more);
+    }
+
+    tower.onclick = () => {
+      state.selectedProjectIndex = idx;
+      state.selectedAssetId = null;
+      state.mode = 'project';
+      render();
+    };
+
+    els.towerStrip.appendChild(tower);
+  }
+
+  els.hint.textContent = 'Overview: towers now show real asset cards. Tap a tower to open its full vertical gallery.';
+}
+function ghostTower(project, side){
+  const gt = document.createElement('div');
+  gt.className = 'ghostTower';
+  gt.style.transform = `rotateY(${side === 'left' ? 10 : -10}deg) translateZ(-40px)`;
+  gt.innerHTML = `<div class="columnBody"></div><div class="spine"></div>`;
+  project.assets.slice(0, 6).forEach((asset, idx) => {
+    const node = document.createElement('div');
+    node.className = asset.thumb_url || asset.tier !== 'band' ? 'slotPanel' : 'slotBand';
+    node.style.top = `${24 + idx * 42}px`;
+    node.innerHTML = `${mediaPreviewHtml(asset)}<div class="face" style="${mediaStyle(asset, project.palette, idx)}"></div>${mediaOverlayHtml(asset)}`;
+    gt.appendChild(node);
+  });
+  return gt;
+}
+function renderProject(){
+  els.overviewWrap.classList.add('hidden');
+  els.projectWrap.classList.remove('hidden');
+  els.heroStage.classList.remove('show');
+  els.projectWrap.innerHTML = '';
+
+  const project = selectedProject();
+  const prev = state.projects[state.selectedProjectIndex - 1];
+  const next = state.projects[state.selectedProjectIndex + 1];
+
+  if(prev) {
+    els.projectWrap.appendChild(ghostTower(prev, 'left'));
+  } else {
+    const spacer = document.createElement('div');
+    spacer.className = 'ghostTower';
+    spacer.style.opacity = '0';
+    els.projectWrap.appendChild(spacer);
+  }
+
+  const center = document.createElement('div');
+  center.className = 'projectCenter';
+  center.innerHTML = `<div class="projectCenterHeader"><div class="projectCenterTitle">${escapeHtml(project.name)}</div><div class="projectCenterSub">${project.assets.length} assets · ${escapeHtml(project.source || state.dataMode)}</div></div>`;
+  const scroll = document.createElement('div');
+  scroll.className = 'projectScroll';
+  const savedScrollTop = state.projectScrollTopByProject.get(project.id || project.name) || 0;
+  requestAnimationFrame(() => { scroll.scrollTop = savedScrollTop; });
+  scroll.addEventListener('scroll', () => {
+    state.projectScrollTopByProject.set(project.id || project.name, scroll.scrollTop);
+  }, {passive:true});
+
+  project.assets.forEach((asset, idx) => {
+    const card = document.createElement('div');
+    card.className = 'projectCard';
+    const thumbStyle = mediaStyle(asset, project.palette, idx);
+    card.dataset.assetId = asset.id;
+    card.innerHTML = `
+      <div class="thumb" style="${thumbStyle}"></div>
+      ${mediaPreviewHtml(asset)}
+      ${mediaOverlayHtml(asset)}
+      <div class="chips">
+        <div class="chip">${escapeHtml(asset.status)}</div>
+        <div class="chip">${escapeHtml(asset.type || 'unknown')}</div>
+      </div>
+      ${assetIsVideo(asset) && asset.stream_url ? `<button class="assetPlayBtn" type="button">▶</button>` : ''}
+      <div class="meta">
+        <div class="cardTitle">${escapeHtml(asset.title)}</div>
+        <div class="sub">
+          <span>${escapeHtml(asset.duration || 'N/A')}</span>
+          ${asset.width && asset.height ? `<span>${asset.width}×${asset.height}</span>` : ''}
+          <span>${escapeHtml(project.name)}</span>
+        </div>
+      </div>
+    `;
+    const playBtn = card.querySelector('.assetPlayBtn');
+    if(playBtn){
+      playBtn.onclick = (e) => {
+        e.stopPropagation();
+        toggleInlinePlayback(asset.id, card);
+      };
+    }
+    card.onclick = () => {
+      stopAllInlinePlayback(document);
+      state.mode = 'asset';
+      state.selectedAssetId = asset.id;
+      render();
+    };
+    scroll.appendChild(card);
+  });
+
+  center.appendChild(scroll);
+  els.projectWrap.appendChild(center);
+  if(next) {
+    els.projectWrap.appendChild(ghostTower(next, 'right'));
+  } else {
+    const spacer = document.createElement('div');
+    spacer.className = 'ghostTower';
+    spacer.style.opacity = '0';
+    els.projectWrap.appendChild(spacer);
+  }
+
+  els.hint.textContent = 'Project: the center column stays centered while you scroll vertically through assets.';
+}
+function renderHeroStage(){
+  const asset = selectedAsset();
+  const project = selectedProject();
+  if(state.mode !== 'asset' || !asset || !project){
+    els.heroStage.classList.remove('show');
+    els.heroStage.innerHTML = '';
+    return;
+  }
+
+  const heroStyle = mediaStyle(asset, project.palette, 0);
+  const video = assetIsVideo(asset) && asset.stream_url
+    ? `<video class="heroVideo" controls playsinline webkit-playsinline preload="auto" ${asset.thumb_url ? `poster="${asset.thumb_url.replace(/"/g,'%22')}"` : ''} src="${asset.stream_url.replace(/"/g,'%22')}"></video>`
+    : '';
+
+  els.heroStage.innerHTML = `
+    <div class="heroStageMedia" style="${heroStyle}">${mediaPreviewHtml(asset)}</div>
+    ${mediaOverlayHtml(asset)}
+    ${video}
+    <div class="heroTitle">${escapeHtml(asset.title)}</div>
+    <div class="heroLine">
+      <div class="heroChip">${escapeHtml(project.name)}</div>
+      <div class="heroChip">${escapeHtml(asset.type || 'unknown')}</div>
+      <div class="heroChip">${escapeHtml(asset.duration || 'N/A')}</div>
+      <div class="heroChip">${escapeHtml(asset.status || 'ready')}</div>
+      ${asset.width && asset.height ? `<div class="heroChip">${asset.width}×${asset.height}</div>` : ''}
+    </div>
+    <div class="heroCopy">${escapeHtml(asset.description || '')}</div>
+    <div class="heroActions">
+      ${asset.stream_url ? `<button class="btn" onclick="window.open('${asset.stream_url.replace(/'/g,"%27")}', '_blank')">Open Stream</button>` : ''}
+      ${asset.download_url ? `<button class="btn" onclick="window.open('${asset.download_url.replace(/'/g,"%27")}', '_blank')">Download</button>` : ''}
+      <div class="heroChip">${escapeHtml(asset.filename || '')}</div>
+    </div>
+  `;
+  els.heroStage.classList.add('show');
+  els.hint.textContent = 'Asset: selected media becomes the hero stage. Back returns to the project column.';
+}
+
+function render(){
+  els.modeText.textContent = state.mode.toUpperCase();
+  els.dataText.textContent = state.dataMode.toUpperCase();
+  els.btnBack.disabled = state.mode === 'overview';
+  els.btnOverview.disabled = state.mode === 'overview';
+  renderProjectChips();
+
+  if(state.mode === 'overview'){
+    renderOverview();
+  } else {
+    renderProject();
+  }
+  renderHeroStage();
+  requestAnimationFrame(() => hydratePreviewVideos(document));
+}
+
+function useMock(){
+  state.projects = makeMockData();
+  state.dataMode = 'mock';
+  state.selectedProjectIndex = 0;
+  state.selectedAssetId = null;
+  state.mode = 'overview';
+  render();
+}
+async function hydrateApi(){
+  const apiBase = (els.apiBase.value || '').trim().replace(/\/+$/,'');
+  const preferredSource = els.source.value || '';
+  state.apiBase = apiBase;
+  state.preferredSource = preferredSource;
+
+  try{
+    const projects = await loadAllAssets(apiBase, preferredSource);
+    if(!projects.length) throw new Error('No projects returned with assets');
+    state.projects = projects;
+    state.dataMode = 'api';
+    state.selectedProjectIndex = 0;
+    state.selectedAssetId = null;
+    state.mode = 'overview';
+    render();
+  }catch(err){
+    console.error(err);
+    useMock();
+  }finally{
+    setLoading(false, '', '', 0);
+  }
+}
+
+els.railToggle.onclick = () => els.topRailPanel.classList.toggle('show');
+els.btnHydrate.onclick = () => { els.topRailPanel.classList.remove('show'); hydrateApi(); };
+els.btnMock.onclick = () => { els.topRailPanel.classList.remove('show'); useMock(); };
+els.btnOverview.onclick = () => {
+  els.topRailPanel.classList.remove('show');
+  state.mode = 'overview';
+  state.selectedAssetId = null;
+  render();
+};
+els.btnBack.onclick = () => {
+  els.topRailPanel.classList.remove('show');
+  if(state.mode === 'asset'){
+    state.mode = 'project';
+    state.selectedAssetId = null;
+  } else {
+    state.mode = 'overview';
+    state.selectedAssetId = null;
+  }
+  render();
+};
+els.prevProject.onclick = () => {
+  state.selectedProjectIndex = clamp(state.selectedProjectIndex - 1, 0, Math.max(state.projects.length - 1, 0));
+  if(state.mode === 'asset') state.mode = 'project';
+  state.selectedAssetId = null;
+  render();
+};
+els.nextProject.onclick = () => {
+  state.selectedProjectIndex = clamp(state.selectedProjectIndex + 1, 0, Math.max(state.projects.length - 1, 0));
+  if(state.mode === 'asset') state.mode = 'project';
+  state.selectedAssetId = null;
+  render();
+};
+els.zoomIn.onclick = () => { state.towerScale = clamp(state.towerScale + .08, .82, 1.28); render(); };
+els.zoomOut.onclick = () => { state.towerScale = clamp(state.towerScale - .08, .82, 1.28); render(); };
+
+let pointerDown = false, sx = 0, sy = 0;
+window.addEventListener('pointerdown', (e) => { pointerDown = true; sx = e.clientX; sy = e.clientY; });
+window.addEventListener('pointerup', () => { pointerDown = false; });
+window.addEventListener('pointermove', (e) => {
+  if(!pointerDown) return;
+  const dx = e.clientX - sx;
+  const dy = e.clientY - sy;
+  if(Math.abs(dx) > 28 && Math.abs(dx) > Math.abs(dy)){
+    if(dx < 0) els.nextProject.click();
+    else els.prevProject.click();
+    sx = e.clientX;
+    sy = e.clientY;
+  }
+});
+
+const env = els.env, envCtx = env.getContext('2d');
+const fx = els.fx, fxCtx = fx.getContext('2d');
+let width = 0, height = 0, dpr = 1;
+const motes = Array.from({length:22}, () => ({x:Math.random(),y:Math.random(),r:.05+Math.random()*.14,vx:(Math.random()-.5)*.0005,vy:(Math.random()-.5)*.00024,warm:Math.random()>.35}));
+const reflective = Array.from({length:16}, (_,i) => ({x:.08+i*.052,w:.014+((i%3)*.004),a:.02+((i%5)*.008)}));
+
+function resize(){
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  width = Math.floor(innerWidth * dpr);
+  height = Math.floor(innerHeight * dpr);
+  env.width = width; env.height = height;
+  fx.width = width; fx.height = height;
+}
+function drawEnv(now){
+  envCtx.clearRect(0,0,width,height);
+  const base = envCtx.createLinearGradient(0,0,0,height);
+  base.addColorStop(0,'#050607');
+  base.addColorStop(.22,'#060708');
+  base.addColorStop(.5,'#040404');
+  base.addColorStop(1,'#030303');
+  envCtx.fillStyle = base;
+  envCtx.fillRect(0,0,width,height);
+
+  const dome = envCtx.createRadialGradient(width*.5,height*.08,10,width*.5,height*.08,width*.72);
+  dome.addColorStop(0,'rgba(126,164,216,.18)');
+  dome.addColorStop(.22,'rgba(126,164,216,.06)');
+  dome.addColorStop(.56,'rgba(80,110,150,.02)');
+  dome.addColorStop(1,'rgba(0,0,0,0)');
+  envCtx.fillStyle = dome;
+  envCtx.fillRect(0,0,width,height);
+
+  const warmL = envCtx.createRadialGradient(width*.14,height*.62,10,width*.14,height*.62,width*.44);
+  warmL.addColorStop(0,'rgba(255,166,88,.05)');
+  warmL.addColorStop(.42,'rgba(255,166,88,.016)');
+  warmL.addColorStop(1,'rgba(0,0,0,0)');
+  envCtx.fillStyle = warmL;
+  envCtx.fillRect(0,0,width,height);
+
+  const warmR = envCtx.createRadialGradient(width*.86,height*.58,10,width*.86,height*.58,width*.44);
+  warmR.addColorStop(0,'rgba(255,166,88,.05)');
+  warmR.addColorStop(.42,'rgba(255,166,88,.016)');
+  warmR.addColorStop(1,'rgba(0,0,0,0)');
+  envCtx.fillStyle = warmR;
+  envCtx.fillRect(0,0,width,height);
+
+  for(let i=0;i<16;i++){
+    const x = width*(.05+i*.058);
+    envCtx.strokeStyle = `rgba(255,182,108,${.028+Math.sin(now*.0008+i)*.008})`;
+    envCtx.lineWidth = dpr*(2.0+(i%2)*.4);
+    envCtx.beginPath();
+    envCtx.moveTo(x,height*.18);
+    envCtx.lineTo(x+width*.036,height*.92);
+    envCtx.stroke();
+  }
+
+  reflective.forEach(s => {
+    const x = width*s.x;
+    const g = envCtx.createLinearGradient(0,height*.58,0,height);
+    g.addColorStop(0,'rgba(0,0,0,0)');
+    g.addColorStop(.12,`rgba(255,188,118,${s.a})`);
+    g.addColorStop(.6,`rgba(255,188,118,${s.a*.42})`);
+    g.addColorStop(1,'rgba(0,0,0,0)');
+    envCtx.fillStyle = g;
+    envCtx.fillRect(x,height*.56,width*s.w,height*.44);
+  });
+
+  const horizon = envCtx.createRadialGradient(width*.5,height*.72,10,width*.5,height*.72,width*.46);
+  horizon.addColorStop(0,'rgba(255,168,88,.08)');
+  horizon.addColorStop(.34,'rgba(255,168,88,.026)');
+  horizon.addColorStop(1,'rgba(0,0,0,0)');
+  envCtx.fillStyle = horizon;
+  envCtx.fillRect(0,0,width,height);
+}
+function drawFx(now){
+  fxCtx.clearRect(0,0,width,height);
+  for(let i=0;i<16;i++){
+    const x = width*(.05+i*.058);
+    fxCtx.strokeStyle = `rgba(255,172,96,${.05+Math.sin(now*.001+i)*.01})`;
+    fxCtx.lineWidth = dpr*(1.1+(i%3)*.25);
+    fxCtx.beginPath();
+    fxCtx.moveTo(x,height*.22);
+    fxCtx.lineTo(x+width*.04,height*.8);
+    fxCtx.stroke();
+  }
+  motes.forEach(m => {
+    m.x += m.vx;
+    m.y += m.vy;
+    if(m.x < -.15) m.x = 1.15;
+    if(m.x > 1.15) m.x = -.15;
+    if(m.y < -.1) m.y = 1.05;
+    if(m.y > 1.05) m.y = -.1;
+    const px = m.x * width, py = m.y * height, rr = m.r * Math.min(width,height);
+    const g = fxCtx.createRadialGradient(px,py,0,px,py,rr);
+    g.addColorStop(0, m.warm ? 'rgba(255,164,82,.07)' : 'rgba(112,146,188,.05)');
+    g.addColorStop(.5, m.warm ? 'rgba(255,164,82,.018)' : 'rgba(112,146,188,.013)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    fxCtx.fillStyle = g;
+    fxCtx.fillRect(px-rr, py-rr, rr*2, rr*2);
+  });
+}
+function animate(now){
+  drawEnv(now);
+  drawFx(now);
+  requestAnimationFrame(animate);
+}
+
+
+document.addEventListener('pointerdown', (e) => {
+  const hs = els.heroStage;
+  if(state.mode !== 'asset' || !hs.classList.contains('show')) return;
+  const insideHero = hs.contains(e.target);
+  const insideProjectCard = e.target.closest && e.target.closest('.projectCard');
+  const insideRail = e.target.closest && e.target.closest('.topRailInner');
+  const insideBottom = e.target.closest && e.target.closest('.bottomBar');
+  if(!insideHero && !insideProjectCard && !insideRail && !insideBottom){
+    stopAllInlinePlayback(document);
+    state.mode = 'project';
+    state.selectedAssetId = null;
+    render();
+  }
+});
+
+window.addEventListener('resize', () => { resize(); render(); });
+
+useMock();
+resize();
+render();
+requestAnimationFrame(animate);
+})();
+</script>
+</body>
+</html>

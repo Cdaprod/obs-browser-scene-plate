@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vertex Shader Grid Playground</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+--bg: #050508;
+--panel: #0d0d14;
+--border: #1e1e2e;
+--accent: #00ffe1;
+--accent2: #ff3cac;
+--accent3: #ffcc00;
+--text: #e0e0f0;
+--muted: #555577;
+}
+
+body {
+background: var(--bg);
+color: var(--text);
+font-family: 'Space Mono', monospace;
+height: 100vh;
+display: flex;
+flex-direction: column;
+overflow: hidden;
+}
+
+header {
+display: flex;
+align-items: center;
+justify-content: space-between;
+padding: 12px 24px;
+border-bottom: 1px solid var(--border);
+background: var(--panel);
+flex-shrink: 0;
+}
+
+header h1 {
+font-family: 'Syne', sans-serif;
+font-size: 15px;
+font-weight: 800;
+letter-spacing: 0.15em;
+text-transform: uppercase;
+color: var(--accent);
+}
+
+.mode-tabs {
+display: flex;
+gap: 4px;
+}
+
+.mode-tab {
+padding: 5px 14px;
+font-family: 'Space Mono', monospace;
+font-size: 11px;
+background: transparent;
+border: 1px solid var(--border);
+color: var(--muted);
+cursor: pointer;
+transition: all 0.15s;
+letter-spacing: 0.05em;
+}
+
+.mode-tab.active {
+background: var(--accent);
+border-color: var(--accent);
+color: #000;
+font-weight: 700;
+}
+
+.mode-tab:hover:not(.active) {
+border-color: var(--accent);
+color: var(--accent);
+}
+
+.main {
+display: flex;
+flex: 1;
+overflow: hidden;
+}
+
+canvas {
+flex: 1;
+display: block;
+cursor: crosshair;
+}
+
+.sidebar {
+width: 280px;
+flex-shrink: 0;
+background: var(--panel);
+border-left: 1px solid var(--border);
+overflow-y: auto;
+padding: 16px;
+display: flex;
+flex-direction: column;
+gap: 16px;
+}
+
+.sidebar::-webkit-scrollbar { width: 4px; }
+.sidebar::-webkit-scrollbar-track { background: transparent; }
+.sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.ctrl-group {
+border: 1px solid var(--border);
+padding: 12px;
+}
+
+.ctrl-group-title {
+font-size: 9px;
+letter-spacing: 0.2em;
+text-transform: uppercase;
+color: var(--accent);
+margin-bottom: 12px;
+font-weight: 700;
+}
+
+.ctrl-row {
+display: flex;
+align-items: center;
+justify-content: space-between;
+margin-bottom: 10px;
+gap: 10px;
+}
+
+.ctrl-row:last-child { margin-bottom: 0; }
+
+.ctrl-label {
+font-size: 10px;
+color: var(--muted);
+white-space: nowrap;
+min-width: 80px;
+letter-spacing: 0.05em;
+}
+
+.ctrl-value {
+font-size: 10px;
+color: var(--accent3);
+min-width: 36px;
+text-align: right;
+}
+
+input[type=range] {
+flex: 1;
+height: 2px;
+-webkit-appearance: none;
+background: var(--border);
+outline: none;
+cursor: pointer;
+}
+
+input[type=range]::-webkit-slider-thumb {
+-webkit-appearance: none;
+width: 12px;
+height: 12px;
+background: var(--accent);
+border-radius: 50%;
+cursor: pointer;
+transition: transform 0.1s;
+}
+
+input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.3); }
+
+.toggle-row {
+display: flex;
+align-items: center;
+justify-content: space-between;
+margin-bottom: 10px;
+}
+
+.toggle {
+width: 36px;
+height: 18px;
+background: var(--border);
+border-radius: 9px;
+cursor: pointer;
+position: relative;
+transition: background 0.2s;
+flex-shrink: 0;
+}
+
+.toggle.on { background: var(--accent); }
+
+.toggle::after {
+content: '';
+position: absolute;
+width: 12px;
+height: 12px;
+background: #000;
+border-radius: 50%;
+top: 3px;
+left: 3px;
+transition: left 0.2s;
+}
+
+.toggle.on::after { left: 21px; }
+
+.info-chip {
+font-size: 9px;
+color: var(--muted);
+line-height: 1.6;
+letter-spacing: 0.03em;
+}
+
+.info-chip span { color: var(--accent2); }
+
+.color-row {
+display: flex;
+gap: 6px;
+flex-wrap: wrap;
+margin-top: 4px;
+}
+
+.color-swatch {
+width: 22px;
+height: 22px;
+border-radius: 2px;
+cursor: pointer;
+border: 2px solid transparent;
+transition: border-color 0.15s, transform 0.1s;
+}
+
+.color-swatch.active { border-color: #fff; transform: scale(1.15); }
+.color-swatch:hover:not(.active) { transform: scale(1.1); }
+
+.fps-badge {
+font-size: 9px;
+color: var(--accent3);
+letter-spacing: 0.1em;
+}
+</style>
+
+</head>
+<body>
+
+<header>
+  <h1>⬡ Vertex Shader Grid</h1>
+  <div class="mode-tabs">
+    <button class="mode-tab active" data-mode="0">WAVE</button>
+    <button class="mode-tab" data-mode="1">RIPPLE</button>
+    <button class="mode-tab" data-mode="2">TWIST</button>
+    <button class="mode-tab" data-mode="3">NOISE</button>
+    <button class="mode-tab" data-mode="4">CURSOR</button>
+  </div>
+  <span class="fps-badge" id="fps">60 FPS</span>
+</header>
+
+<div class="main">
+  <canvas id="c"></canvas>
+
+  <div class="sidebar">
+    <div class="ctrl-group">
+      <div class="ctrl-group-title">Grid</div>
+      <div class="ctrl-row">
+        <span class="ctrl-label">Columns</span>
+        <input type="range" id="cols" min="3" max="30" value="12" step="1">
+        <span class="ctrl-value" id="cols-v">12</span>
+      </div>
+      <div class="ctrl-row">
+        <span class="ctrl-label">Rows</span>
+        <input type="range" id="rows" min="3" max="20" value="8" step="1">
+        <span class="ctrl-value" id="rows-v">8</span>
+      </div>
+      <div class="ctrl-row">
+        <span class="ctrl-label">Gap</span>
+        <input type="range" id="gap" min="0" max="0.4" value="0.08" step="0.01">
+        <span class="ctrl-value" id="gap-v">0.08</span>
+      </div>
+    </div>
+
+
+<div class="ctrl-group">
+  <div class="ctrl-group-title">Deformation</div>
+  <div class="ctrl-row">
+    <span class="ctrl-label">Amplitude</span>
+    <input type="range" id="amp" min="0" max="1.5" value="0.35" step="0.01">
+    <span class="ctrl-value" id="amp-v">0.35</span>
+  </div>
+  <div class="ctrl-row">
+    <span class="ctrl-label">Frequency</span>
+    <input type="range" id="freq" min="0.1" max="5" value="1.2" step="0.1">
+    <span class="ctrl-value" id="freq-v">1.2</span>
+  </div>
+  <div class="ctrl-row">
+    <span class="ctrl-label">Speed</span>
+    <input type="range" id="speed" min="0" max="3" value="0.8" step="0.05">
+    <span class="ctrl-value" id="speed-v">0.8</span>
+  </div>
+</div>
+
+<div class="ctrl-group">
+  <div class="ctrl-group-title">Appearance</div>
+  <div class="ctrl-row">
+    <span class="ctrl-label">Corner R</span>
+    <input type="range" id="corner" min="0" max="0.5" value="0.12" step="0.01">
+    <span class="ctrl-value" id="corner-v">0.12</span>
+  </div>
+  <div class="ctrl-row">
+    <span class="ctrl-label">Depth Scale</span>
+    <input type="range" id="depth" min="0" max="2" value="0.8" step="0.05">
+    <span class="ctrl-value" id="depth-v">0.8</span>
+  </div>
+  <div class="ctrl-row">
+    <span class="ctrl-label">Glow</span>
+    <input type="range" id="glow" min="0" max="1" value="0.6" step="0.01">
+    <span class="ctrl-value" id="glow-v">0.6</span>
+  </div>
+</div>
+
+<div class="ctrl-group">
+  <div class="ctrl-group-title">Color Palette</div>
+  <div class="color-row" id="palettes"></div>
+</div>
+
+<div class="ctrl-group">
+  <div class="ctrl-group-title">Options</div>
+  <div class="toggle-row">
+    <span class="ctrl-label">Show Grid Lines</span>
+    <div class="toggle on" id="tog-grid"></div>
+  </div>
+  <div class="toggle-row">
+    <span class="ctrl-label">Depth Shading</span>
+    <div class="toggle on" id="tog-depth"></div>
+  </div>
+  <div class="toggle-row">
+    <span class="ctrl-label">Mouse Interact</span>
+    <div class="toggle on" id="tog-mouse"></div>
+  </div>
+</div>
+
+<div class="ctrl-group">
+  <div class="ctrl-group-title">About</div>
+  <p class="info-chip">
+    Each cell is a <span>quad (2 triangles)</span> built in JS and passed to the GPU.<br><br>
+    The <span>vertex shader</span> displaces each corner in world-space — impossible cleanly in DOM.<br><br>
+    <span>Mode</span> changes the displacement function. <span>Cursor</span> mode reacts to your mouse position in real-time.
+  </p>
+</div>
+
+
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const gl = canvas.getContext('webgl', { antialias: true, alpha: false });
+if (!gl) { alert('WebGL not supported'); }
+
+// ── Shader Sources ──────────────────────────────────────────────────────────
+
+const VS = `
+precision highp float;
+attribute vec2 a_pos;       // -1..1 normalised grid position
+attribute vec2 a_uv;        // per-vertex cell UV 0..1
+attribute float a_cellX;    // cell column 0..1
+attribute float a_cellY;    // cell row    0..1
+
+uniform float u_time;
+uniform float u_amp;
+uniform float u_freq;
+uniform int   u_mode;
+uniform vec2  u_mouse;      // NDC -1..1
+uniform float u_aspect;
+uniform float u_depthScale;
+
+varying vec2  v_uv;
+varying float v_z;
+varying vec2  v_cellPos;
+varying float v_dist;
+
+// pseudo-random
+float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453123); }
+
+// value noise
+float noise(vec2 p){
+  vec2 i = floor(p); vec2 f = fract(p);
+  vec2 u = f*f*(3.0-2.0*f);
+  return mix(mix(hash(i),hash(i+vec2(1,0)),u.x),
+             mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),u.x),u.y);
+}
+
+void main(){
+  vec2 pos = a_pos;
+  float cx = a_cellX, cy = a_cellY;
+  float t = u_time;
+  float z = 0.0;
+
+  if(u_mode == 0){
+    // WAVE — rolling sine across columns
+    float wave = sin(cx * u_freq * 6.2831 - t) * u_amp;
+    z = wave * (0.5 + 0.5 * cos(cy * 3.14159));
+    pos.y += z * 0.35;
+    z = wave;
+  }
+  else if(u_mode == 1){
+    // RIPPLE — radial from center
+    vec2 d = vec2(cx - 0.5, cy - 0.5);
+    float r = length(d) * u_freq * 8.0;
+    z = sin(r - t * 2.5) * u_amp * (1.0 - smoothstep(0.0,0.7,length(d)));
+    pos += d * z * 0.2;
+  }
+  else if(u_mode == 2){
+    // TWIST — angular rotation per row
+    float angle = (cy - 0.5) * u_freq * 3.14159 + t * 0.5;
+    mat2 rot = mat2(cos(angle), -sin(angle), sin(angle), cos(angle));
+    vec2 delta = (pos - vec2(0.0)) * 0.15;
+    delta = rot * delta - delta;
+    pos += delta * u_amp;
+    z = sin(angle) * u_amp;
+  }
+  else if(u_mode == 3){
+    // NOISE — fbm turbulence
+    vec2 np = vec2(cx, cy) * u_freq * 3.0 + t * 0.3;
+    float n = noise(np) * 2.0 - 1.0;
+    n += 0.5 * (noise(np * 2.1) * 2.0 - 1.0);
+    n += 0.25 * (noise(np * 4.2) * 2.0 - 1.0);
+    n /= 1.75;
+    z = n * u_amp;
+    pos.y += z * 0.4;
+    pos.x += noise(np + 3.7) * u_amp * 0.2;
+  }
+  else {
+    // CURSOR — repel/attract from mouse
+    vec2 mpos = u_mouse * vec2(u_aspect, 1.0);
+    vec2 cpos = a_pos * vec2(u_aspect, 1.0);
+    float dist = length(cpos - mpos);
+    v_dist = dist;
+    float strength = u_amp * 1.2 / (1.0 + dist * dist * 6.0);
+    vec2 dir = normalize(cpos - mpos + 0.001);
+    pos += dir * strength * 0.4;
+    z = strength;
+  }
+
+  v_uv = a_uv;
+  v_z = z;
+  v_cellPos = vec2(cx, cy);
+
+  // slight perspective foreshortening via z
+  float persp = 1.0 + z * u_depthScale * 0.15;
+  gl_Position = vec4(pos * persp, z * 0.1, 1.0);
+}
+`;
+
+const FS = `
+precision highp float;
+varying vec2  v_uv;
+varying float v_z;
+varying vec2  v_cellPos;
+varying float v_dist;
+
+uniform float u_cornerR;
+uniform vec3  u_col0;
+uniform vec3  u_col1;
+uniform vec3  u_col2;
+uniform float u_time;
+uniform float u_glow;
+uniform float u_depthShading;
+uniform float u_gridLines;
+uniform int   u_mode;
+uniform float u_amp;
+
+float roundedBox(vec2 uv, float r){
+  vec2 q = abs(uv - 0.5) - (0.5 - r);
+  return length(max(q, 0.0)) - r;
+}
+
+void main(){
+  // Rounded rectangle SDF
+  float d = roundedBox(v_uv, u_cornerR);
+  if(d > 0.0) discard;
+
+  // Base gradient across grid
+  float t = v_cellPos.x * 0.6 + v_cellPos.y * 0.4 + u_time * 0.08;
+  float f = fract(t);
+  vec3 color;
+  if(f < 0.5) color = mix(u_col0, u_col1, f * 2.0);
+  else        color = mix(u_col1, u_col2, (f - 0.5) * 2.0);
+
+  // Depth shading
+  float depthLight = 1.0 + v_z * 1.5 * u_depthShading;
+  color *= clamp(depthLight, 0.3, 2.0);
+
+  // Inner radial glow on hover/deform
+  float glow = 1.0 - length(v_uv - 0.5) * 2.0;
+  glow = pow(max(glow, 0.0), 2.5) * abs(v_z) * u_glow * 3.0;
+  color += u_col2 * glow;
+
+  // Thin inner border
+  float border = smoothstep(-0.015, 0.0, d) * u_gridLines;
+  color = mix(color, color * 0.2, border);
+
+  // Edge anti-alias
+  float alpha = 1.0 - smoothstep(-0.012, 0.0, d);
+  gl_FragColor = vec4(color, alpha);
+}
+`;
+
+// ── GL Setup ────────────────────────────────────────────────────────────────
+
+function compile(type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
+    console.error(gl.getShaderInfoLog(s));
+  return s;
+}
+
+const prog = gl.createProgram();
+gl.attachShader(prog, compile(gl.VERTEX_SHADER, VS));
+gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FS));
+gl.linkProgram(prog);
+gl.useProgram(prog);
+
+const attribs = {
+  pos:   gl.getAttribLocation(prog, 'a_pos'),
+  uv:    gl.getAttribLocation(prog, 'a_uv'),
+  cellX: gl.getAttribLocation(prog, 'a_cellX'),
+  cellY: gl.getAttribLocation(prog, 'a_cellY'),
+};
+
+const uniforms = {};
+['u_time','u_amp','u_freq','u_mode','u_mouse','u_aspect',
+ 'u_cornerR','u_col0','u_col1','u_col2','u_glow',
+ 'u_depthScale','u_depthShading','u_gridLines'].forEach(n => {
+  uniforms[n] = gl.getUniformLocation(prog, n);
+});
+
+let posBuf  = gl.createBuffer();
+let uvBuf   = gl.createBuffer();
+let cxBuf   = gl.createBuffer();
+let cyBuf   = gl.createBuffer();
+let idxBuf  = gl.createBuffer();
+let triCount = 0;
+
+function buildGrid(cols, rows, gap) {
+  const pos = [], uv = [], cx = [], cy = [], idx = [];
+  const cellW = 2 / cols;
+  const cellH = 2 / rows;
+  let vi = 0;
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const x0 = -1 + c * cellW + gap;
+      const x1 = x0 + cellW - gap * 2;
+      const y0 = -1 + r * cellH + gap;
+      const y1 = y0 + cellH - gap * 2;
+      const ncx = c / (cols - 1 || 1);
+      const ncy = r / (rows - 1 || 1);
+
+      // 4 corners: TL TR BR BL
+      pos.push(x0,y1, x1,y1, x1,y0, x0,y0);
+      uv.push(0,1, 1,1, 1,0, 0,0);
+      for (let i = 0; i < 4; i++) { cx.push(ncx); cy.push(ncy); }
+
+      // 2 triangles
+      idx.push(vi,vi+1,vi+2, vi,vi+2,vi+3);
+      vi += 4;
+    }
+  }
+
+  const upload = (buf, data, attr, size) => {
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.DYNAMIC_DRAW);
+    gl.enableVertexAttribArray(attr);
+    gl.vertexAttribPointer(attr, size, gl.FLOAT, false, 0, 0);
+  };
+
+  upload(posBuf, pos, attribs.pos, 2);
+  upload(uvBuf,  uv,  attribs.uv,  2);
+  upload(cxBuf,  cx,  attribs.cellX, 1);
+  upload(cyBuf,  cy,  attribs.cellY, 1);
+
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuf);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(idx), gl.DYNAMIC_DRAW);
+  triCount = idx.length;
+}
+
+// ── State ───────────────────────────────────────────────────────────────────
+
+const PALETTES = [
+  ['#00ffe1','#7b2fff','#ff3cac'],
+  ['#ffcc00','#ff6b00','#ff003c'],
+  ['#00ff88','#0099ff','#aa00ff'],
+  ['#ff6ec7','#ffe4ff','#7c3aed'],
+  ['#e0f7fa','#006064','#001b2e'],
+  ['#f9f871','#ffa07a','#ff4500'],
+];
+
+let palIdx = 0;
+const hexToRgb = h => {
+  const r = parseInt(h.slice(1,3),16)/255;
+  const g = parseInt(h.slice(3,5),16)/255;
+  const b = parseInt(h.slice(5,7),16)/255;
+  return [r,g,b];
+};
+
+const state = {
+  cols: 12, rows: 8, gap: 0.08,
+  amp: 0.35, freq: 1.2, speed: 0.8,
+  corner: 0.12, depth: 0.8, glow: 0.6,
+  mode: 0,
+  gridLines: true, depthShading: true, mouseInteract: true,
+  mouse: [0, 0],
+};
+
+// ── Controls ─────────────────────────────────────────────────────────────────
+
+const bind = (id, key, rebuild) => {
+  const el = document.getElementById(id);
+  const vEl = document.getElementById(id + '-v');
+  el.addEventListener('input', () => {
+    state[key] = parseFloat(el.value);
+    if (vEl) vEl.textContent = parseFloat(el.value).toFixed(2).replace(/\.?0+$/,'') || el.value;
+    if (rebuild) buildGrid(state.cols, state.rows, state.gap);
+  });
+};
+
+bind('cols', 'cols', true);
+bind('rows', 'rows', true);
+bind('gap', 'gap', true);
+bind('amp', 'amp');
+bind('freq', 'freq');
+bind('speed', 'speed');
+bind('corner', 'corner');
+bind('depth', 'depth');
+bind('glow', 'glow');
+
+document.querySelectorAll('.mode-tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.mode-tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.mode = parseInt(btn.dataset.mode);
+  });
+});
+
+const togBind = (id, key) => {
+  const el = document.getElementById(id);
+  el.addEventListener('click', () => {
+    state[key] = !state[key];
+    el.classList.toggle('on', state[key]);
+  });
+};
+togBind('tog-grid', 'gridLines');
+togBind('tog-depth', 'depthShading');
+togBind('tog-mouse', 'mouseInteract');
+
+// Palette swatches
+const palRow = document.getElementById('palettes');
+PALETTES.forEach((pal, i) => {
+  const sw = document.createElement('div');
+  sw.className = 'color-swatch' + (i === 0 ? ' active' : '');
+  sw.style.background = `linear-gradient(135deg, ${pal[0]}, ${pal[2]})`;
+  sw.addEventListener('click', () => {
+    document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('active'));
+    sw.classList.add('active');
+    palIdx = i;
+  });
+  palRow.appendChild(sw);
+});
+
+// Mouse tracking
+canvas.addEventListener('mousemove', e => {
+  const rect = canvas.getBoundingClientRect();
+  const x = (e.clientX - rect.left) / rect.width  * 2 - 1;
+  const y = -((e.clientY - rect.top)  / rect.height * 2 - 1);
+  state.mouse = [x, y];
+});
+
+// ── Resize ───────────────────────────────────────────────────────────────────
+
+function resize() {
+  const main = canvas.parentElement;
+  canvas.width  = main.clientWidth - 280;
+  canvas.height = main.clientHeight;
+  gl.viewport(0, 0, canvas.width, canvas.height);
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ── Render Loop ───────────────────────────────────────────────────────────────
+
+gl.enable(gl.BLEND);
+gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+gl.clearColor(0.02, 0.02, 0.03, 1);
+
+buildGrid(state.cols, state.rows, state.gap);
+
+let t0 = performance.now();
+let lastFps = performance.now();
+let frames = 0;
+
+function render() {
+  const now = performance.now();
+  const elapsed = (now - t0) / 1000 * state.speed;
+  frames++;
+  if (now - lastFps > 500) {
+    document.getElementById('fps').textContent = Math.round(frames * 1000 / (now - lastFps)) + ' FPS';
+    frames = 0; lastFps = now;
+  }
+
+  gl.clear(gl.COLOR_BUFFER_BIT);
+
+  const aspect = canvas.width / canvas.height;
+  const pal = PALETTES[palIdx];
+
+  gl.uniform1f(uniforms.u_time, elapsed);
+  gl.uniform1f(uniforms.u_amp, state.amp);
+  gl.uniform1f(uniforms.u_freq, state.freq);
+  gl.uniform1i(uniforms.u_mode, state.mode);
+  gl.uniform2fv(uniforms.u_mouse, state.mouseInteract ? state.mouse : [9999, 9999]);
+  gl.uniform1f(uniforms.u_aspect, aspect);
+  gl.uniform1f(uniforms.u_cornerR, state.corner);
+  gl.uniform1f(uniforms.u_glow, state.glow);
+  gl.uniform1f(uniforms.u_depthScale, state.depth);
+  gl.uniform1f(uniforms.u_depthShading, state.depthShading ? 1 : 0);
+  gl.uniform1f(uniforms.u_gridLines, state.gridLines ? 1 : 0);
+  gl.uniform3fv(uniforms.u_col0, hexToRgb(pal[0]));
+  gl.uniform3fv(uniforms.u_col1, hexToRgb(pal[1]));
+  gl.uniform3fv(uniforms.u_col2, hexToRgb(pal[2]));
+
+  // Re-bind buffers each frame (needed after grid rebuild)
+  gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+  gl.enableVertexAttribArray(attribs.pos);
+  gl.vertexAttribPointer(attribs.pos, 2, gl.FLOAT, false, 0, 0);
+
+  gl.bindBuffer(gl.ARRAY_BUFFER, uvBuf);
+  gl.enableVertexAttribArray(attribs.uv);
+  gl.vertexAttribPointer(attribs.uv, 2, gl.FLOAT, false, 0, 0);
+
+  gl.bindBuffer(gl.ARRAY_BUFFER, cxBuf);
+  gl.enableVertexAttribArray(attribs.cellX);
+  gl.vertexAttribPointer(attribs.cellX, 1, gl.FLOAT, false, 0, 0);
+
+  gl.bindBuffer(gl.ARRAY_BUFFER, cyBuf);
+  gl.enableVertexAttribArray(attribs.cellY);
+  gl.vertexAttribPointer(attribs.cellY, 1, gl.FLOAT, false, 0, 0);
+
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuf);
+  gl.drawElements(gl.TRIANGLES, triCount, gl.UNSIGNED_SHORT, 0);
+
+  requestAnimationFrame(render);
+}
+
+render();
+</script>
+
+</body>
+</html>

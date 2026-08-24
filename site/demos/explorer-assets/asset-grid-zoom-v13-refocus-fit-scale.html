@@ -1,0 +1,1394 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Explorer — Depth v4</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;600;700;800&display=swap');
+
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+:root{
+--bg:#07070e;
+--card:#0d0d1a;
+--border:rgba(255,255,255,.07);
+--text:#e4e4f0;
+--muted:rgba(255,255,255,.36);
+--accent:#5b7fff;
+--gap:5px;
+--r:10px;
+--hh:46px;
+
+/* 3D depth values — tweak these to adjust parallax intensity */
+--z-grid:    0px;
+--z-thumb:   30px;   /* thumbnail floats in front of grid */
+--z-overlay: 70px;   /* overlay text floats further in front */
+--persp:     900px;  /* perspective distance — lower = more dramatic parallax */
+}
+
+html,body{
+width:100%;height:100%;
+background:var(--bg);
+color:var(--text);
+font-family:'Syne',sans-serif;
+overflow:hidden;
+-webkit-font-smoothing:antialiased;
+-webkit-tap-highlight-color:transparent;
+}
+
+/* ── HEADER ──────────────────────────────── */
+#header{
+position:fixed;top:0;left:0;right:0;
+height:var(--hh);
+display:flex;align-items:center;justify-content:space-between;
+padding:0 14px;
+background:rgba(7,7,14,.8);
+backdrop-filter:blur(16px);
+-webkit-backdrop-filter:blur(16px);
+border-bottom:1px solid var(--border);
+z-index:40;
+}
+.logo{font-size:12px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}
+.logo b{color:var(--accent)}
+.hdr-r{display:flex;gap:5px;align-items:center}
+.pill{
+font-family:'DM Mono',monospace;font-size:9px;
+padding:3px 9px;border-radius:20px;
+border:1px solid var(--border);
+background:transparent;color:var(--muted);
+cursor:pointer;transition:all .2s;letter-spacing:.05em;
+}
+.pill.on,.pill:hover{border-color:var(--accent);color:var(--accent);background:rgba(91,127,255,.1)}
+#ic{font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);letter-spacing:.05em}
+
+/* ── VIEWPORT ────────────────────────────── */
+#viewport{
+position:fixed;
+top:var(--hh);left:0;right:0;bottom:0;
+overflow-y:auto;overflow-x:hidden;
+-webkit-overflow-scrolling:touch;
+z-index:1;
+/* The perspective container — ALL 3D happens relative to this */
+perspective:var(--persp);
+perspective-origin:50% 50%;
+}
+#viewport.locked{overflow:hidden}
+
+/* ── WORLD (the 3D stage) ────────────────── */
+#world{
+padding:var(--gap);
+transform-style:preserve-3d;
+will-change:transform;
+/* We'll animate rotateX/rotateY subtly on mouse move for parallax preview */
+transform:translateZ(0px) rotateX(0deg) rotateY(0deg);
+}
+
+/* ── GRID ────────────────────────────────── */
+#grid{
+columns:4;
+column-gap:var(--gap);
+transform-style:preserve-3d;
+}
+@media(max-width:480px){#grid{columns:3}}
+
+/* ── CARD (the 3D unit) ─────────────────── */
+/*
+Each card is a 3D stack:
+.card           → positioned in the grid, translateZ(--z-grid)
+.card .thumb    → translateZ(--z-thumb)   — floats in front
+.card .chip     → translateZ(--z-overlay) — floats furthest in front
+
+From dead-on perspective these all look flat.
+As the world tilts (mouse parallax) or zooms (click), depth reveals.
+*/
+.card{
+break-inside:avoid;
+margin-bottom:var(--gap);
+border-radius:var(--r);
+overflow:visible;            /* must be visible to show child Z depth */
+cursor:pointer;
+position:relative;
+transform-style:preserve-3d;
+transform:translateZ(var(--z-grid));
+will-change:transform;
+--detail-ui-scale:1;
+}
+
+/* The thumbnail layer */
+.card .thumb{
+display:block;
+width:100%;
+border-radius:var(--r);
+overflow:hidden;
+background:var(--card);
+border:1px solid var(--border);
+transform:translateZ(var(--z-thumb));
+transform-style:preserve-3d;
+position:relative;
+}
+.card .thumb img{
+width:100%;display:block;object-fit:cover;
+pointer-events:none;
+}
+.card.tall .thumb img{aspect-ratio:9/16}
+.card.wide .thumb img{aspect-ratio:16/9}
+.card.sq   .thumb img{aspect-ratio:1}
+.card.audio .thumb{
+display:flex;flex-direction:column;
+align-items:center;justify-content:center;
+gap:5px;min-height:70px;padding:12px;
+}
+.card.audio .aico{
+width:22px;height:22px;border-radius:50%;
+border:1px solid var(--border);
+display:flex;align-items:center;justify-content:center;
+font-size:10px;color:var(--muted);
+}
+.card.audio .albl{
+font-family:'DM Mono',monospace;font-size:8px;
+letter-spacing:.12em;color:var(--muted);text-transform:uppercase;
+}
+
+/* The floating chip — sits above the thumbnail in Z */
+.card .chip{
+position:absolute;
+bottom:calc(-1 * var(--gap));   /* sits just below thumbnail bottom */
+left:50%;
+transform:translateX(-50%) translateZ(var(--z-overlay));
+background:rgba(7,7,14,.7);
+border:1px solid var(--border);
+border-radius:20px;
+padding:3px 9px;
+font-family:'DM Mono',monospace;font-size:8px;letter-spacing:.08em;
+color:var(--muted);
+white-space:nowrap;
+opacity:0;  /* hidden at rest, fades in on hover / zoom approach */
+pointer-events:none;
+backdrop-filter:blur(8px);
+-webkit-backdrop-filter:blur(8px);
+transition:opacity .25s;
+}
+.card:hover .chip{opacity:1}
+
+.card .card-ui{
+position:absolute;
+inset:0;
+border-radius:var(--r);
+overflow:hidden;
+pointer-events:none;
+opacity:0;
+z-index:3;
+transform:translateZ(calc(var(--z-thumb) + 10px));
+transition:opacity .25s ease, transform .25s ease;
+}
+.card .card-ui-scrim{
+position:absolute;inset:0;
+background:linear-gradient(
+to bottom,
+rgba(7,7,14,.16) 0%,
+rgba(7,7,14,0) 35%,
+rgba(7,7,14,0) 58%,
+rgba(7,7,14,.82) 100%
+);
+}
+.card .card-ui-top,
+.card .card-ui-bot{
+position:absolute;left:0;right:0;
+padding-inline:calc(10px * var(--detail-ui-scale));
+z-index:2;
+}
+.card .card-ui-top{
+top:0;padding-top:calc(10px * var(--detail-ui-scale));
+display:flex;align-items:flex-start;justify-content:space-between;gap:calc(8px * var(--detail-ui-scale));
+}
+.card .card-ui-bot{
+bottom:0;padding-bottom:calc(10px * var(--detail-ui-scale));
+}
+.card .card-ui-badge{
+font-family:'DM Mono',monospace;font-size:calc(10px * var(--detail-ui-scale));letter-spacing:.12em;
+padding:calc(3px * var(--detail-ui-scale)) calc(8px * var(--detail-ui-scale));border-radius:999px;
+border:1px solid rgba(255,255,255,.14);
+background:rgba(7,7,14,.38);
+backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+color:var(--text);text-transform:uppercase;
+}
+.card .card-ui-nav{
+display:flex;gap:calc(6px * var(--detail-ui-scale));opacity:0;transform:translateY(calc(-4px * var(--detail-ui-scale)));
+transition:opacity .2s ease, transform .2s ease;
+}
+.card .card-ui-nav .nav-btn{width:calc(24px * var(--detail-ui-scale));height:calc(24px * var(--detail-ui-scale));font-size:calc(10px * var(--detail-ui-scale))}
+.card .card-ui-title{
+font-size:calc(24px * var(--detail-ui-scale));font-weight:700;line-height:1.08;
+text-shadow:0 1px 14px rgba(0,0,0,.22);
+}
+.card .card-ui-meta{
+margin-top:calc(4px * var(--detail-ui-scale));
+font-family:'DM Mono',monospace;font-size:calc(12px * var(--detail-ui-scale));letter-spacing:.05em;
+color:rgba(255,255,255,.72);
+}
+.card .card-ui-actions{
+margin-top:calc(8px * var(--detail-ui-scale));
+display:flex;gap:calc(5px * var(--detail-ui-scale));flex-wrap:wrap;
+opacity:0;transform:translateY(calc(6px * var(--detail-ui-scale)));
+transition:opacity .22s ease, transform .22s ease;
+}
+.card .card-ui-actions .act{
+padding:calc(4px * var(--detail-ui-scale)) calc(11px * var(--detail-ui-scale));
+font-size:calc(11px * var(--detail-ui-scale));
+backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+}
+.card:hover .card-ui,
+.card.is-active .card-ui,
+.card.is-source-hidden .card-ui{
+opacity:1;
+}
+.card:hover .card-ui-actions,
+.card.is-active .card-ui-actions,
+.card.is-source-hidden .card-ui-actions,
+.card:hover .card-ui-nav,
+.card.is-active .card-ui-nav,
+.card.is-source-hidden .card-ui-nav{
+opacity:1;transform:translateY(0);
+}
+.card.is-source-hidden .thumb,
+.card.is-source-hidden .chip,
+.card.is-source-hidden .card-ui{
+opacity:0 !important;
+transition:none !important;
+}
+
+#preview{
+display:none !important;
+}
+
+#detail-proxy{
+position:fixed;
+inset:0;
+display:none;
+opacity:0;
+z-index:35;
+pointer-events:none;
+transform-origin:50% 50%;
+will-change:transform,width,height,left,top,border-radius,opacity;
+}
+#detail-proxy.open{pointer-events:auto}
+#detail-proxy .proxy-shell{
+position:absolute;
+inset:0;
+overflow:hidden;
+background:var(--card);
+border:1px solid var(--border);
+box-shadow:0 30px 90px rgba(0,0,0,.38);
+}
+#detail-proxy .proxy-media{
+position:absolute;inset:0;
+display:flex;align-items:center;justify-content:center;
+background:var(--card);
+}
+#detail-proxy .proxy-media img{
+width:100%;height:100%;object-fit:cover;display:block;
+}
+#detail-proxy .proxy-audio{
+width:100%;height:100%;
+display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;
+}
+#detail-proxy .proxy-audio .big-icon{font-size:56px;opacity:.18}
+#detail-proxy .proxy-audio .big-label{
+font-family:'DM Mono',monospace;font-size:11px;
+letter-spacing:.14em;color:var(--muted);text-transform:uppercase;
+}
+#detail-proxy .proxy-ui{
+position:absolute;inset:0;
+}
+#detail-proxy .proxy-scrim{
+position:absolute;inset:0;
+background:linear-gradient(
+to bottom,
+rgba(7,7,14,.28) 0%,
+rgba(7,7,14,0) 34%,
+rgba(7,7,14,0) 56%,
+rgba(7,7,14,.82) 100%
+);
+}
+#detail-proxy .proxy-top{
+position:absolute;top:0;left:0;right:0;
+padding:14px 16px 0;
+display:flex;align-items:flex-start;justify-content:space-between;
+opacity:0;transform:translateY(-8px);
+}
+#detail-proxy .proxy-badge{
+font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;
+padding:3px 8px;border-radius:4px;
+background:rgba(91,127,255,.18);border:1px solid rgba(91,127,255,.3);
+color:var(--accent);text-transform:uppercase;
+}
+#detail-proxy .proxy-nav{display:flex;gap:6px}
+#detail-proxy .proxy-bot{
+position:absolute;bottom:0;left:0;right:0;
+padding:24px 18px 32px;
+opacity:0;transform:translateY(12px);
+}
+#detail-proxy .proxy-title{font-size:20px;font-weight:700;margin-bottom:5px;line-height:1.2}
+#detail-proxy .proxy-meta{
+font-family:'DM Mono',monospace;font-size:10px;
+color:var(--muted);letter-spacing:.06em;margin-bottom:12px;
+}
+#detail-proxy .proxy-actions{display:flex;gap:6px;flex-wrap:wrap}
+
+
+/* ── CINEMATIC BARS ──────────────────────── */
+#bar-top,#bar-bot{
+position:fixed;left:0;right:0;height:0;
+background:var(--bg);z-index:20;pointer-events:none;
+}
+#bar-top{top:0}
+#bar-bot{bottom:0}
+
+/* ── PREVIEW PANEL (fixed, z:30, parallax) ─ */
+/*
+Three sub-layers, each at a conceptually different depth:
+#pv-badge  → type tag in top-left (feels like HUD)
+#pv-image  → large full-bleed image in the center (the "real" media)
+#pv-info   → title/meta/actions at bottom
+
+The image fades in separately from the info, giving a
+reveal-then-annotate sequence.
+*/
+#preview{
+position:fixed;inset:0;
+z-index:30;
+pointer-events:none;
+opacity:0;
+/* 3D perspective for the preview panel's own parallax */
+perspective:1200px;
+perspective-origin:50% 50%;
+}
+#preview.open{pointer-events:all}
+
+/* Full bleed preview image behind the info */
+#pv-image{
+position:absolute;
+inset:0;
+display:flex;align-items:center;justify-content:center;
+opacity:0;
+transform:scale(.96) translateZ(0px);
+}
+#pv-image img{
+width:100%;height:100%;
+object-fit:cover;
+display:block;
+}
+#pv-image-audio{
+width:100%;height:100%;
+display:flex;flex-direction:column;
+align-items:center;justify-content:center;
+gap:16px;
+}
+#pv-image-audio .big-icon{font-size:56px;opacity:.18}
+#pv-image-audio .big-label{
+font-family:'DM Mono',monospace;font-size:11px;
+letter-spacing:.14em;color:var(--muted);text-transform:uppercase;
+}
+
+/* Overlay scrim over the preview image */
+#pv-scrim{
+position:absolute;inset:0;
+background:linear-gradient(
+to bottom,
+rgba(7,7,14,.55) 0%,
+rgba(7,7,14,.0)  35%,
+rgba(7,7,14,.0)  55%,
+rgba(7,7,14,.82) 100%
+);
+pointer-events:none;
+}
+
+/* Top strip */
+#pv-top{
+position:absolute;
+top:0;left:0;right:0;
+padding:14px 16px 0;
+display:flex;align-items:flex-start;justify-content:space-between;
+opacity:0;transform:translateY(-8px);
+}
+#pv-badge{
+font-family:'DM Mono',monospace;font-size:9px;letter-spacing:.12em;
+padding:3px 8px;border-radius:4px;
+background:rgba(91,127,255,.18);border:1px solid rgba(91,127,255,.3);
+color:var(--accent);text-transform:uppercase;
+}
+#pv-nav{display:flex;gap:6px}
+.nav-btn{
+width:28px;height:28px;border-radius:50%;
+border:1px solid var(--border);
+background:rgba(255,255,255,.06);
+backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+display:flex;align-items:center;justify-content:center;
+cursor:pointer;pointer-events:all;
+color:var(--muted);font-size:11px;
+transition:background .15s;
+}
+.nav-btn:hover{background:rgba(255,255,255,.14)}
+
+/* Bottom info */
+#pv-bot{
+position:absolute;
+bottom:0;left:0;right:0;
+padding:24px 18px 32px;
+opacity:0;transform:translateY(12px);
+}
+#pv-title{font-size:20px;font-weight:700;margin-bottom:5px;line-height:1.2}
+#pv-meta{
+font-family:'DM Mono',monospace;font-size:10px;
+color:var(--muted);letter-spacing:.06em;margin-bottom:12px;
+}
+#pv-actions{display:flex;gap:6px;flex-wrap:wrap}
+.act{
+font-family:'DM Mono',monospace;font-size:9px;
+padding:4px 11px;border-radius:20px;
+border:1px solid var(--border);
+background:rgba(255,255,255,.04);color:var(--muted);
+cursor:pointer;pointer-events:all;transition:all .15s;letter-spacing:.06em;
+}
+.act:hover{border-color:var(--accent);color:var(--accent);background:rgba(91,127,255,.08)}
+.act.p{border-color:var(--accent);color:var(--accent);background:rgba(91,127,255,.12)}
+
+/* ── CLOSE ───────────────────────────────── */
+#close-btn{
+position:fixed;top:10px;right:12px;
+width:30px;height:30px;border-radius:50%;
+background:rgba(255,255,255,.08);
+border:1px solid rgba(255,255,255,.1);
+backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+display:flex;align-items:center;justify-content:center;
+font-size:13px;color:var(--text);
+cursor:pointer;opacity:0;pointer-events:none;z-index:50;
+transition:background .15s;
+}
+#close-btn.show{opacity:1;pointer-events:all}
+#close-btn:hover{background:rgba(255,255,255,.16)}
+
+/* ── LAB ─────────────────────────────────── */
+#lab{
+position:fixed;bottom:12px;left:50%;
+transform:translateX(-50%);
+z-index:45;
+display:flex;flex-wrap:wrap;gap:3px;align-items:center;justify-content:center;
+max-width:calc(100vw - 24px);
+background:rgba(7,7,14,.92);
+border:1px solid var(--border);
+border-radius:28px;padding:7px 14px;
+backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);
+font-family:'DM Mono',monospace;font-size:9px;color:var(--muted);
+transition:opacity .3s,transform .3s;white-space:nowrap;
+}
+#lab.gone{opacity:0;transform:translateX(-50%) translateY(10px);pointer-events:none}
+.lb{
+padding:3px 8px;border-radius:16px;border:1px solid transparent;
+background:transparent;color:var(--muted);
+font-family:'DM Mono',monospace;font-size:9px;
+cursor:pointer;transition:all .15s;letter-spacing:.04em;
+}
+.lb.on{border-color:var(--accent);color:var(--accent);background:rgba(91,127,255,.1)}
+.lb:hover:not(.on){color:var(--text)}
+.lsep{color:rgba(255,255,255,.12);margin:0 3px;pointer-events:none}
+
+/* Depth/persp sliders */
+#sliders{
+display:flex;gap:10px;align-items:center;
+padding-left:8px;margin-left:4px;border-left:1px solid var(--border);
+}
+.sld-wrap{display:flex;align-items:center;gap:4px}
+.sld-lbl{font-size:8px;color:var(--muted)}
+.sld{
+-webkit-appearance:none;appearance:none;
+width:55px;height:2px;background:rgba(255,255,255,.1);
+border-radius:2px;outline:none;cursor:pointer;
+}
+.sld::-webkit-slider-thumb{
+-webkit-appearance:none;width:9px;height:9px;
+border-radius:50%;background:var(--accent);cursor:pointer;
+}
+.sld-val{color:var(--accent);min-width:20px;font-size:9px}
+
+/* ── PATCH v6: keep preview chrome inside the card and reveal it only after the zoom ── */
+.card:hover .card-ui,
+.card.is-active .card-ui,
+.card.is-source-hidden .card-ui,
+.card:hover .card-ui-actions,
+.card.is-active .card-ui-actions,
+.card.is-source-hidden .card-ui-actions,
+.card:hover .card-ui-nav,
+.card.is-active .card-ui-nav,
+.card.is-source-hidden .card-ui-nav{
+opacity:0;
+transform:translateY(0);
+}
+.card .card-ui{
+pointer-events:none;
+opacity:0;
+}
+.card .card-ui-nav,
+.card .card-ui-actions{
+opacity:0;
+}
+.card.detail-ui-visible .card-ui{
+opacity:1;
+}
+.card.detail-ui-visible .card-ui-nav,
+.card.detail-ui-visible .card-ui-actions{
+opacity:1;
+transform:translateY(0);
+}
+.card.is-source-hidden .thumb,
+.card.is-source-hidden .chip,
+.card.is-source-hidden .card-ui{
+opacity:1 !important;
+transition:none !important;
+}
+#detail-proxy{
+display:none !important;
+}
+
+</style>
+
+</head>
+<body>
+
+<div id="header">
+  <div class="logo"><b>C</b>DAPROD · EXPLORER</div>
+  <div class="hdr-r">
+    <span id="ic"></span>
+    <button class="pill on" onclick="setCols(4,this)">4</button>
+    <button class="pill" onclick="setCols(3,this)">3</button>
+    <button class="pill" onclick="setCols(2,this)">2</button>
+  </div>
+</div>
+
+<div id="viewport">
+  <div id="world">
+    <div id="grid"></div>
+  </div>
+</div>
+
+<div id="bar-top"></div>
+<div id="bar-bot"></div>
+
+<div id="preview">
+  <div id="pv-image">
+    <!-- populated per card -->
+  </div>
+  <div id="pv-scrim"></div>
+  <div id="pv-top">
+    <div id="pv-badge">VIDEO</div>
+    <div id="pv-nav">
+      <button class="nav-btn" onclick="stepAsset(-1)">‹</button>
+      <button class="nav-btn" onclick="stepAsset(1)">›</button>
+    </div>
+  </div>
+  <div id="pv-bot">
+    <div id="pv-title"></div>
+    <div id="pv-meta"></div>
+    <div id="pv-actions">
+      <button class="act p">▶ Play</button>
+      <button class="act">⬇ Download</button>
+      <button class="act">+ Select</button>
+      <button class="act">⊕ Program</button>
+    </div>
+  </div>
+</div>
+
+<div id="detail-proxy" aria-hidden="true"></div>
+
+<button id="close-btn" onclick="closeDetail()">✕</button>
+
+<div id="lab">
+  <!-- Ease buttons -->
+  <span class="lsep">EASE</span>
+
+<button class="lb on"  data-ease="power4.inOut"                       onclick="setEase(this)">power4</button>
+<button class="lb"     data-ease="power2.inOut"                       onclick="setEase(this)">power2</button>
+<button class="lb"     data-ease="expo.in"                            onclick="setEase(this)">expo</button>
+<button class="lb"     data-ease="circ.inOut"                         onclick="setEase(this)">circ</button>
+<button class="lb"     data-ease="elastic.out(0.45,0.2)"                 onclick="setEase(this)">elastic</button>
+<button class="lb"     data-ease="back.inOut(2)"                      onclick="setEase(this)">back</button>
+<button class="lb"     data-ease="bounce.out"                         onclick="setEase(this)">bounce</button>
+<button class="lb"     data-ease="steps(8)"                           onclick="setEase(this)">steps</button>
+<button class="lb"     data-ease="slow(0.3,0.7,false)"                onclick="setEase(this)">slow</button>
+<button class="lb"     data-ease="rough({strength:2,points:20,randomize:true})" onclick="setEase(this)">rough</button>
+
+<span class="lsep" style="margin-left:4px">|</span>
+
+  <!-- Sliders -->
+
+  <div id="sliders">
+    <div class="sld-wrap">
+      <span class="sld-lbl">×</span>
+      <input class="sld" id="sc" type="range" min="6" max="28" step="1" value="14"
+        oninput="document.getElementById('sc-val').textContent=this.value;ZS=+this.value">
+      <span class="sld-val" id="sc-val">14</span>
+    </div>
+    <div class="sld-wrap">
+      <span class="sld-lbl">⏱</span>
+      <input class="sld" id="dur" type="range" min=".6" max="4" step=".1" value="2.6"
+        oninput="document.getElementById('dur-val').textContent=(+this.value).toFixed(1);DUR=+this.value">
+      <span class="sld-val" id="dur-val">2.6</span>
+    </div>
+    <div class="sld-wrap">
+      <span class="sld-lbl">z</span>
+      <input class="sld" id="zd" type="range" min="0" max="120" step="5" value="30"
+        oninput="document.getElementById('zd-val').textContent=this.value;setZDepth(+this.value)">
+      <span class="sld-val" id="zd-val">30</span>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── CONFIG ──────────────────────────────────────────────────────
+let EASE = 'power4.inOut';
+let ZS   = 14;
+let DUR  = 2.6;
+const BAR = 0.12;
+
+// ── DATA ────────────────────────────────────────────────────────
+const ASSETS = [
+  {id:1, type:'wide', src:'https://picsum.photos/seed/c1/600/338',  title:'Setup Overview',     meta:'IMG · 3.2 MB · 2024-03-12', badge:'IMAGE'},
+  {id:2, type:'tall', src:'https://picsum.photos/seed/c2/400/711',  title:'Self Portrait',      meta:'IMG · 2.1 MB · 2024-03-11', badge:'IMAGE'},
+  {id:3, type:'sq',   src:'https://picsum.photos/seed/c3/500/500',  title:'Close Up Study',     meta:'VID · 47 MB  · 2024-03-10', badge:'VIDEO'},
+  {id:4, type:'sq',   src:'https://picsum.photos/seed/c4/500/500',  title:'Night Drive',        meta:'VID · 91 MB  · 2024-03-09', badge:'VIDEO'},
+  {id:5, type:'tall', src:'https://picsum.photos/seed/c5/400/711',  title:'Street Sign',        meta:'IMG · 1.4 MB · 2024-03-09', badge:'IMAGE'},
+  {id:6, type:'sq',   src:'https://picsum.photos/seed/c6/500/500',  title:'Trash Day',          meta:'VID · 34 MB  · 2024-03-08', badge:'VIDEO'},
+  {id:7, type:'wide', src:'https://picsum.photos/seed/c7/600/338',  title:'Walking Trail',      meta:'VID · 62 MB  · 2024-03-07', badge:'VIDEO'},
+  {id:8, type:'tall', src:'https://picsum.photos/seed/c8/400/711',  title:'Lava Lamp Green',    meta:'VID · 29 MB  · 2024-03-06', badge:'VIDEO'},
+  {id:9, type:'sq',   src:'https://picsum.photos/seed/c9/500/500',  title:'Kids at Target',     meta:'IMG · 1.9 MB · 2024-03-06', badge:'IMAGE'},
+  {id:10,type:'wide', src:'https://picsum.photos/seed/c10/600/338', title:'Black Car Snow',     meta:'VID · 55 MB  · 2024-03-05', badge:'VIDEO'},
+  {id:11,type:'tall', src:'https://picsum.photos/seed/c11/400/711', title:'Drink Closeup',      meta:'VID · 22 MB  · 2024-03-05', badge:'VIDEO'},
+  {id:12,type:'sq',   src:'https://picsum.photos/seed/c12/500/500', title:'Sand Pour',          meta:'VID · 18 MB  · 2024-03-04', badge:'VIDEO'},
+  {id:13,type:'audio',src:null,                                      title:'Voice Memo 01',      meta:'AUD · 4.2 MB · 2024-03-04', badge:'AUDIO'},
+  {id:14,type:'tall', src:'https://picsum.photos/seed/c14/400/711', title:'Camera Rig',         meta:'IMG · 3.1 MB · 2024-03-03', badge:'IMAGE'},
+  {id:15,type:'wide', src:'https://picsum.photos/seed/c15/600/338', title:'Toys Aisle',         meta:'VID · 77 MB  · 2024-03-03', badge:'VIDEO'},
+  {id:16,type:'sq',   src:'https://picsum.photos/seed/c16/500/500', title:'Lava Lamp Blue',     meta:'VID · 48 MB  · 2024-03-02', badge:'VIDEO'},
+  {id:17,type:'tall', src:'https://picsum.photos/seed/c17/400/711', title:'Smoke Driveway',     meta:'VID · 91 MB  · 2024-03-02', badge:'VIDEO'},
+  {id:18,type:'sq',   src:'https://picsum.photos/seed/c18/500/500', title:'Paulding County',    meta:'IMG · 1.2 MB · 2024-03-01', badge:'IMAGE'},
+  {id:19,type:'audio',src:null,                                      title:'Voice Memo 02',      meta:'AUD · 2.8 MB · 2024-03-01', badge:'AUDIO'},
+  {id:20,type:'tall', src:'https://picsum.photos/seed/c20/400/711', title:'Sunglasses Selfie',  meta:'IMG · 2.3 MB · 2024-02-28', badge:'IMAGE'},
+  {id:21,type:'wide', src:'https://picsum.photos/seed/c21/600/338', title:'Code Screenshot',    meta:'SCN · 0.9 MB · 2024-02-27', badge:'IMAGE'},
+  {id:22,type:'sq',   src:'https://picsum.photos/seed/c22/500/500', title:'Shopping Carts',     meta:'IMG · 1.7 MB · 2024-02-27', badge:'IMAGE'},
+  {id:23,type:'audio',src:null,                                      title:'Voice Memo 03',      meta:'AUD · 6.1 MB · 2024-02-26', badge:'AUDIO'},
+  {id:24,type:'wide', src:'https://picsum.photos/seed/c24/600/338', title:'County Sign Wide',   meta:'IMG · 2.0 MB · 2024-02-26', badge:'IMAGE'},
+  {id:25,type:'sq',   src:'https://picsum.photos/seed/c25/500/500', title:'Holding Device',     meta:'IMG · 1.5 MB · 2024-02-25', badge:'IMAGE'},
+  {id:26,type:'tall', src:'https://picsum.photos/seed/c26/400/711', title:'Concert Lights',     meta:'VID · 48 MB  · 2024-02-25', badge:'VIDEO'},
+  {id:27,type:'audio',src:null,                                      title:'Voice Memo 04',      meta:'AUD · 3.4 MB · 2024-02-24', badge:'AUDIO'},
+  {id:28,type:'sq',   src:'https://picsum.photos/seed/c28/500/500', title:'Document Scan',      meta:'DOC · 0.4 MB · 2024-02-24', badge:'DOC'},
+  {id:29,type:'wide', src:'https://picsum.photos/seed/c29/600/338', title:'Road at Night',      meta:'VID · 61 MB  · 2024-02-23', badge:'VIDEO'},
+  {id:30,type:'tall', src:'https://picsum.photos/seed/c30/400/711', title:'Lava Close',         meta:'VID · 19 MB  · 2024-02-23', badge:'VIDEO'},
+];
+
+// ── STATE ────────────────────────────────────────────────────────
+let isOpen   = false;
+let activeTL = null;
+let focusIdx = -1;
+let mouseRAF = null;
+
+// ── ELEMENTS ─────────────────────────────────────────────────────
+const viewport  = document.getElementById('viewport');
+const world     = document.getElementById('world');
+const gridEl    = document.getElementById('grid');
+const barTop    = document.getElementById('bar-top');
+const barBot    = document.getElementById('bar-bot');
+const preview   = document.getElementById('preview');
+const pvImage   = document.getElementById('pv-image');
+const pvTop     = document.getElementById('pv-top');
+const pvBot     = document.getElementById('pv-bot');
+const pvBadge   = document.getElementById('pv-badge');
+const pvTitle   = document.getElementById('pv-title');
+const pvMeta    = document.getElementById('pv-meta');
+const closeBtn  = document.getElementById('close-btn');
+const headerEl  = document.getElementById('header');
+const labEl     = document.getElementById('lab');
+
+// ── BUILD GRID ───────────────────────────────────────────────────
+function buildGrid(){
+  gridEl.innerHTML = '';
+  document.getElementById('ic').textContent = `${ASSETS.length} items`;
+
+  ASSETS.forEach((a, i) => {
+    const card = document.createElement('div');
+    card.className = `card ${a.type}`;
+    card.dataset.idx = i;
+
+    const thumb = document.createElement('div');
+    thumb.className = 'thumb';
+
+    if(a.type === 'audio'){
+      thumb.innerHTML = `<div class="aico">♪</div><div class="albl">AUDIO</div>`;
+    } else {
+      thumb.innerHTML = `<img src="${a.src}" alt="${a.title}" loading="lazy" draggable="false">`;
+    }
+
+    const chip = document.createElement('div');
+    chip.className = 'chip';
+    chip.textContent = a.badge;
+
+    const cardUi = document.createElement('div');
+    cardUi.className = 'card-ui';
+    cardUi.innerHTML = buildCardUiMarkup(a);
+
+    card.appendChild(thumb);
+    card.appendChild(cardUi);
+    card.appendChild(chip);
+
+    gsap.set(card, {opacity:0, y:12});
+    gsap.to(card, {
+      opacity:1, y:0,
+      duration:.5, ease:'power3.out',
+      delay:.015 * i
+    });
+
+    card.addEventListener('click', () => { if (isOpen) focusDetail(i); else openDetail(i); });
+    gridEl.appendChild(card);
+  });
+}
+
+// ── MOUSE PARALLAX (idle state — reveals 3D depth softly) ────────
+// Tilts the world on mouse move so the layered Z depths become visible
+// as a subtle parallax before any click. This is the "notice depth on angle shift" effect.
+let mx = 0, my = 0;
+const MAX_TILT = 4; // degrees max tilt
+
+document.addEventListener('mousemove', e => {
+  if(isOpen) return;
+  mx = (e.clientX / window.innerWidth  - .5) * 2; // -1 to 1
+  my = (e.clientY / window.innerHeight - .5) * 2; // -1 to 1
+  if(mouseRAF) return;
+  mouseRAF = requestAnimationFrame(applyTilt);
+});
+
+// Touch tilt for mobile
+document.addEventListener('touchmove', e => {
+  if(isOpen || !e.touches[0]) return;
+  const t = e.touches[0];
+  mx = (t.clientX / window.innerWidth  - .5) * 2;
+  my = (t.clientY / window.innerHeight - .5) * 2;
+  if(mouseRAF) return;
+  mouseRAF = requestAnimationFrame(applyTilt);
+}, {passive:true});
+
+function applyTilt(){
+  mouseRAF = null;
+  if(isOpen) return;
+  gsap.to(world, {
+    rotateY:  mx * MAX_TILT,
+    rotateX: -my * MAX_TILT * .6,
+    duration: 1.2,
+    ease: 'power2.out',
+    overwrite:'auto',
+  });
+}
+
+// Reset tilt on leave
+document.addEventListener('mouseleave', () => {
+  if(isOpen) return;
+  gsap.to(world, {rotateX:0, rotateY:0, duration:1.5, ease:'power3.out'});
+});
+
+// —— Added helper
+
+function normalizedRevealEase(ease) {
+  const e = String(ease || '').trim();
+
+  // keep dangerous / chaotic eases away from the main image reveal
+  if (e.startsWith('elastic')) {
+    return {
+      image: 'power3.out',
+      top: 'elastic.out(0.28,0.18)',
+      bot: 'elastic.out(0.22,0.16)',
+    };
+  }
+
+  if (e.startsWith('bounce')) {
+    return {
+      image: 'power3.out',
+      top: 'bounce.out',
+      bot: 'power2.out',
+    };
+  }
+
+  if (e.startsWith('steps')) {
+    return {
+      image: 'steps(6)',
+      top: 'steps(4)',
+      bot: 'steps(4)',
+    };
+  }
+
+  if (e.startsWith('rough')) {
+    return {
+      image: 'power2.out',
+      top: 'rough({ strength: 0.6, points: 12, randomize: true, clamp: true })',
+      bot: 'power2.out',
+    };
+  }
+
+  if (e.startsWith('slow')) {
+    return {
+      image: 'slow(0.3,0.7,false)',
+      top: 'slow(0.2,0.7,false)',
+      bot: 'slow(0.2,0.7,false)',
+    };
+  }
+
+  if (e.startsWith('back')) {
+    return {
+      image: 'power3.out',
+      top: 'back.out(1.2)',
+      bot: 'back.out(1.05)',
+    };
+  }
+
+  // power / circ / expo / sine etc
+  return {
+    image: e,
+    top: e,
+    bot: e,
+  };
+}
+
+
+function buildCardUiMarkup(asset){
+  return `
+    <div class="card-ui-scrim"></div>
+    <div class="card-ui-top">
+      <div class="card-ui-badge">${asset.badge || 'FILE'}</div>
+      <div class="card-ui-nav">
+        <button class="nav-btn" type="button">‹</button>
+        <button class="nav-btn" type="button">›</button>
+      </div>
+    </div>
+    <div class="card-ui-bot">
+      <div class="card-ui-title">${asset.title}</div>
+      <div class="card-ui-meta">${asset.meta}</div>
+      <div class="card-ui-actions">
+        <button class="act p" type="button">▶ Play</button>
+        <button class="act" type="button">⬇ Save</button>
+      </div>
+    </div>
+  `;
+}
+
+function buildProxyMarkup(asset){
+  const media = asset.type === 'audio'
+    ? `
+      <div class="proxy-audio">
+        <div class="big-icon">♪</div>
+        <div class="big-label">AUDIO FILE</div>
+      </div>
+    `
+    : `<img src="${asset.src}" alt="${asset.title}" draggable="false">`;
+
+  return `
+    <div class="proxy-shell">
+      <div class="proxy-media">${media}</div>
+      <div class="proxy-ui">
+        <div class="proxy-scrim"></div>
+        <div class="proxy-top">
+          <div class="proxy-badge">${asset.badge || 'FILE'}</div>
+          <div class="proxy-nav">
+            <button class="nav-btn" type="button" onclick="stepAsset(-1)">‹</button>
+            <button class="nav-btn" type="button" onclick="stepAsset(1)">›</button>
+          </div>
+        </div>
+        <div class="proxy-bot">
+          <div class="proxy-title">${asset.title}</div>
+          <div class="proxy-meta">${asset.meta}</div>
+          <div class="proxy-actions">
+            <button class="act p" type="button">▶ Play</button>
+            <button class="act" type="button">⬇ Download</button>
+            <button class="act" type="button">+ Select</button>
+            <button class="act" type="button">⊕ Program</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function getProxyParts(){
+  return {
+    shell: detailProxy.querySelector('.proxy-shell'),
+    media: detailProxy.querySelector('.proxy-media'),
+    top: detailProxy.querySelector('.proxy-top'),
+    bot: detailProxy.querySelector('.proxy-bot'),
+  };
+}
+
+function buildDetailProxy(asset){
+  detailProxy.innerHTML = buildProxyMarkup(asset);
+  return getProxyParts();
+}
+
+function resetDetailProxy(){
+  detailProxy.classList.remove('open');
+  detailProxy.innerHTML = '';
+  gsap.set(detailProxy, { clearProps:'all', display:'none', opacity:0 });
+}
+
+// ── OPEN DETAIL ──────────────────────────────────────────────────
+
+function getCardUiParts(cardEl){
+  return {
+    ui: cardEl.querySelector('.card-ui'),
+    top: cardEl.querySelector('.card-ui-top'),
+    bot: cardEl.querySelector('.card-ui-bot'),
+    nav: cardEl.querySelector('.card-ui-nav'),
+    actions: cardEl.querySelector('.card-ui-actions'),
+    chip: cardEl.querySelector('.chip'),
+  };
+}
+
+
+function computeFitEndpoint(rect, vpRect, opts = {}){
+  const barH = opts.barH ?? 0;
+  const padX = opts.padX ?? 18;
+  const padTop = opts.padTop ?? 12;
+  const padBottom = opts.padBottom ?? 18;
+  const hudTop = opts.hudTop ?? 42;
+  const hudBottom = opts.hudBottom ?? 126;
+
+  const safeLeft = vpRect.left + padX;
+  const safeTop = vpRect.top + barH + padTop + hudTop;
+  const safeWidth = Math.max(1, vpRect.width - padX * 2);
+  const safeHeight = Math.max(1, vpRect.height - (barH * 2) - padTop - padBottom - hudTop - hudBottom);
+
+  const scaleX = safeWidth / rect.width;
+  const scaleY = safeHeight / rect.height;
+  const targetScale = gsap.utils.clamp(1, 24, Math.min(scaleX, scaleY));
+
+  const rectCX = rect.left + rect.width / 2;
+  const rectCY = rect.top + rect.height / 2;
+  const safeCX = safeLeft + safeWidth / 2;
+  const safeCY = safeTop + safeHeight / 2;
+
+  return {
+    targetScale,
+    targetX: safeCX - rectCX,
+    targetY: safeCY - rectCY,
+    safeWidth,
+    safeHeight,
+    safeCX,
+    safeCY,
+    scaleX,
+    scaleY,
+    axis: scaleX < scaleY ? 'width' : 'height',
+  };
+}
+
+
+// ── OPEN DETAIL ──────────────────────────────────────────────────
+function openDetail(idx){
+  if(isOpen) return;
+  isOpen = true;
+  focusIdx = idx;
+
+  const asset  = ASSETS[idx];
+  const cards  = gridEl.querySelectorAll('.card');
+  const cardEl = cards[idx];
+  const vp     = viewport;
+  const revealEase = normalizedRevealEase(EASE);
+
+  const rect   = cardEl.getBoundingClientRect();
+  const vpRect = vp.getBoundingClientRect();
+
+  const screenCX = rect.left + rect.width / 2;
+  const screenCY = rect.top  + rect.height / 2;
+  const barH = window.innerHeight * BAR;
+
+  const fit = computeFitEndpoint(rect, vpRect, {
+    barH,
+    padX: 18,
+    padTop: 12,
+    padBottom: 18,
+    hudTop: 38,
+    hudBottom: 124,
+  });
+
+  const worldLocalX = screenCX - vpRect.left;
+  const worldLocalY = screenCY - vpRect.top + vp.scrollTop;
+  world.style.transformOrigin = `${worldLocalX}px ${worldLocalY}px`;
+
+  const tx = fit.targetX;
+  const ty = fit.targetY;
+  const targetScale = fit.targetScale;
+  const detailUiScale = gsap.utils.clamp(0.42, 0.78, 1 / Math.sqrt(Math.max(1, targetScale)));
+
+  const cardUi = getCardUiParts(cardEl);
+  cardEl.dataset.fitAxis = fit.axis;
+  cardEl.dataset.fitScale = String(Math.round(targetScale * 1000) / 1000);
+  cardEl.style.setProperty('--detail-ui-scale', String(detailUiScale));
+
+  cardEl.classList.add('is-active');
+  vp.classList.add('locked');
+  labEl.classList.add('gone');
+
+  gsap.set(cardUi.ui,      { opacity:0 });
+  gsap.set(cardUi.top,     { opacity:0, y:-12 });
+  gsap.set(cardUi.bot,     { opacity:0, y:16 });
+  gsap.set(cardUi.nav,     { opacity:0, y:-6 });
+  gsap.set(cardUi.actions, { opacity:0, y:8 });
+  gsap.set(closeBtn,       { opacity:0 });
+  gsap.set(world,          { opacity:1 });
+
+  if(activeTL) activeTL.kill();
+  const tl = gsap.timeline({
+    onComplete(){
+      cardEl.classList.add('detail-ui-visible');
+      gsap.set([cardUi.ui, cardUi.top, cardUi.bot, cardUi.nav, cardUi.actions], { clearProps:'opacity,transform' });
+    }
+  });
+  activeTL = tl;
+
+  tl.to(world, { rotateX:0, rotateY:0, duration:.25, ease:'power3.out' }, 0);
+
+  tl.fromTo(viewport, { scale:1 }, {
+    scale:1.02,
+    duration:DUR * .15,
+    ease:'power2.out',
+    yoyo:true,
+    repeat:1,
+  }, 0);
+
+  tl.to(headerEl, { opacity:0, duration:DUR * .1, ease:'power1.in' }, 0);
+  tl.to(barTop,   { height:barH, duration:DUR * .28, ease:'power2.out' }, DUR * .10);
+  tl.to(barBot,   { height:barH, duration:DUR * .28, ease:'power2.out' }, DUR * .10);
+
+  tl.to(world, {
+    x:tx,
+    y:ty,
+    duration:DUR,
+    ease:'power3.inOut',
+    overwrite:'auto'
+  }, 0);
+
+  tl.to(world, {
+    scale:targetScale,
+    duration:DUR,
+    ease:'power3.inOut',
+    overwrite:'auto'
+  }, 0);
+
+  tl.to(cardUi.chip, {
+    opacity:0,
+    duration:.18,
+    ease:'power2.out',
+    overwrite:'auto'
+  }, DUR * .52);
+
+  tl.to(cardUi.ui, {
+    opacity:1,
+    duration:.01,
+    overwrite:'auto'
+  }, DUR * .58);
+
+  tl.to(cardUi.top, {
+    opacity:1,
+    y:0,
+    duration:.42,
+    ease:revealEase.top,
+    overwrite:'auto'
+  }, DUR * .64);
+
+  tl.to(cardUi.nav, {
+    opacity:1,
+    y:0,
+    duration:.36,
+    ease:'power2.out',
+    overwrite:'auto'
+  }, DUR * .68);
+
+  tl.to(cardUi.bot, {
+    opacity:1,
+    y:0,
+    duration:.46,
+    ease:revealEase.bot,
+    overwrite:'auto'
+  }, DUR * .70);
+
+  tl.to(cardUi.actions, {
+    opacity:1,
+    y:0,
+    duration:.4,
+    ease:'power2.out',
+    overwrite:'auto'
+  }, DUR * .74);
+
+  tl.to(closeBtn, { opacity:1, duration:.24, ease:'power2.out' }, DUR * .66);
+  closeBtn.classList.add('show');
+}
+
+// ── CLOSE ────────────────────────────────────────────────────────
+
+function focusDetail(idx){
+  if(!isOpen){
+    openDetail(idx);
+    return;
+  }
+  if(idx === focusIdx) return;
+
+  const cards = gridEl.querySelectorAll('.card');
+  const prevCard = cards[focusIdx];
+  const nextCard = cards[idx];
+  if(!prevCard || !nextCard) return;
+
+  const prevUi = getCardUiParts(prevCard);
+  const nextUi = getCardUiParts(nextCard);
+  const vpRect = viewport.getBoundingClientRect();
+  const rect = nextCard.getBoundingClientRect();
+  const revealEase = normalizedRevealEase(EASE);
+  const barH = window.innerHeight * BAR;
+
+  const fit = computeFitEndpoint(rect, vpRect, {
+    barH,
+    padX: 18,
+    padTop: 12,
+    padBottom: 18,
+    hudTop: 38,
+    hudBottom: 124,
+  });
+
+  const screenCX = rect.left + rect.width / 2;
+  const screenCY = rect.top  + rect.height / 2;
+
+  const currentX = Number(gsap.getProperty(world, 'x')) || 0;
+  const currentY = Number(gsap.getProperty(world, 'y')) || 0;
+  const currentScale = Math.max(0.0001, Number(gsap.getProperty(world, 'scale')) || 1);
+
+  // Refocus should honor the same fit logic as the initial zoom.
+  // `rect` is already the asset's CURRENT on-screen box inside the zoomed world,
+  // so fit.scaleX / fit.scaleY describe the additional factor needed from *here*
+  // to land the asset inside the same safe focus frame.
+  const refocusFactor = Math.min(fit.scaleX, fit.scaleY);
+  const nextScale = gsap.utils.clamp(1, 24, currentScale * refocusFactor);
+
+  // Preserve the existing transform origin so there is no snap.
+  // Solve the next translation from the current affine state:
+  //   c = T + o + s * (p - o)
+  // where:
+  //   c = current asset center in viewport-relative coords
+  //   T = world translation
+  //   o = current transform origin in world-local coords
+  //   s = current scale
+  // Then solve T2 for the desired safe focus center at s2.
+  const originParts = String(world.style.transformOrigin || '0px 0px')
+    .split(' ')
+    .map(part => parseFloat(part) || 0);
+  const originX = originParts[0] || 0;
+  const originY = originParts[1] || 0;
+
+  const currentCenterX = screenCX - vpRect.left;
+  const currentCenterY = screenCY - vpRect.top;
+  const safeCenterX = fit.safeCX - vpRect.left;
+  const safeCenterY = fit.safeCY - vpRect.top;
+
+  const pointFromOriginX = (currentCenterX - currentX - originX) / currentScale;
+  const pointFromOriginY = (currentCenterY - currentY - originY) / currentScale;
+
+  const nextX = safeCenterX - originX - (nextScale * pointFromOriginX);
+  const nextY = safeCenterY - originY - (nextScale * pointFromOriginY);
+
+  const detailUiScale = gsap.utils.clamp(0.52, 0.92, 1 / Math.sqrt(Math.max(1, nextScale)));
+
+  nextCard.dataset.fitAxis = fit.axis;
+  nextCard.dataset.fitScale = String(Math.round(nextScale * 1000) / 1000);
+  nextCard.style.setProperty('--detail-ui-scale', String(detailUiScale));
+  nextCard.classList.add('is-active');
+
+  gsap.set(nextUi.ui,      { opacity:0 });
+  gsap.set(nextUi.top,     { opacity:0, y:-10 });
+  gsap.set(nextUi.bot,     { opacity:0, y:14 });
+  gsap.set(nextUi.nav,     { opacity:0, y:-6 });
+  gsap.set(nextUi.actions, { opacity:0, y:8 });
+  gsap.set(nextUi.chip,    { opacity:0 });
+
+  if(activeTL) activeTL.kill();
+
+  const travelDur = Math.max(0.45, DUR * 0.62);
+  const tl = gsap.timeline({
+    onComplete(){
+      prevCard.classList.remove('is-active', 'detail-ui-visible');
+      prevCard.style.removeProperty('--detail-ui-scale');
+      nextCard.classList.add('detail-ui-visible');
+      focusIdx = idx;
+
+      gsap.set([prevUi.ui, prevUi.top, prevUi.bot, prevUi.nav, prevUi.actions, prevUi.chip], { clearProps:'opacity,transform' });
+      gsap.set([nextUi.ui, nextUi.top, nextUi.bot, nextUi.nav, nextUi.actions, nextUi.chip], { clearProps:'opacity,transform' });
+    }
+  });
+  activeTL = tl;
+
+  tl.to([prevUi.actions, prevUi.nav, prevUi.top, prevUi.bot], {
+    opacity:0,
+    duration:0.16,
+    ease:'power2.in',
+    overwrite:'auto'
+  }, 0);
+
+  tl.to(prevUi.ui, {
+    opacity:0,
+    duration:0.01,
+    overwrite:'auto'
+  }, 0.12);
+
+  tl.to(world, {
+    x: nextX,
+    y: nextY,
+    scale: nextScale,
+    duration: travelDur,
+    ease: 'power3.inOut',
+    overwrite:'auto'
+  }, 0);
+
+  tl.to(nextUi.ui, {
+    opacity:1,
+    duration:0.01,
+    overwrite:'auto'
+  }, travelDur * 0.52);
+
+  tl.to(nextUi.top, {
+    opacity:1,
+    y:0,
+    duration:0.28,
+    ease:revealEase.top,
+    overwrite:'auto'
+  }, travelDur * 0.60);
+
+  tl.to(nextUi.nav, {
+    opacity:1,
+    y:0,
+    duration:0.24,
+    ease:'power2.out',
+    overwrite:'auto'
+  }, travelDur * 0.64);
+
+  tl.to(nextUi.bot, {
+    opacity:1,
+    y:0,
+    duration:0.30,
+    ease:revealEase.bot,
+    overwrite:'auto'
+  }, travelDur * 0.66);
+
+  tl.to(nextUi.actions, {
+    opacity:1,
+    y:0,
+    duration:0.26,
+    ease:'power2.out',
+    overwrite:'auto'
+  }, travelDur * 0.70);
+}
+
+
+function closeDetail(){
+  if(!isOpen) return;
+
+  const cardEl = gridEl.querySelectorAll('.card')[focusIdx];
+  const cardUi = getCardUiParts(cardEl);
+  const collapseDur = DUR * .65;
+
+  if(activeTL) activeTL.kill();
+
+  const tl = gsap.timeline({
+    onComplete(){
+      isOpen = false;
+      focusIdx = -1;
+      viewport.classList.remove('locked');
+      labEl.classList.remove('gone');
+      closeBtn.classList.remove('show');
+      cardEl.classList.remove('is-active','detail-ui-visible','is-source-hidden');
+      cardEl.style.removeProperty('--detail-ui-scale');
+      gsap.set(world, { clearProps:'x,y,scale,opacity,transformOrigin,rotateX,rotateY' });
+      gsap.set(headerEl, { clearProps:'opacity' });
+      gsap.set(barTop, { clearProps:'height' });
+      gsap.set(barBot, { clearProps:'height' });
+      gsap.set(cardUi.ui,      { clearProps:'opacity' });
+      gsap.set(cardUi.top,     { clearProps:'opacity,y' });
+      gsap.set(cardUi.bot,     { clearProps:'opacity,y' });
+      gsap.set(cardUi.nav,     { clearProps:'opacity,y' });
+      gsap.set(cardUi.actions, { clearProps:'opacity,y' });
+      gsap.set(cardUi.chip,    { clearProps:'opacity' });
+    }
+  });
+  activeTL = tl;
+
+  tl.to([cardUi.actions, cardUi.nav, cardUi.top, cardUi.bot, closeBtn], {
+    opacity:0,
+    duration:.18,
+    ease:'power2.in'
+  }, 0);
+
+  tl.to(cardUi.ui, {
+    opacity:0,
+    duration:.01
+  }, .18);
+
+  tl.to(barTop, { height:0, duration:collapseDur * .72, ease:'power3.inOut' }, .04);
+  tl.to(barBot, { height:0, duration:collapseDur * .72, ease:'power3.inOut' }, .04);
+  tl.to(headerEl, { opacity:1, duration:.30, ease:'power2.out' }, .12);
+
+  tl.to(world, {
+    x:0,
+    y:0,
+    scale:1,
+    duration:collapseDur,
+    ease:'power3.inOut',
+    overwrite:'auto'
+  }, .06);
+
+  tl.to(cardUi.chip, {
+    opacity:1,
+    duration:.16,
+    ease:'power2.out',
+    overwrite:'auto'
+  }, collapseDur * .48);
+}
+
+function stepAsset(dir){
+  if(!isOpen) return;
+  const next = (focusIdx + dir + ASSETS.length) % ASSETS.length;
+  focusDetail(next);
+}
+
+function setZDepth(val){
+  const thumb = val;
+  const overlay = val * 2.2;
+  document.documentElement.style.setProperty('--z-thumb',   `${thumb}px`);
+  document.documentElement.style.setProperty('--z-overlay', `${overlay}px`);
+}
+
+// ── UTILS ────────────────────────────────────────────────────────
+function setCols(n, btn){
+  gridEl.style.columns = n;
+  document.querySelectorAll('.pill').forEach(p => p.classList.remove('on'));
+  btn.classList.add('on');
+}
+function setEase(btn){
+  EASE = btn.dataset.ease;
+  document.querySelectorAll('.lb').forEach(b => b.classList.remove('on'));
+  btn.classList.add('on');
+}
+
+// ESC
+document.addEventListener('keydown', e => { if(e.key==='Escape') closeDetail(); });
+
+// Init
+gsap.set(preview, {opacity:0});
+gsap.set(pvTop,   {opacity:0, y:-8});
+gsap.set(pvBot,   {opacity:0, y:12});
+gsap.set(closeBtn,{opacity:0});
+buildGrid();
+</script>
+
+</body>
+</html>

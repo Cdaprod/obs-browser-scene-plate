@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Explorer — World Camera (Stable)</title>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+
+<style>
+* { box-sizing: border-box; margin:0; padding:0; }
+
+:root{
+  --bg:#09090f;
+  --card:#111120;
+  --border:rgba(255,255,255,.08);
+  --text:#e8e8f0;
+  --muted:rgba(255,255,255,.4);
+  --accent:#5b7fff;
+}
+
+body{
+  background:var(--bg);
+  color:var(--text);
+  font-family:sans-serif;
+  overflow:hidden;
+}
+
+/* HEADER */
+#header{
+  position:fixed; top:0; left:0; right:0;
+  height:48px;
+  display:flex; align-items:center; justify-content:space-between;
+  padding:0 12px;
+  background:rgba(9,9,15,.7);
+  backdrop-filter:blur(10px);
+  z-index:50;
+}
+
+/* VIEWPORT */
+#viewport{
+  position:fixed;
+  top:48px; bottom:0; left:0; right:0;
+  overflow:auto;
+}
+
+#viewport.lock{
+  overflow:hidden;
+}
+
+/* WORLD */
+#world{
+  padding:6px;
+  transform-origin:center;
+  will-change:transform;
+}
+
+/* GRID */
+#grid{
+  columns:4;
+  column-gap:6px;
+}
+
+/* CARD */
+.card{
+  break-inside:avoid;
+  margin-bottom:6px;
+  background:var(--card);
+  border:1px solid var(--border);
+  border-radius:10px;
+  overflow:hidden;
+  cursor:pointer;
+  position:relative;
+  pointer-events:auto;
+}
+
+.card img{
+  width:100%;
+  display:block;
+}
+
+.card.focus{
+  z-index:10;
+  box-shadow:0 30px 120px rgba(0,0,0,.5);
+}
+
+/* OVERLAY */
+.overlay{
+  position:absolute;
+  bottom:0; left:0; right:0;
+  padding:10px;
+  background:linear-gradient(to top, rgba(0,0,0,.8), transparent);
+  font-size:11px;
+  transition:.2s;
+}
+
+.preview{
+  position:absolute;
+  inset:0;
+  display:flex;
+  flex-direction:column;
+  justify-content:flex-end;
+  padding:20px;
+  background:linear-gradient(to top, rgba(0,0,0,.9), transparent);
+  opacity:0;
+  transform:translateY(10px);
+}
+
+/* HUD (DOES NOT BLOCK CLICKS) */
+#hud{
+  position:fixed;
+  inset:0;
+  pointer-events:none;
+  z-index:30;
+}
+
+#scrim{
+  position:absolute;
+  inset:0;
+  background:rgba(0,0,0,.5);
+  opacity:0;
+}
+
+/* CLOSE */
+#close{
+  position:fixed;
+  top:10px; right:10px;
+  width:32px; height:32px;
+  border-radius:50%;
+  background:rgba(255,255,255,.1);
+  display:flex; align-items:center; justify-content:center;
+  cursor:pointer;
+  opacity:0;
+  pointer-events:none;
+  z-index:60;
+}
+#close.show{
+  opacity:1;
+  pointer-events:auto;
+}
+
+/* DISABLE NON-FOCUSED */
+#world.focused .card:not(.focus){
+  pointer-events:none;
+}
+</style>
+</head>
+
+<body>
+
+<div id="header">EXPLORER</div>
+
+<div id="viewport">
+  <div id="world">
+    <div id="grid"></div>
+  </div>
+</div>
+
+<div id="hud">
+  <div id="scrim"></div>
+</div>
+
+<div id="close">✕</div>
+
+<script>
+const grid = document.getElementById('grid');
+const world = document.getElementById('world');
+const viewport = document.getElementById('viewport');
+const scrim = document.getElementById('scrim');
+const closeBtn = document.getElementById('close');
+
+let open = false;
+let activeCard = null;
+
+/* BUILD */
+for(let i=0;i<30;i++){
+  const card = document.createElement('div');
+  card.className = 'card';
+
+  card.innerHTML = `
+    <img src="https://picsum.photos/seed/${i}/600/400"/>
+    <div class="overlay">Asset ${i}</div>
+    <div class="preview">
+      <h3>Asset ${i}</h3>
+      <p>Preview mode</p>
+    </div>
+  `;
+
+  card.onclick = () => focus(card);
+  grid.appendChild(card);
+}
+
+/* FOCUS */
+function focus(card){
+  if(open) return;
+  open = true;
+  activeCard = card;
+
+  const r = card.getBoundingClientRect();
+
+  const cx = r.left + r.width/2;
+  const cy = r.top + r.height/2;
+
+  const tx = window.innerWidth/2 - cx;
+  const ty = window.innerHeight/2 - cy;
+
+  const scale = window.innerWidth / r.width;
+
+  world.style.transformOrigin = `${cx}px ${cy}px`;
+
+  card.classList.add('focus');
+  world.classList.add('focused');
+  viewport.classList.add('lock');
+
+  gsap.to(world,{
+    x:tx,
+    y:ty,
+    scale:scale,
+    duration:1,
+    ease:'power4.inOut'
+  });
+
+  gsap.to(scrim,{opacity:.6,duration:.4});
+  gsap.to(card.querySelector('.preview'),{opacity:1,y:0,duration:.4,delay:.3});
+  gsap.to(closeBtn,{opacity:1,duration:.3});
+  closeBtn.classList.add('show');
+}
+
+/* CLOSE */
+function close(){
+  if(!open) return;
+
+  gsap.killTweensOf(world);
+
+  const preview = activeCard.querySelector('.preview');
+
+  gsap.to(preview,{opacity:0,y:10,duration:.2});
+  gsap.to(scrim,{opacity:0,duration:.3});
+  gsap.to(closeBtn,{opacity:0,duration:.2});
+
+  gsap.to(world,{
+    x:0,y:0,scale:1,
+    duration:1,
+    ease:'power4.inOut',
+    onComplete:()=>{
+      activeCard.classList.remove('focus');
+      world.classList.remove('focused');
+      viewport.classList.remove('lock');
+      closeBtn.classList.remove('show');
+      open=false;
+      activeCard=null;
+    }
+  });
+}
+
+closeBtn.onclick = close;
+scrim.onclick = close;
+
+</script>
+</body>
+</html>

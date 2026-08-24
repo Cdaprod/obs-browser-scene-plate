@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>TileFX Preview</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+:root{
+  --bg:#07090d;
+  --gap:2px;
+  --vh:205;--ih:275;--ah:42;
+  --vc:hsl(205,88%,58%);--ic:hsl(275,75%,65%);--ac:hsl(42,95%,56%);
+}
+html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);
+  font-family:-apple-system,'SF Pro Text',system-ui,sans-serif;color:#c9d8f0;}
+
+/* WebGL layer */
+#glc{position:fixed;inset:0;pointer-events:none;z-index:0;
+  opacity:0;transition:opacity 0.7s ease;}
+#glc.ready{opacity:1;}
+
+/* scroll container */
+#scroll{position:fixed;inset:0;overflow-y:auto;overflow-x:hidden;
+  -webkit-overflow-scrolling:touch;z-index:1;}
+#scroll::-webkit-scrollbar{display:none;}
+
+/* chrome */
+#chrome{position:sticky;top:0;z-index:20;
+  background:linear-gradient(180deg,rgba(7,9,13,.97) 78%,transparent);
+  padding:env(safe-area-inset-top,14px) 14px 10px;
+  padding-top:max(env(safe-area-inset-top),14px);
+  display:flex;align-items:center;gap:10px;}
+#chrome h1{flex:1;font-size:17px;font-weight:600;letter-spacing:-.01em;color:#e2ecff;}
+.tog{display:flex;gap:1px;background:rgba(255,255,255,.05);
+  border:1px solid rgba(255,255,255,.07);border-radius:8px;padding:2px;}
+.tbtn{background:transparent;border:none;color:rgba(200,216,240,.38);
+  font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+  padding:5px 10px;border-radius:6px;cursor:pointer;transition:all .16s;}
+.tbtn.on{background:rgba(255,255,255,.09);color:#e2ecff;}
+
+/* legend */
+.leg{display:flex;gap:12px;padding:4px 14px 8px;}
+.li{display:flex;align-items:center;gap:5px;
+  font-size:9px;letter-spacing:.09em;text-transform:uppercase;
+  color:rgba(180,200,240,.4);}
+.ld{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
+
+/* grid */
+#grid{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--gap);
+  padding:0 var(--gap) 80px;}
+
+/* tile */
+.tile{position:relative;aspect-ratio:1;overflow:hidden;cursor:pointer;
+  border-radius:1px;background:#0c0f16;z-index:1;
+  transition:transform .15s cubic-bezier(.22,1,.36,1);}
+.tile:active{transform:scale(.97);}
+.tile-fill{position:absolute;inset:0;z-index:0;border-radius:1px;}
+.tile-thumb{position:absolute;inset:0;width:100%;height:100%;
+  object-fit:cover;opacity:0;transition:opacity .5s ease;z-index:1;border-radius:1px;}
+.tile-thumb.ok{opacity:.76;}
+.tile-badge{position:absolute;top:5px;left:5px;font-size:8px;font-weight:700;
+  letter-spacing:.08em;text-transform:uppercase;padding:2px 6px;border-radius:3px;
+  z-index:5;line-height:1.6;}
+.tile-name{position:absolute;bottom:0;left:0;right:0;padding:18px 5px 5px;
+  font-size:7.5px;font-weight:500;color:rgba(220,235,255,.72);
+  background:linear-gradient(transparent,rgba(5,7,12,.9));
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;z-index:5;}
+.tile-size{position:absolute;bottom:5px;right:5px;font-size:7px;
+  color:rgba(180,200,240,.38);z-index:5;letter-spacing:.04em;}
+.tile-check{position:absolute;top:5px;right:5px;width:17px;height:17px;
+  border-radius:50%;border:1.5px solid rgba(255,255,255,.22);z-index:5;transition:all .15s;}
+.tile.sel .tile-check{background:#4af0c0;border-color:#4af0c0;}
+.tile.sel .tile-check::after{content:'';display:block;width:5px;height:8px;
+  border-right:1.5px solid #06080c;border-bottom:1.5px solid #06080c;
+  transform:rotate(45deg) translate(-1px,-1px);margin:1px auto 0;}
+.tile-play{position:absolute;inset:0;display:flex;align-items:center;
+  justify-content:center;z-index:4;pointer-events:none;}
+.tile-play svg{opacity:.5;filter:drop-shadow(0 1px 5px rgba(0,0,0,.8));}
+.tile-wave{position:absolute;inset:0;display:flex;align-items:center;
+  justify-content:center;gap:2px;z-index:2;}
+.tile-wave span{width:2.5px;border-radius:2px;opacity:.5;
+  animation:wv var(--d,.9s) ease-in-out infinite alternate;
+  animation-delay:var(--dl,0s);}
+@keyframes wv{0%{transform:scaleY(.25)}100%{transform:scaleY(1)}}
+
+/* type fills */
+.tile[data-type=video] .tile-fill{
+  background:radial-gradient(ellipse at 35% 45%,hsl(205,55%,18%),hsl(205,35%,6%));}
+.tile[data-type=video] .tile-badge{
+  background:hsla(205,70%,30%,.45);color:hsl(205,80%,72%);
+  border:1px solid hsla(205,65%,55%,.22);}
+.tile[data-type=image] .tile-fill{
+  background:radial-gradient(ellipse at 60% 35%,hsl(275,45%,20%),hsl(275,30%,7%));}
+.tile[data-type=image] .tile-badge{
+  background:hsla(275,55%,32%,.45);color:hsl(275,70%,78%);
+  border:1px solid hsla(275,55%,60%,.22);}
+.tile[data-type=audio] .tile-fill{
+  background:radial-gradient(ellipse at 50% 60%,hsl(42,60%,18%),hsl(42,40%,6%));}
+.tile[data-type=audio] .tile-badge{
+  background:hsla(42,75%,28%,.45);color:hsl(42,90%,62%);
+  border:1px solid hsla(42,70%,50%,.22);}
+
+/* list mode */
+.list-mode #grid{grid-template-columns:1fr;}
+.list-mode .tile{aspect-ratio:unset;height:60px;display:flex;
+  align-items:center;gap:10px;padding:0 10px;}
+.list-mode .tile-fill{width:44px;height:44px;flex-shrink:0;
+  border-radius:4px;position:relative;inset:unset;}
+.list-mode .tile-thumb{width:44px;height:44px;flex-shrink:0;
+  border-radius:4px;position:relative;inset:unset;}
+.list-mode .tile-badge{position:relative;top:unset;left:unset;font-size:8px;}
+.list-mode .tile-name{position:relative;bottom:unset;left:unset;right:unset;
+  background:none;color:rgba(220,235,255,.7);font-size:11px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  padding:0;flex:1;}
+.list-mode .tile-size{position:relative;bottom:unset;right:unset;
+  font-size:9px;flex-shrink:0;}
+.list-mode .tile-check{position:relative;top:unset;right:unset;flex-shrink:0;}
+.list-mode .tile-play,.list-mode .tile-wave{display:none;}
+
+/* info bar */
+#bar{position:fixed;bottom:0;left:0;right:0;
+  padding:10px 16px max(env(safe-area-inset-bottom),16px);
+  background:linear-gradient(transparent,rgba(7,9,13,.96));
+  z-index:20;display:flex;align-items:center;justify-content:space-between;
+  font-size:9.5px;color:rgba(180,200,240,.3);letter-spacing:.05em;}
+</style>
+</head>
+<body>
+
+<canvas id="glc"></canvas>
+
+<div id="scroll">
+  <div id="chrome">
+    <h1>Media</h1>
+    <div class="tog">
+      <button class="tbtn on" id="b-fx">FX</button>
+      <button class="tbtn"    id="b-grid">Grid</button>
+      <button class="tbtn"    id="b-list">List</button>
+    </div>
+  </div>
+  <div class="leg">
+    <div class="li"><span class="ld" style="background:var(--vc)"></span>Video</div>
+    <div class="li"><span class="ld" style="background:var(--ic)"></span>Image</div>
+    <div class="li"><span class="ld" style="background:var(--ac)"></span>Audio</div>
+  </div>
+  <div id="grid"></div>
+</div>
+
+<div id="bar">
+  <span>WebGL · persistent glow · merged clusters</span>
+  <span id="bcount"></span>
+</div>
+
+<script>
+// ─── asset data (mirrors your real explorer) ──────────────────
+const DATA = [
+  {k:'v1', t:'video', n:'compiled.mp4',           s:'13 mb',  p:null},
+  {k:'v2', t:'video', n:'compose-1771875756.mp4',  s:'127 mb', p:null},
+  {k:'v3', t:'video', n:'compose-1771875671.mp4',  s:'266 mb', p:null},
+  {k:'v4', t:'video', n:'IMG_8742.MOV',            s:'75 mb',  p:'https://picsum.photos/seed/v4/180/180'},
+  {k:'v5', t:'video', n:'ScreenRecording_02-16',   s:'43 mb',  p:null},
+  {k:'i1', t:'image', n:'debug_first_frame.png',   s:'420 kb', p:'https://picsum.photos/seed/i1/180/180'},
+  {k:'v6', t:'video', n:'copy_52F30171-AB77.mp4',  s:'284 mb', p:'https://picsum.photos/seed/v6/180/180'},
+  {k:'v7', t:'video', n:'copy_D9313B00-6A84.mp4',  s:'315 mb', p:'https://picsum.photos/seed/v7/180/180'},
+  {k:'v8', t:'video', n:'manual_test.mov',         s:'46 mb',  p:null},
+  {k:'v9', t:'video', n:'render_preview.mp4',      s:'23 kb',  p:null},
+  {k:'v10',t:'video', n:'render.mov',              s:'23 kb',  p:null},
+  {k:'v11',t:'video', n:'copy_2346AFD0-95C3.mp4',  s:'395 mb', p:'https://picsum.photos/seed/v11/180/180'},
+  {k:'v12',t:'video', n:'copy_5A249C5C.mp4',       s:'26 mb',  p:'https://picsum.photos/seed/v12/180/180'},
+  {k:'a1', t:'audio', n:'cvilni-violin-302858.m4a', s:'6.0 mb', p:null},
+  {k:'a2', t:'audio', n:'electro-synth-155475.mp3', s:'2.7 mb', p:null},
+  {k:'a3', t:'audio', n:'synth-wave-300494.mp3',   s:'8.5 mb', p:null},
+  {k:'v13',t:'video', n:'ZZV-1914.mov',            s:'208 mb', p:'https://picsum.photos/seed/v13/180/180'},
+  {k:'v14',t:'video', n:'ZZV-1856-copy.mov',       s:'73 mb',  p:'https://picsum.photos/seed/v14/180/180'},
+  {k:'i2', t:'image', n:'screenshot_01.png',       s:'1.2 mb', p:'https://picsum.photos/seed/i2/180/180'},
+  {k:'i3', t:'image', n:'screenshot_02.png',       s:'980 kb', p:'https://picsum.photos/seed/i3/180/180'},
+  {k:'v15',t:'video', n:'export_final.mp4',        s:'512 mb', p:'https://picsum.photos/seed/v15/180/180'},
+  {k:'a4', t:'audio', n:'ambient-loop-01.mp3',     s:'4.1 mb', p:null},
+  {k:'a5', t:'audio', n:'drums-break-88.wav',      s:'3.3 mb', p:null},
+  {k:'i4', t:'image', n:'poster_frame.jpg',        s:'220 kb', p:'https://picsum.photos/seed/i4/180/180'},
+  {k:'v16',t:'video', n:'raw_footage_B.mov',       s:'1.1 gb', p:'https://picsum.photos/seed/v16/180/180'},
+  {k:'i5', t:'image', n:'thumbnail_alt.png',       s:'88 kb',  p:'https://picsum.photos/seed/i5/180/180'},
+  {k:'i6', t:'image', n:'frame_export_01.png',     s:'340 kb', p:'https://picsum.photos/seed/i6/180/180'},
+];
+
+// ─── type → hue ──────────────────────────────────────────────
+const TH = {video:205, image:275, audio:42};
+
+function hsl2rgb(h,s,l){
+  h/=360;s/=100;l/=100;
+  const a=s*Math.min(l,1-l);
+  const f=n=>{const k=(n+h*12)%12;return l-a*Math.max(-1,Math.min(k-3,9-k,1));};
+  return [f(0),f(8),f(4)];
+}
+const TRGB = {
+  video: hsl2rgb(TH.video,85,58),
+  image: hsl2rgb(TH.image,72,65),
+  audio: hsl2rgb(TH.audio,92,56),
+};
+
+// ─── build DOM ───────────────────────────────────────────────
+const grid = document.getElementById('grid');
+const els  = [];
+
+DATA.forEach((a,i)=>{
+  const el = document.createElement('div');
+  el.className    = 'tile';
+  el.dataset.type = a.t;
+  el.dataset.idx  = i;
+
+  const waveBars = a.t==='audio'
+    ? Array.from({length:10},(_,j)=>`<span style="--d:${(.6+Math.random()*.8).toFixed(2)}s;--dl:${(j*.08).toFixed(2)}s;height:${14+Math.round(Math.random()*28)}px;background:hsl(${TH.audio},88%,60%)"></span>`).join('')
+    : '';
+
+  el.innerHTML=`
+    <div class="tile-fill"></div>
+    ${a.t==='video'?`<div class="tile-play"><svg width="22" height="22" viewBox="0 0 22 22"><circle cx="11" cy="11" r="10.5" stroke="rgba(255,255,255,.25)" stroke-width="1" fill="none"/><path d="M9 7.5L15.5 11L9 14.5V7.5Z" fill="rgba(255,255,255,.68)"/></svg></div>`:''}
+    ${a.t==='audio'?`<div class="tile-wave">${waveBars}</div>`:''}
+    <span class="tile-badge">${a.t}</span>
+    <div class="tile-name">${a.n}</div>
+    <div class="tile-size">${a.s}</div>
+    <div class="tile-check"></div>
+  `;
+
+  if(a.p){
+    const img=document.createElement('img');
+    img.className='tile-thumb';
+    img.loading='lazy';
+    img.onload=()=>{img.classList.add('ok');a._ready=true;};
+    img.src=a.p;
+    el.insertBefore(img,el.firstChild);
+  }
+
+  el.addEventListener('pointerdown',()=>el.classList.toggle('sel'));
+  grid.appendChild(el);
+  els.push(el);
+  a._el=el;
+});
+
+document.getElementById('bcount').textContent=DATA.length+' assets';
+
+// ─── WebGL ───────────────────────────────────────────────────
+const canvas=document.getElementById('glc');
+const gl=canvas.getContext('webgl',{alpha:true,antialias:false,premultipliedAlpha:false});
+
+const dpr=Math.min(window.devicePixelRatio||1,2);
+
+function resize(){
+  canvas.width =Math.round(window.innerWidth*dpr);
+  canvas.height=Math.round(window.innerHeight*dpr);
+  canvas.style.width =window.innerWidth+'px';
+  canvas.style.height=window.innerHeight+'px';
+}
+resize();
+window.addEventListener('resize',resize);
+
+if(!gl){console.warn('no webgl');canvas.remove();}
+else{
+  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL,false);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,false);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);
+
+  // ── vertex shader ──────────────────────────────────────────
+  const VS=`
+    attribute vec2 a_pos;
+    uniform vec4  u_rect;    /* x,y,w,h px (physical) */
+    uniform vec4  u_col;     /* r,g,b,_ */
+    uniform float u_flags;   /* sel*1 + loaded*4 */
+    uniform vec4  u_adj;     /* hideTop,hideRight,hideBot,hideLeft */
+    uniform vec2  u_res;
+    varying vec2  v_uv;
+    varying vec4  v_col;
+    varying float v_flags;
+    varying vec4  v_adj;
+    varying vec2  v_sz;
+    void main(){
+      v_uv   = a_pos*.5+.5;
+      v_col  = u_col;
+      v_flags= u_flags;
+      v_adj  = u_adj;
+      v_sz   = u_rect.zw;
+      vec2 px= u_rect.xy+(a_pos*.5+.5)*u_rect.zw;
+      vec2 nd= px/u_res*2.-1.;
+      nd.y  = -nd.y;
+      gl_Position=vec4(nd,0,1);
+    }
+  `;
+
+  // ── fragment shader ────────────────────────────────────────
+  // Key ideas:
+  //   • Per-edge outline that respects adjacency (no border between same-type neighbours)
+  //   • Persistent ambient fill glow (never goes to 0)
+  //   • Breathing animation (slow idle)
+  //   • Selection boosts intensity + pulse frequency
+  //   • Corner softening where edges are suppressed
+  const FS=`
+    precision mediump float;
+    varying vec2  v_uv;
+    varying vec4  v_col;
+    varying float v_flags;
+    varying vec4  v_adj;
+    varying vec2  v_sz;
+    uniform float u_time;
+    uniform float u_dpr;
+
+    void main(){
+      float sel   = step(.5, mod(v_flags,    2.));
+      float loaded= step(.5, mod(v_flags/4., 2.));
+
+      float spd   = .45 + sel*1.4;
+      float ph    = u_time * spd;
+
+      /* ambient center bloom */
+      vec2  c   = v_uv-.5;
+      float d   = length(c*2.);              /* 0 center, 1.41 corner */
+      float amb = 1.-smoothstep(.0,.95,d);
+      float bth = .8+.2*sin(ph+d*2.5);       /* breathing */
+
+      /* per-edge thickness in px */
+      float lw  = 1.3/u_dpr;                 /* hard line 1 physical px */
+      float gw  = 7./u_dpr;                  /* soft glow band */
+
+      float dT  = v_uv.y        * v_sz.y;
+      float dB  = (1.-v_uv.y)   * v_sz.y;
+      float dL  = v_uv.x        * v_sz.x;
+      float dR  = (1.-v_uv.x)   * v_sz.x;
+
+      /* show only exterior edges */
+      float sT  = 1.-v_adj.x;
+      float sR  = 1.-v_adj.y;
+      float sB  = 1.-v_adj.z;
+      float sL  = 1.-v_adj.w;
+
+      float line =
+        sT*(1.-smoothstep(0.,lw,dT)) +
+        sR*(1.-smoothstep(0.,lw,dR)) +
+        sB*(1.-smoothstep(0.,lw,dB)) +
+        sL*(1.-smoothstep(0.,lw,dL));
+      line = clamp(line,0.,1.);
+
+      float halo =
+        sT*(1.-smoothstep(0.,gw,dT)) +
+        sR*(1.-smoothstep(0.,gw,dR)) +
+        sB*(1.-smoothstep(0.,gw,dB)) +
+        sL*(1.-smoothstep(0.,gw,dL));
+      halo = clamp(halo,0.,1.);
+
+      /* corner kill: hide glow in inner corners of merged clusters */
+      float ck = 1.
+        -(1.-sT)*(1.-sL)*smoothstep(0.,10./u_dpr,length(vec2(dL,dT)))
+        -(1.-sT)*(1.-sR)*smoothstep(0.,10./u_dpr,length(vec2(dR,dT)))
+        -(1.-sB)*(1.-sL)*smoothstep(0.,10./u_dpr,length(vec2(dL,dB)))
+        -(1.-sB)*(1.-sR)*smoothstep(0.,10./u_dpr,length(vec2(dR,dB)));
+      ck = clamp(ck,0.,1.);
+
+      line *= ck;
+      halo *= ck;
+
+      float selB  = sel*(.35+.22*sin(ph*2.2));
+
+      /* fill: very faint, always present, comes up on load */
+      float fill  = amb*.06*bth*(0.5+loaded*.5) + sel*amb*.14*bth;
+
+      /* line: sharp, bright */
+      float ledge = line*(.78+selB)*(0.35+loaded*.65)*bth;
+
+      /* halo: soft bloom */
+      float hledge= halo*(.20+selB*.15)*bth*(0.3+loaded*.7);
+
+      float a = clamp(fill+ledge+hledge, 0., .92);
+      gl_FragColor= vec4(v_col.rgb, a);
+    }
+  `;
+
+  function mkShader(src,type){
+    const s=gl.createShader(type);
+    gl.shaderSource(s,src);gl.compileShader(s);
+    if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw gl.getShaderInfoLog(s);
+    return s;
+  }
+  const prog=gl.createProgram();
+  gl.attachShader(prog,mkShader(VS,gl.VERTEX_SHADER));
+  gl.attachShader(prog,mkShader(FS,gl.FRAGMENT_SHADER));
+  gl.linkProgram(prog);
+  if(!gl.getProgramParameter(prog,gl.LINK_STATUS))throw gl.getProgramInfoLog(prog);
+  gl.useProgram(prog);
+
+  const U={
+    res:  gl.getUniformLocation(prog,'u_res'),
+    rect: gl.getUniformLocation(prog,'u_rect'),
+    col:  gl.getUniformLocation(prog,'u_col'),
+    flags:gl.getUniformLocation(prog,'u_flags'),
+    adj:  gl.getUniformLocation(prog,'u_adj'),
+    time: gl.getUniformLocation(prog,'u_time'),
+    dpr:  gl.getUniformLocation(prog,'u_dpr'),
+  };
+  const A_POS=gl.getAttribLocation(prog,'a_pos');
+
+  const qbuf=gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER,qbuf);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
+
+  // ── adjacency ─────────────────────────────────────────────
+  const COLS=3;
+  let adjCache=null;
+
+  function buildAdj(){
+    const n=els.length;
+    const adj=Array.from({length:n},()=>[0,0,0,0]);
+    for(let i=0;i<n;i++){
+      const t=els[i].dataset.type;
+      const row=Math.floor(i/COLS), col=i%COLS;
+      const above=i-COLS, below=i+COLS, left=i-1, right=i+1;
+      if(above>=0 && els[above].dataset.type===t) adj[i][0]=1;   // top hidden
+      if(col<COLS-1 && els[right] && els[right].dataset.type===t) adj[i][1]=1; // right hidden
+      if(below<n && els[below].dataset.type===t) adj[i][2]=1;    // bot hidden
+      if(col>0 && els[left].dataset.type===t) adj[i][3]=1;       // left hidden
+    }
+    return adj;
+  }
+
+  // ── render loop ───────────────────────────────────────────
+  const scroll=document.getElementById('scroll');
+  let t0=null;
+  let fxMode=true;
+
+  function frame(ts){
+    if(!t0)t0=ts;
+    const t=(ts-t0)*.001;
+    const W=canvas.width,H=canvas.height;
+
+    gl.viewport(0,0,W,H);
+    gl.clearColor(0,0,0,0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.useProgram(prog);
+
+    gl.uniform2f(U.res,W,H);
+    gl.uniform1f(U.time,t);
+    gl.uniform1f(U.dpr,dpr);
+
+    if(!adjCache) adjCache=buildAdj();
+
+    const vpH=window.innerHeight;
+    const ovs=80;
+
+    gl.bindBuffer(gl.ARRAY_BUFFER,qbuf);
+    gl.enableVertexAttribArray(A_POS);
+    gl.vertexAttribPointer(A_POS,2,gl.FLOAT,false,0,0);
+
+    els.forEach((el,i)=>{
+      const r=el.getBoundingClientRect();
+      if(r.bottom<-ovs||r.top>vpH+ovs) return;
+
+      const type =el.dataset.type;
+      const rgb  =TRGB[type]||[.5,.5,.5];
+      const sel  =el.classList.contains('sel')?1:0;
+      const ready=DATA[i]._ready?1:0;
+      const flags=sel+ready*4;
+      const adj  =adjCache[i]||[0,0,0,0];
+
+      gl.uniform4f(U.rect, r.left*dpr, r.top*dpr, r.width*dpr, r.height*dpr);
+      gl.uniform4f(U.col,  rgb[0],rgb[1],rgb[2],0);
+      gl.uniform1f(U.flags,flags);
+      gl.uniform4f(U.adj,  adj[0],adj[1],adj[2],adj[3]);
+
+      gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+    });
+
+    requestAnimationFrame(frame);
+  }
+
+  setTimeout(()=>canvas.classList.add('ready'),180);
+  requestAnimationFrame(frame);
+
+  window.addEventListener('resize',()=>{adjCache=null;});
+
+  // ── mode toggle ───────────────────────────────────────────
+  const body=document.body;
+  function setMode(m){
+    document.querySelectorAll('.tbtn').forEach(b=>b.classList.remove('on'));
+    document.getElementById('b-'+m).classList.add('on');
+    body.classList.remove('list-mode');
+    if(m==='fx'){
+      canvas.style.opacity='1';
+      adjCache=null;
+    } else if(m==='grid'){
+      canvas.style.opacity='0';
+    } else {
+      canvas.style.opacity='0';
+      body.classList.add('list-mode');
+    }
+    // rebuild adjacency for new layout
+    if(m!=='list') setTimeout(()=>{adjCache=null;},50);
+  }
+
+  document.getElementById('b-fx').onclick  =()=>setMode('fx');
+  document.getElementById('b-grid').onclick=()=>setMode('grid');
+  document.getElementById('b-list').onclick=()=>setMode('list');
+}
+</script>
+</body>
+</html>

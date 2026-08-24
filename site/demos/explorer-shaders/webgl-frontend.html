@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Explorer — WebGL AssetGrid Prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@800&family=DM+Mono:ital,wght@1,300;0,400&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+–mint: #4fffce;
+–mint-glow: rgba(79,255,206,0.06);
+–void: #060810;
+–surface: #0b0f1a;
+–surface2: #111827;
+–text: #c8d4e8;
+–text-dim: #4a5878;
+–amber: #ffb340;
+}
+
+html, body { width:100%; height:100%; background:var(–void); color:var(–text); font-family:‘DM Mono’,monospace; overflow:hidden; }
+
+.topbar {
+position:fixed; top:0; left:0; right:0; height:44px;
+display:flex; align-items:center; padding:0 16px;
+background:rgba(6,8,16,0.92); backdrop-filter:blur(12px);
+border-bottom:1px solid rgba(79,255,206,0.08); z-index:100; gap:12px;
+}
+.topbar-title { font-family:‘Syne’,sans-serif; font-weight:800; font-size:13px; letter-spacing:0.12em; color:var(–mint); text-transform:uppercase; }
+.topbar-sub { font-size:10px; color:var(–text-dim); letter-spacing:0.08em; font-style:italic; }
+.topbar-spacer { flex:1; }
+.density-ctrl { display:flex; gap:4px; }
+.density-btn {
+width:28px; height:28px; border:1px solid rgba(79,255,206,0.2);
+background:transparent; color:var(–text-dim); border-radius:3px; cursor:pointer;
+display:flex; align-items:center; justify-content:center; font-size:11px;
+transition:all 0.18s; font-family:‘DM Mono’,monospace;
+}
+.density-btn:hover,.density-btn.active { border-color:var(–mint); color:var(–mint); background:var(–mint-glow); }
+.shader-toggle {
+font-size:10px; padding:4px 10px; border:1px solid rgba(79,255,206,0.2);
+background:transparent; color:var(–text-dim); border-radius:3px; cursor:pointer;
+font-family:‘DM Mono’,monospace; letter-spacing:0.05em; transition:all 0.18s;
+}
+.shader-toggle.on { border-color:var(–mint); color:var(–mint); background:var(–mint-glow); }
+
+.scroll {
+position:fixed; top:44px; left:0; right:0; bottom:24px;
+overflow-y:auto; overflow-x:hidden;
+}
+.scroll::-webkit-scrollbar { width:3px; }
+.scroll::-webkit-scrollbar-thumb { background:rgba(79,255,206,0.2); border-radius:2px; }
+
+#stage-canvas {
+position:absolute; top:0; left:0; width:100%;
+pointer-events:none; z-index:0; transition:opacity 0.4s;
+}
+#stage-canvas.hidden { opacity:0; }
+
+.masonry-host { position:relative; padding:12px; }
+.masonry-columns { position:relative; width:100%; }
+
+/*
+
+- KEY CONTRACT:
+- - Cards are created once on boot, never destroyed.
+- - Density change only writes new left/top/width/height via style.
+- - CSS transitions animate those four properties smoothly.
+- - The shader reads getBoundingClientRect() every frame,
+- so it tracks the in-flight interpolated position automatically.
+- - No innerHTML wipe. No repaint gap. Continuous canvas.
+    */
+    .masonry-card {
+    position:absolute; overflow:hidden; border-radius:4px; cursor:pointer;
+    background:var(–surface); will-change:left,top,width,height;
+    opacity:0; transform:translateY(6px);
+    transition:
+    left   0.44s cubic-bezier(0.4,0,0.2,1),
+    top    0.44s cubic-bezier(0.4,0,0.2,1),
+    width  0.44s cubic-bezier(0.4,0,0.2,1),
+    height 0.44s cubic-bezier(0.4,0,0.2,1),
+    opacity 0.30s ease,
+    transform 0.30s ease;
+    }
+    .masonry-card.revealed { opacity:1; transform:translateY(0); }
+    .masonry-card.settled {
+    transition:
+    left   0.44s cubic-bezier(0.4,0,0.2,1),
+    top    0.44s cubic-bezier(0.4,0,0.2,1),
+    width  0.44s cubic-bezier(0.4,0,0.2,1),
+    height 0.44s cubic-bezier(0.4,0,0.2,1);
+    }
+    .masonry-card:hover .asset-overlay { opacity:1; }
+    .masonry-card.is-active { z-index:10; }
+    .masonry-card.is-active .asset-cinematic-shell::after { opacity:1; }
+
+.asset-cinematic-shell { width:100%; height:100%; position:relative; overflow:hidden; }
+.asset-cinematic-shell::after {
+content:’’; position:absolute; inset:0; border-radius:4px;
+border:1.5px solid var(–mint); opacity:0; pointer-events:none;
+transition:opacity 0.25s;
+box-shadow:inset 0 0 18px rgba(79,255,206,0.12),0 0 12px rgba(79,255,206,0.18);
+z-index:5;
+}
+.thumb { width:100%; height:100%; position:relative; }
+.asset-thumb { width:100%; height:100%; object-fit:cover; display:block; pointer-events:none; }
+
+.asset-overlay {
+position:absolute; inset:0; opacity:0; transition:opacity 0.2s;
+background:linear-gradient(to bottom,rgba(6,8,16,0.55) 0%,transparent 35%,transparent 55%,rgba(6,8,16,0.75) 100%);
+display:flex; flex-direction:column; justify-content:space-between; padding:6px; z-index:4;
+}
+.asset-cinematic-ui-top { display:flex; justify-content:space-between; align-items:flex-start; }
+.asset-cinematic-ui-bottom { display:flex; flex-direction:column; gap:2px; }
+
+.badge { font-size:9px; letter-spacing:0.1em; text-transform:uppercase; padding:2px 5px; border-radius:2px; font-family:‘DM Mono’,monospace; font-style:italic; }
+.badge-video { background:rgba(79,255,206,0.15); color:var(–mint); border:1px solid rgba(79,255,206,0.3); }
+.badge-image { background:rgba(100,120,200,0.15); color:#8ab4f8; border:1px solid rgba(100,120,200,0.3); }
+.badge-raw   { background:rgba(255,180,60,0.12); color:var(–amber); border:1px solid rgba(255,180,60,0.25); }
+.badge-dim   { background:rgba(6,8,16,0.5); color:var(–text-dim); border:none; }
+
+.asset-title { font-size:10px; color:var(–text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.asset-subtitle { font-size:9px; color:var(–text-dim); font-style:italic; }
+
+.selector { width:22px; height:22px; display:flex; align-items:center; justify-content:center; }
+.sel-shell {
+width:18px; height:18px; border:1.5px solid rgba(79,255,206,0.4); border-radius:50%;
+display:flex; align-items:center; justify-content:center;
+background:rgba(6,8,16,0.6); transition:all 0.2s; cursor:pointer;
+}
+.sel-shell input { display:none; }
+.sel-order { font-size:8px; color:var(–mint); opacity:0; transition:opacity 0.15s; }
+.is-selected .sel-shell { background:var(–mint); border-color:var(–mint); }
+.is-selected .sel-order { opacity:1; color:var(–void); font-weight:700; }
+
+.status-bar {
+position:fixed; bottom:0; left:0; right:0; height:24px;
+display:flex; align-items:center; padding:0 12px; gap:16px;
+background:rgba(6,8,16,0.90); border-top:1px solid rgba(79,255,206,0.06);
+font-size:9px; color:var(–text-dim); letter-spacing:0.06em; z-index:100;
+}
+.status-bar .hi { color:var(–mint); }
+</style>
+
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-title">Explorer</div>
+  <div class="topbar-sub">AssetGrid · WebGL Stage</div>
+  <div class="topbar-spacer"></div>
+  <button class="shader-toggle on" id="shaderToggle">shader ON</button>
+  <div class="density-ctrl">
+    <button class="density-btn active" data-cols="2">2</button>
+    <button class="density-btn" data-cols="3">3</button>
+    <button class="density-btn" data-cols="4">4</button>
+    <button class="density-btn" data-cols="5">5</button>
+  </div>
+</div>
+
+<div class="scroll" id="scroll">
+  <div class="masonry-host" id="masonryHost">
+    <canvas id="stage-canvas"></canvas>
+    <div class="masonry-columns" id="masonryColumns"></div>
+  </div>
+</div>
+
+<div class="status-bar">
+  <span id="sCols">cols: <span class="hi">2</span></span>
+  <span id="sReflow">reflow: <span class="hi">init</span></span>
+  <div style="flex:1"></div>
+  <span id="sShader">shader: <span class="hi">active</span></span>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// MOCK DATA
+// ═══════════════════════════════════════════════════════════════
+const KINDS   = ['video','video','video','image','image','raw','video','image'];
+const ORIENTS = ['portrait','landscape','square','portrait','landscape','portrait','square','landscape'];
+const TITLES  = [
+  'SHOT_4K_0012.mov','beach_drone_r01.mp4','studio_bts_v2.mp4',
+  'DSC_0447.ARW','portrait_final.jpg','BTS_wide_09.tif',
+  'interview_a_cut.mov','gradient_test.png','LOG_C_00234.mxf',
+  'backstage_reel.mp4','DSC_8812.NEF','aerial_seq3.mp4',
+  'comp_v7_master.mov','raw_scan_01.tif','event_recap.mp4',
+  'thumbnail_frame.jpg','colorgrd_test.mov','DSC_0991.ARW',
+];
+const SIZES = ['1.2 GB','340 MB','2.1 GB','28 MB','4 MB','180 MB','890 MB','2 MB',
+               '1.8 GB','460 MB','34 MB','1.1 GB','3.4 GB','220 MB','700 MB','890 KB','540 MB','19 MB'];
+
+const assets = Array.from({length:38}, (_,i) => {
+  const orient = ORIENTS[i%ORIENTS.length];
+  return {
+    id:`asset-${i}`,
+    kind:   KINDS[i%KINDS.length],
+    orient,
+    ratio:  orient==='portrait' ? 1.28+Math.random()*0.32
+          : orient==='landscape'? 0.56+Math.random()*0.28
+          : 0.88+Math.random()*0.24,
+    title:  TITLES[i%TITLES.length],
+    size:   SIZES[i%SIZES.length],
+    hue:    Math.random(),
+    selected:false, selOrder:0, active:false,
+  };
+});
+
+let selectionOrder = [];
+let columnCount    = 2;
+let shaderEnabled  = true;
+
+// ═══════════════════════════════════════════════════════════════
+// MASONRY LAYOUT  (pure — no DOM)
+// ═══════════════════════════════════════════════════════════════
+function computeLayout(items, containerWidth, cols, gutter) {
+  const colW = (containerWidth - gutter*(cols+1)) / cols;
+  const colH = new Array(cols).fill(gutter);
+  const out  = items.map(item => {
+    const ci = colH.indexOf(Math.min(...colH));
+    const x  = gutter + ci*(colW+gutter);
+    const y  = colH[ci];
+    const h  = colW * item.ratio;
+    colH[ci] = y + h + gutter;
+    return { item, x, y, width:colW, height:h };
+  });
+  return { items:out, stageHeight:Math.max(...colH) };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// CARD POOL  — created once, repositioned forever
+// ═══════════════════════════════════════════════════════════════
+const cardMap      = new Map(); // id → <div>
+const masonryHost  = document.getElementById('masonryHost');
+const colsEl       = document.getElementById('masonryColumns');
+
+function thumbGrad(hue) {
+  const h = Math.round(hue*360);
+  return `linear-gradient(135deg,hsl(${h},28%,10%) 0%,hsl(${(h+40)%360},48%,18%) 45%,hsl(${(h+80)%360},36%,8%) 100%)`;
+}
+
+function ensureCard(asset) {
+  if (cardMap.has(asset.id)) return cardMap.get(asset.id);
+  const card = document.createElement('div');
+  card.className   = 'masonry-card';
+  card.dataset.cardId = asset.id;
+  const bc = asset.kind==='video'?'badge-video':asset.kind==='raw'?'badge-raw':'badge-image';
+  card.innerHTML = `
+    <div class="asset-cinematic-shell">
+      <div class="thumb">
+        <div class="asset-thumb" style="background:${thumbGrad(asset.hue)};width:100%;height:100%"></div>
+        <div class="asset-overlay">
+          <div class="asset-cinematic-ui-top">
+            <span class="badge ${bc}">${asset.kind}</span>
+            <div class="selector" data-no-preview="1">
+              <span class="sel-shell" data-no-preview="1">
+                <input type="checkbox"/>
+                <span class="sel-order js-ord"></span>
+              </span>
+            </div>
+          </div>
+          <div class="asset-cinematic-ui-bottom">
+            <span class="badge badge-dim">${asset.size}</span>
+            <div class="asset-title">${asset.title}</div>
+            <div class="asset-subtitle">${asset.orient} · ${asset.id}</div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  card.addEventListener('click', e => {
+    if (e.target.closest('[data-no-preview]')) { toggleSelect(asset.id); return; }
+    toggleActive(asset.id);
+  });
+  colsEl.appendChild(card);
+  cardMap.set(asset.id, card);
+  // entrance — double-rAF so transition fires after paint
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    card.classList.add('revealed');
+    setTimeout(() => card.classList.add('settled'), 400);
+  }));
+  return card;
+}
+
+// applyLayout — the ONLY function that responds to density change.
+// It computes new positions and writes them to card.style.
+// CSS transition handles the rest. No DOM rebuild.
+function applyLayout() {
+  const containerWidth = masonryHost.offsetWidth - 24;
+  const layout = computeLayout(assets, containerWidth, columnCount, 6);
+  colsEl.style.height = layout.stageHeight + 'px';
+  layout.items.forEach(({ item, x, y, width, height }) => {
+    const card = ensureCard(item);
+    card.style.left   = x      + 'px';
+    card.style.top    = y      + 'px';
+    card.style.width  = width  + 'px';
+    card.style.height = height + 'px';
+    syncCardState(card, item);
+  });
+  resizeCanvas();
+  document.getElementById('sCols').innerHTML = `cols: <span class="hi">${columnCount}</span>`;
+}
+
+function syncCardState(card, asset) {
+  card.classList.toggle('is-selected', asset.selected);
+  card.classList.toggle('is-active',   asset.active);
+  const ord = card.querySelector('.js-ord');
+  if (ord) ord.textContent = asset.selected ? String(asset.selOrder) : '';
+}
+
+// ═══════════════════════════════════════════════════════════════
+// INTERACTIONS
+// ═══════════════════════════════════════════════════════════════
+function toggleSelect(id) {
+  const a = assets.find(x => x.id===id); if (!a) return;
+  if (a.selected) {
+    a.selected = false;
+    selectionOrder = selectionOrder.filter(x => x!==id);
+    assets.forEach(x => { if (x.selected) x.selOrder = selectionOrder.indexOf(x.id)+1; });
+  } else {
+    selectionOrder.push(id);
+    a.selected = true; a.selOrder = selectionOrder.length;
+  }
+  assets.forEach(x => { const c=cardMap.get(x.id); if(c) syncCardState(c,x); });
+}
+
+function toggleActive(id) {
+  assets.forEach(a => a.active = (a.id===id ? !a.active : false));
+  assets.forEach(a => { const c=cardMap.get(a.id); if(c) syncCardState(c,a); });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// WEBGL STAGE
+// ═══════════════════════════════════════════════════════════════
+const canvas = document.getElementById('stage-canvas');
+let gl, prog, glReady=false;
+let uTime, uRes, uScroll, uCardCount;
+const T0 = Date.now();
+
+const VERT = `attribute vec2 a;void main(){gl_Position=vec4(a,0,1);}`;
+
+const FRAG = `
+precision mediump float;
+uniform float u_time;
+uniform vec2  u_res;
+uniform float u_scroll;
+uniform vec4  u_cards[38];
+uniform vec4  u_cex[38];
+uniform int   u_n;
+
+float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5);}
+float noise(vec2 p){
+  vec2 i=floor(p),f=fract(p)*fract(p)*(3.-2.*fract(p));
+  return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1)),f.x),f.y);
+}
+vec3 hsl(float h,float s,float l){
+  vec3 r=clamp(abs(mod(h*6.+vec3(0,4,2),6.)-3.)-1.,0.,1.);
+  return l+s*(r-.5)*(1.-abs(2.*l-1.));
+}
+
+void main(){
+  // DOM-space pixel coord (top-left origin, scroll-absolute)
+  vec2 px = vec2(gl_FragCoord.x, u_res.y - gl_FragCoord.y + u_scroll);
+  vec2 uv = gl_FragCoord.xy / u_res;
+
+  // ambient base
+  vec2 nv = px / u_res;
+  float n = noise(nv*3.+u_time*0.05) * 0.8 + noise(nv*7.-u_time*0.09) * 0.2;
+  vec3 base = vec3(0.022+n*0.010, 0.030+n*0.014, 0.052+n*0.022);
+  base -= step(0.5, fract(gl_FragCoord.y*0.5)) * 0.013; // scanlines
+
+  // per-card energy using SDF on actual px positions
+  vec3 light = vec3(0.);
+  for(int i=0;i<38;i++){
+    if(i>=u_n) break;
+    vec4 r    = u_cards[i];  // x,y,w,h in DOM px
+    float hue = u_cex[i].x;
+    float act = u_cex[i].y;
+
+    vec2 ctr  = r.xy + r.zw * 0.5;
+    vec2 half = r.zw * 0.5;
+    vec2 d    = abs(px - ctr) - half;
+    float sdf = length(max(d, 0.)) + min(max(d.x, d.y), 0.);
+
+    float border = exp(-abs(sdf) * 0.15) * 0.065;
+    float inner  = exp(sdf * 0.035) * 0.022;
+    float pulse  = sin(u_time*1.7 + hue*6.28 + sdf*0.035) * 0.5 + 0.5;
+    float g      = (border + inner) * (0.5 + pulse*0.5);
+    if(act > 0.5) g *= 3.5;
+
+    vec3 col = hsl(hue, 0.65, 0.55);
+    col = mix(col, vec3(0.31, 1.0, 0.80), 0.30);
+    light += col * g;
+  }
+
+  float vign = pow(clamp(1.-length((uv-0.5)*1.5),0.,1.), 2.2);
+  gl_FragColor = vec4((base + light) * (vign*0.82+0.18), 1.);
+}
+`;
+
+function initGL() {
+  gl = canvas.getContext('webgl',{alpha:false,antialias:false,depth:false});
+  if (!gl) { console.warn('WebGL unavailable'); return; }
+  function sh(src,t){const s=gl.createShader(t);gl.shaderSource(s,src);gl.compileShader(s);return s;}
+  prog = gl.createProgram();
+  gl.attachShader(prog, sh(VERT,gl.VERTEX_SHADER));
+  gl.attachShader(prog, sh(FRAG,gl.FRAGMENT_SHADER));
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog,gl.LINK_STATUS)) console.error(gl.getProgramInfoLog(prog));
+  gl.useProgram(prog);
+  const buf=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
+  const loc=gl.getAttribLocation(prog,'a');
+  gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
+  uTime      = gl.getUniformLocation(prog,'u_time');
+  uRes       = gl.getUniformLocation(prog,'u_res');
+  uScroll    = gl.getUniformLocation(prog,'u_scroll');
+  uCardCount = gl.getUniformLocation(prog,'u_n');
+  glReady = true;
+}
+
+function resizeCanvas() {
+  const h = Math.max(colsEl.offsetHeight+24, document.getElementById('scroll').clientHeight, 400);
+  if (canvas.width!==window.innerWidth || canvas.height!==h) {
+    canvas.width=window.innerWidth; canvas.height=h;
+    canvas.style.height=h+'px';
+    if(gl) gl.viewport(0,0,canvas.width,canvas.height);
+  }
+}
+
+// Allocated once — reused every frame
+const uFlat   = new Float32Array(38*4);
+const uFlatEx = new Float32Array(38*4);
+
+function renderGL(scrollY) {
+  if (!glReady || !shaderEnabled) return;
+  const t  = (Date.now()-T0)/1000;
+  const cw = canvas.width, ch = canvas.height;
+
+  // ── read live interpolated card positions via BCR each frame ──
+  // During a CSS position transition, BCR returns the current painted position,
+  // so the shader energy rings track the cards through the entire reflow animation.
+  let n = 0;
+  cardMap.forEach((card, id) => {
+    if (n >= 38) return;
+    const b = card.getBoundingClientRect();
+    // convert viewport-relative → scroll-absolute DOM coords
+    uFlat[n*4]   = b.left;
+    uFlat[n*4+1] = b.top - 44 + scrollY;  // 44px topbar
+    uFlat[n*4+2] = b.width;
+    uFlat[n*4+3] = b.height;
+    const a = assets.find(x=>x.id===id);
+    uFlatEx[n*4]   = a ? a.hue : 0.46;
+    uFlatEx[n*4+1] = (a && a.active) ? 1 : 0;
+    uFlatEx[n*4+2] = 0;
+    uFlatEx[n*4+3] = 0;
+    n++;
+  });
+
+  gl.useProgram(prog);
+  gl.uniform1f(uTime,  t);
+  gl.uniform2f(uRes,   cw, ch);
+  gl.uniform1f(uScroll, scrollY);
+  gl.uniform4fv(gl.getUniformLocation(prog,'u_cards[0]'), uFlat);
+  gl.uniform4fv(gl.getUniformLocation(prog,'u_cex[0]'),   uFlatEx);
+  gl.uniform1i(uCardCount, n);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// RAF LOOP
+// ═══════════════════════════════════════════════════════════════
+(function loop() {
+  requestAnimationFrame(loop);
+  renderGL(document.getElementById('scroll').scrollTop);
+})();
+
+// ═══════════════════════════════════════════════════════════════
+// CONTROLS
+// ═══════════════════════════════════════════════════════════════
+let reflowTimer = 0;
+document.querySelectorAll('.density-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.density-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    columnCount = parseInt(btn.dataset.cols);
+    // ← No DOM wipe. Just reposition.
+    applyLayout();
+    const el = document.getElementById('sReflow');
+    el.innerHTML = `reflow: <span class="hi">→ ${columnCount} col</span>`;
+    clearTimeout(reflowTimer);
+    reflowTimer = setTimeout(()=>{ el.innerHTML=`reflow: <span class="hi">settled</span>`; }, 500);
+  });
+});
+
+document.getElementById('shaderToggle').addEventListener('click', function() {
+  shaderEnabled = !shaderEnabled;
+  this.textContent  = shaderEnabled ? 'shader ON' : 'shader OFF';
+  this.classList.toggle('on', shaderEnabled);
+  canvas.classList.toggle('hidden', !shaderEnabled);
+  document.getElementById('sShader').innerHTML =
+    shaderEnabled ? `shader: <span class="hi">active</span>` : `shader: <span style="color:var(--text-dim)">off</span>`;
+  if (shaderEnabled && gl) gl.viewport(0,0,canvas.width,canvas.height);
+});
+
+window.addEventListener('resize', () => { applyLayout(); });
+
+// ═══════════════════════════════════════════════════════════════
+// BOOT
+// ═══════════════════════════════════════════════════════════════
+initGL();
+resizeCanvas();
+applyLayout();
+</script>
+
+</body>
+</html>

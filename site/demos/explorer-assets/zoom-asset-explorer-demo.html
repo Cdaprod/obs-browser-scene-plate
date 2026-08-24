@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Explorer — Zoom Transition Lab</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;600;700;800&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+–bg: #09090f;
+–surface: #0f0f1a;
+–card-bg: #111120;
+–border: rgba(255,255,255,0.06);
+–text: #e8e8f0;
+–muted: rgba(255,255,255,0.35);
+–accent: #5b7fff;
+–accent2: #a78bfa;
+–gap: 6px;
+–radius: 10px;
+–ease-push: cubic-bezier(0.22, 1, 0.36, 1);
+–ease-retract: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+html, body {
+width: 100%; height: 100%;
+background: var(–bg);
+color: var(–text);
+font-family: ‘Syne’, sans-serif;
+overflow: hidden;
+-webkit-font-smoothing: antialiased;
+}
+
+/* ── HEADER ─────────────────────────────────────────── */
+header {
+position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+display: flex; align-items: center; justify-content: space-between;
+padding: 14px 20px;
+background: rgba(9,9,15,0.85);
+backdrop-filter: blur(20px);
+border-bottom: 1px solid var(–border);
+}
+.logo {
+font-size: 13px; font-weight: 700; letter-spacing: 0.08em;
+color: var(–text); text-transform: uppercase; opacity: 0.9;
+}
+.logo span { color: var(–accent); }
+.meta {
+font-family: ‘DM Mono’, monospace;
+font-size: 11px; color: var(–muted);
+letter-spacing: 0.05em;
+}
+.controls {
+display: flex; gap: 8px; align-items: center;
+}
+.pill {
+font-family: ‘DM Mono’, monospace;
+font-size: 10px; padding: 4px 10px;
+border: 1px solid var(–border);
+border-radius: 20px; color: var(–muted);
+background: transparent; cursor: pointer;
+transition: all 0.2s;
+letter-spacing: 0.05em;
+}
+.pill:hover { border-color: var(–accent); color: var(–accent); }
+.pill.active { border-color: var(–accent); color: var(–accent); background: rgba(91,127,255,0.1); }
+
+/* ── GRID VIEWPORT ──────────────────────────────────── */
+#viewport {
+position: fixed;
+top: 52px; left: 0; right: 0; bottom: 0;
+overflow-y: auto;
+overflow-x: hidden;
+padding: var(–gap);
+}
+
+/* ── MASONRY GRID ───────────────────────────────────── */
+#grid {
+columns: 4;
+column-gap: var(–gap);
+will-change: transform;
+transition: transform 0s, opacity 0s;
+}
+
+/* zoom state — grid pushes outward */
+#grid.zooming {
+pointer-events: none;
+}
+
+.card {
+break-inside: avoid;
+margin-bottom: var(–gap);
+border-radius: var(–radius);
+overflow: hidden;
+position: relative;
+cursor: pointer;
+background: var(–card-bg);
+border: 1px solid var(–border);
+/* Individual card transition base */
+transition: none;
+will-change: transform, opacity;
+}
+
+.card-inner {
+width: 100%; height: 100%;
+transition: transform 0.25s var(–ease-push);
+}
+.card:hover .card-inner { transform: scale(1.02); }
+
+.card-thumb {
+width: 100%;
+display: block;
+object-fit: cover;
+aspect-ratio: auto;
+}
+
+/* audio / text cards */
+.card.type-audio .card-face {
+display: flex; flex-direction: column;
+align-items: center; justify-content: center;
+height: 90px;
+gap: 6px;
+}
+.card.type-audio .card-label {
+font-family: ‘DM Mono’, monospace;
+font-size: 9px; letter-spacing: 0.1em;
+color: var(–muted); text-transform: uppercase;
+}
+.audio-icon {
+width: 28px; height: 28px;
+border-radius: 50%;
+border: 1px solid rgba(255,255,255,0.12);
+display: flex; align-items: center; justify-content: center;
+color: var(–muted); font-size: 12px;
+}
+
+.card.type-tall .card-thumb { aspect-ratio: 9/16; }
+.card.type-wide .card-thumb { aspect-ratio: 16/9; }
+.card.type-sq   .card-thumb { aspect-ratio: 1/1; }
+
+/* ── ZOOM OVERLAY / DETAIL VIEW ─────────────────────── */
+#detail {
+position: fixed;
+inset: 0; z-index: 100;
+display: flex; align-items: center; justify-content: center;
+pointer-events: none;
+opacity: 0;
+}
+#detail.active {
+pointer-events: all;
+}
+
+/* Dark scrim behind detail */
+#scrim {
+position: absolute; inset: 0;
+background: rgba(9,9,15,0.0);
+transition: background 0s;
+}
+#detail.active #scrim {
+background: rgba(9,9,15,0.92);
+transition: background 0.45s var(–ease-push);
+}
+
+/* The expanding card clone */
+#hero {
+position: absolute;
+border-radius: var(–radius);
+overflow: hidden;
+background: var(–card-bg);
+transform-origin: center center;
+will-change: transform, border-radius, box-shadow;
+}
+#hero img {
+width: 100%; height: 100%; display: block; object-fit: cover;
+}
+#hero .hero-audio {
+width: 100%; height: 100%;
+display: flex; flex-direction: column;
+align-items: center; justify-content: center;
+gap: 12px;
+}
+
+/* Detail info panel */
+#detail-info {
+position: absolute;
+bottom: 0; left: 0; right: 0;
+padding: 32px 28px 48px;
+background: linear-gradient(to top, rgba(9,9,15,0.95) 0%, transparent 100%);
+opacity: 0;
+transform: translateY(16px);
+transition: opacity 0s, transform 0s;
+}
+#detail.active #detail-info {
+opacity: 1;
+transform: translateY(0);
+transition: opacity 0.35s 0.25s var(–ease-push),
+transform 0.35s 0.25s var(–ease-push);
+}
+#detail-info h2 {
+font-size: 20px; font-weight: 700; margin-bottom: 6px;
+}
+#detail-info p {
+font-family: ‘DM Mono’, monospace;
+font-size: 11px; color: var(–muted); letter-spacing: 0.05em;
+}
+
+/* Close button */
+#close-btn {
+position: absolute; top: 20px; right: 20px;
+width: 36px; height: 36px; border-radius: 50%;
+background: rgba(255,255,255,0.08);
+border: 1px solid rgba(255,255,255,0.12);
+color: var(–text); font-size: 18px;
+display: flex; align-items: center; justify-content: center;
+cursor: pointer;
+opacity: 0;
+transform: scale(0.7);
+transition: opacity 0s, transform 0s;
+z-index: 10;
+backdrop-filter: blur(8px);
+}
+#detail.active #close-btn {
+opacity: 1; transform: scale(1);
+transition: opacity 0.25s 0.3s, transform 0.3s 0.3s var(–ease-push);
+}
+#close-btn:hover { background: rgba(255,255,255,0.15); }
+
+/* ── EASING CONTROLS ────────────────────────────────── */
+#easing-panel {
+position: fixed; bottom: 20px; left: 50%;
+transform: translateX(-50%);
+z-index: 200;
+display: flex; gap: 6px; align-items: center;
+background: rgba(15,15,26,0.9);
+border: 1px solid var(–border);
+border-radius: 30px;
+padding: 8px 14px;
+backdrop-filter: blur(20px);
+font-family: ‘DM Mono’, monospace;
+font-size: 10px; color: var(–muted);
+transition: opacity 0.3s;
+}
+#easing-panel span { margin-right: 4px; }
+.ease-btn {
+padding: 4px 10px; border-radius: 20px;
+border: 1px solid transparent;
+background: transparent; color: var(–muted);
+font-family: ‘DM Mono’, monospace; font-size: 10px;
+cursor: pointer; transition: all 0.2s; letter-spacing: 0.04em;
+}
+.ease-btn:hover { color: var(–text); }
+.ease-btn.active {
+border-color: var(–accent); color: var(–accent);
+background: rgba(91,127,255,0.1);
+}
+</style>
+
+</head>
+<body>
+
+<header>
+  <div class="logo"><span>C</span>DAPROD · EXPLORER</div>
+  <div class="meta" id="item-count">— items</div>
+  <div class="controls">
+    <button class="pill active" id="btn-4col" onclick="setColumns(4)">4 col</button>
+    <button class="pill" id="btn-3col" onclick="setColumns(3)">3 col</button>
+    <button class="pill" id="btn-2col" onclick="setColumns(2)">2 col</button>
+  </div>
+</header>
+
+<div id="viewport">
+  <div id="grid"></div>
+</div>
+
+<!-- Detail / Hero overlay -->
+
+<div id="detail">
+  <div id="scrim"></div>
+  <div id="hero"></div>
+  <div id="detail-info">
+    <h2 id="detail-title"></h2>
+    <p id="detail-meta"></p>
+  </div>
+  <button id="close-btn" onclick="closeDetail()">✕</button>
+</div>
+
+<!-- Easing lab -->
+
+<div id="easing-panel">
+  <span>EASE ·</span>
+  <button class="ease-btn active" data-ease="push" onclick="setEase(this,'push')">push</button>
+  <button class="ease-btn" data-ease="spring" onclick="setEase(this,'spring')">spring</button>
+  <button class="ease-btn" data-ease="snap" onclick="setEase(this,'snap')">snap</button>
+  <button class="ease-btn" data-ease="cinematic" onclick="setEase(this,'cinematic')">cinematic</button>
+</div>
+
+<script>
+// ── ASSET DATA ─────────────────────────────────────────
+const ASSETS = [
+  // Using picsum with fixed seeds for repeatable results
+  { id:1,  type:'wide', src:'https://picsum.photos/seed/gear1/600/340',    title:'Setup Overview',       meta:'IMG · 3.2MB · 2024-03-12' },
+  { id:2,  type:'tall', src:'https://picsum.photos/seed/self1/400/700',    title:'Self Portrait',        meta:'IMG · 2.1MB · 2024-03-11' },
+  { id:3,  type:'sq',   src:'https://picsum.photos/seed/face1/500/500',    title:'Close Up Study',       meta:'IMG · 1.8MB · 2024-03-10' },
+  { id:4,  type:'sq',   src:'https://picsum.photos/seed/night1/500/500',   title:'Night Drive',          meta:'VID · 47MB  · 2024-03-09' },
+  { id:5,  type:'tall', src:'https://picsum.photos/seed/street1/400/700',  title:'Street Sign',          meta:'IMG · 1.4MB · 2024-03-09' },
+  { id:6,  type:'sq',   src:'https://picsum.photos/seed/trash1/500/500',   title:'Trash Day',            meta:'IMG · 2.7MB · 2024-03-08' },
+  { id:7,  type:'wide', src:'https://picsum.photos/seed/walk1/600/340',    title:'Walking Trail',        meta:'VID · 91MB  · 2024-03-07' },
+  { id:8,  type:'tall', src:'https://picsum.photos/seed/lava1/400/700',    title:'Lava Lamp Green',      meta:'VID · 34MB  · 2024-03-06' },
+  { id:9,  type:'sq',   src:'https://picsum.photos/seed/kids1/500/500',    title:'Kids at Target',       meta:'IMG · 1.9MB · 2024-03-06' },
+  { id:10, type:'wide', src:'https://picsum.photos/seed/car1/600/340',     title:'Black Car Snow',       meta:'VID · 55MB  · 2024-03-05' },
+  { id:11, type:'tall', src:'https://picsum.photos/seed/drink1/400/700',   title:'Drink Closeup',        meta:'VID · 22MB  · 2024-03-05' },
+  { id:12, type:'sq',   src:'https://picsum.photos/seed/sand1/500/500',    title:'Sand Pour',            meta:'VID · 18MB  · 2024-03-04' },
+  { id:13, type:'audio',src:null,                                           title:'Voice Memo 01',        meta:'AUD · 4.2MB · 2024-03-04' },
+  { id:14, type:'tall', src:'https://picsum.photos/seed/cam1/400/700',     title:'Camera Rig',           meta:'IMG · 3.1MB · 2024-03-03' },
+  { id:15, type:'wide', src:'https://picsum.photos/seed/store1/600/340',   title:'Toys Aisle',           meta:'VID · 62MB  · 2024-03-03' },
+  { id:16, type:'sq',   src:'https://picsum.photos/seed/lava2/500/500',    title:'Lava Lamp Blue',       meta:'VID · 29MB  · 2024-03-02' },
+  { id:17, type:'tall', src:'https://picsum.photos/seed/smoke1/400/700',   title:'Smoke Driveway',       meta:'VID · 77MB  · 2024-03-02' },
+  { id:18, type:'sq',   src:'https://picsum.photos/seed/county1/500/500',  title:'Paulding County Sign', meta:'IMG · 1.2MB · 2024-03-01' },
+  { id:19, type:'audio',src:null,                                           title:'Voice Memo 02',        meta:'AUD · 2.8MB · 2024-03-01' },
+  { id:20, type:'tall', src:'https://picsum.photos/seed/sun1/400/700',     title:'Sunglasses Self',      meta:'IMG · 2.3MB · 2024-02-28' },
+  { id:21, type:'wide', src:'https://picsum.photos/seed/code1/600/340',    title:'Code Screenshot',      meta:'SCN · 0.9MB · 2024-02-27' },
+  { id:22, type:'sq',   src:'https://picsum.photos/seed/carts1/500/500',   title:'Shopping Carts',       meta:'IMG · 1.7MB · 2024-02-27' },
+  { id:23, type:'audio',src:null,                                           title:'Voice Memo 03',        meta:'AUD · 6.1MB · 2024-02-26' },
+  { id:24, type:'wide', src:'https://picsum.photos/seed/sign2/600/340',    title:'County Sign Wide',     meta:'IMG · 2.0MB · 2024-02-26' },
+  { id:25, type:'sq',   src:'https://picsum.photos/seed/hold1/500/500',    title:'Holding Device',       meta:'IMG · 1.5MB · 2024-02-25' },
+  { id:26, type:'tall', src:'https://picsum.photos/seed/lights1/400/700',  title:'Concert Lights',       meta:'VID · 48MB  · 2024-02-25' },
+  { id:27, type:'audio',src:null,                                           title:'Voice Memo 04',        meta:'AUD · 3.4MB · 2024-02-24' },
+  { id:28, type:'sq',   src:'https://picsum.photos/seed/doc1/500/500',     title:'Document Scan',        meta:'DOC · 0.4MB · 2024-02-24' },
+];
+
+// ── EASING PRESETS ─────────────────────────────────────
+const EASING = {
+  push:      { dur: 480, fn: 'cubic-bezier(0.22,1,0.36,1)',    gridDur: 400, gridFn: 'cubic-bezier(0.22,1,0.36,1)' },
+  spring:    { dur: 600, fn: 'cubic-bezier(0.34,1.56,0.64,1)', gridDur: 520, gridFn: 'cubic-bezier(0.34,1.56,0.64,1)' },
+  snap:      { dur: 280, fn: 'cubic-bezier(0.4,0,0.2,1)',      gridDur: 240, gridFn: 'cubic-bezier(0.4,0,0.2,1)' },
+  cinematic: { dur: 750, fn: 'cubic-bezier(0.16,1,0.3,1)',     gridDur: 650, gridFn: 'cubic-bezier(0.16,1,0.3,1)' },
+};
+let currentEase = 'push';
+
+// ── STATE ──────────────────────────────────────────────
+let openCardId = null;
+let animating = false;
+let originRect = null;
+
+// ── BUILD GRID ─────────────────────────────────────────
+function buildGrid() {
+  const grid = document.getElementById('grid');
+  grid.innerHTML = '';
+  document.getElementById('item-count').textContent = `${ASSETS.length} items`;
+
+  ASSETS.forEach(asset => {
+    const card = document.createElement('div');
+    card.className = `card type-${asset.type}`;
+    card.dataset.id = asset.id;
+    card.style.cssText = `
+      opacity: 0;
+      transform: translateY(12px) scale(0.97);
+      transition: opacity 0s, transform 0s;
+    `;
+
+    if (asset.type === 'audio') {
+      card.innerHTML = `
+        <div class="card-face">
+          <div class="audio-icon">♪</div>
+          <div class="card-label">AUDIO</div>
+        </div>`;
+    } else {
+      card.innerHTML = `
+        <div class="card-inner">
+          <img class="card-thumb" src="${asset.src}" alt="${asset.title}" loading="lazy" draggable="false">
+        </div>`;
+    }
+
+    card.addEventListener('click', () => openDetail(asset, card));
+    grid.appendChild(card);
+  });
+
+  // Staggered entrance
+  const cards = grid.querySelectorAll('.card');
+  cards.forEach((c, i) => {
+    setTimeout(() => {
+      c.style.transition = 'opacity 0.4s ease, transform 0.4s cubic-bezier(0.22,1,0.36,1)';
+      c.style.opacity = '1';
+      c.style.transform = 'translateY(0) scale(1)';
+    }, 40 + i * 28);
+  });
+}
+
+// ── OPEN DETAIL ────────────────────────────────────────
+function openDetail(asset, cardEl) {
+  if (animating) return;
+  animating = true;
+  openCardId = asset.id;
+
+  const ease = EASING[currentEase];
+  const detail = document.getElementById('detail');
+  const hero = document.getElementById('hero');
+  const grid = document.getElementById('grid');
+  const vp = document.getElementById('viewport');
+
+  // Capture card rect in viewport space
+  const rect = cardEl.getBoundingClientRect();
+  originRect = rect;
+
+  // Set titles
+  document.getElementById('detail-title').textContent = asset.title;
+  document.getElementById('detail-meta').textContent = asset.meta;
+
+  // Build hero content
+  if (asset.type === 'audio') {
+    hero.innerHTML = `<div class="hero-audio">
+      <div style="font-size:48px;opacity:0.3">♪</div>
+      <div style="font-family:'DM Mono',monospace;font-size:11px;opacity:0.4;letter-spacing:0.1em">AUDIO FILE</div>
+    </div>`;
+  } else {
+    hero.innerHTML = `<img src="${asset.src}" alt="${asset.title}" style="width:100%;height:100%;object-fit:cover;display:block;">`;
+  }
+
+  // Position hero exactly over the card
+  const vpW = window.innerWidth;
+  const vpH = window.innerHeight;
+
+  // Target: fill viewport with padding
+  const targetPad = 24;
+  const targetW = vpW - targetPad * 2;
+  const targetH = vpH - targetPad * 2;
+  const targetX = targetPad;
+  const targetY = targetPad;
+
+  // Start: match card exactly
+  hero.style.cssText = `
+    position: absolute;
+    left: ${rect.left}px;
+    top: ${rect.top}px;
+    width: ${rect.width}px;
+    height: ${rect.height}px;
+    border-radius: ${getComputedStyle(cardEl).borderRadius};
+    overflow: hidden;
+    will-change: transform, left, top, width, height, border-radius, box-shadow;
+    transition: none;
+    box-shadow: 0 0 0 0 rgba(0,0,0,0);
+    z-index: 5;
+  `;
+
+  detail.style.opacity = '1';
+  detail.classList.add('active');
+
+  // ── GRID PUSH: scale outward from click origin ──────
+  const gridCards = grid.querySelectorAll('.card');
+  const clickCenterX = rect.left + rect.width / 2;
+  const clickCenterY = rect.top + rect.height / 2;
+
+  gridCards.forEach(c => {
+    if (c.dataset.id == asset.id) {
+      // The clicked card fades out (hero takes its place)
+      c.style.transition = `opacity ${ease.dur * 0.3}ms ease`;
+      c.style.opacity = '0';
+      return;
+    }
+
+    const cr = c.getBoundingClientRect();
+    const cx = cr.left + cr.width / 2;
+    const cy = cr.top + cr.height / 2;
+
+    // Direction vector from click center to card center
+    const dx = cx - clickCenterX;
+    const dy = cy - clickCenterY;
+    const dist = Math.sqrt(dx*dx + dy*dy) || 1;
+
+    // Push magnitude (closer cards push less, farther push more... 
+    // but we want a camera-dolly feel: everything scales from click origin)
+    // Use scale transform on grid relative to click origin
+  });
+
+  // Scale grid up from click point to simulate camera push
+  const originXPct = (clickCenterX / vpW) * 100;
+  const originYPct = ((clickCenterY + vp.scrollTop - 52) / grid.offsetHeight) * 100;
+
+  // Freeze scroll
+  vp.style.overflow = 'hidden';
+
+  grid.style.transformOrigin = `${originXPct}% ${clickCenterY + vp.scrollTop - 52}px`;
+  grid.style.transition = `transform ${ease.gridDur}ms ${ease.gridFn}, opacity ${ease.gridDur}ms ease`;
+  
+  // Small push + slight blur feeling
+  setTimeout(() => {
+    grid.style.transform = `scale(1.08)`;
+    grid.style.opacity = '0.0';
+    grid.classList.add('zooming');
+  }, 10);
+
+  // ── HERO EXPAND ─────────────────────────────────────
+  setTimeout(() => {
+    hero.style.transition = `
+      left   ${ease.dur}ms ${ease.fn},
+      top    ${ease.dur}ms ${ease.fn},
+      width  ${ease.dur}ms ${ease.fn},
+      height ${ease.dur}ms ${ease.fn},
+      border-radius ${ease.dur}ms ${ease.fn},
+      box-shadow ${ease.dur}ms ease
+    `;
+    hero.style.left        = `${targetX}px`;
+    hero.style.top         = `${targetY}px`;
+    hero.style.width       = `${targetW}px`;
+    hero.style.height      = `${targetH}px`;
+    hero.style.borderRadius = '14px';
+    hero.style.boxShadow  = '0 40px 120px rgba(0,0,0,0.8), 0 0 0 1px rgba(255,255,255,0.06)';
+  }, 10);
+
+  setTimeout(() => { animating = false; }, ease.dur + 50);
+}
+
+// ── CLOSE DETAIL ───────────────────────────────────────
+function closeDetail() {
+  if (animating || !openCardId) return;
+  animating = true;
+
+  const ease = EASING[currentEase];
+  const detail = document.getElementById('detail');
+  const hero = document.getElementById('hero');
+  const grid = document.getElementById('grid');
+  const vp = document.getElementById('viewport');
+
+  const cardEl = document.querySelector(`.card[data-id="${openCardId}"]`);
+  const rect = cardEl ? cardEl.getBoundingClientRect() : originRect;
+
+  // Suppress detail-info + close btn instantly
+  detail.classList.remove('active');
+
+  // ── HERO CONTRACT back to card ─────────────────────
+  const collapseDur = ease.dur * 0.82;
+  hero.style.transition = `
+    left   ${collapseDur}ms ${ease.fn},
+    top    ${collapseDur}ms ${ease.fn},
+    width  ${collapseDur}ms ${ease.fn},
+    height ${collapseDur}ms ${ease.fn},
+    border-radius ${collapseDur}ms ${ease.fn},
+    box-shadow ${collapseDur}ms ease
+  `;
+  hero.style.left        = `${rect.left}px`;
+  hero.style.top         = `${rect.top}px`;
+  hero.style.width       = `${rect.width}px`;
+  hero.style.height      = `${rect.height}px`;
+  hero.style.borderRadius = '10px';
+  hero.style.boxShadow  = '0 0 0 0 rgba(0,0,0,0)';
+
+  // ── GRID RETRACT ───────────────────────────────────
+  grid.style.transition = `transform ${collapseDur}ms ${ease.fn}, opacity ${collapseDur * 0.7}ms ease`;
+  grid.style.transform = 'scale(1)';
+  grid.style.opacity = '1';
+  grid.classList.remove('zooming');
+
+  setTimeout(() => {
+    // Restore clicked card
+    if (cardEl) {
+      cardEl.style.transition = `opacity 0.2s ease`;
+      cardEl.style.opacity = '1';
+    }
+    // Cleanup
+    detail.style.opacity = '0';
+    hero.innerHTML = '';
+    vp.style.overflow = '';
+    openCardId = null;
+    animating = false;
+  }, collapseDur + 20);
+}
+
+// ── UTILITY ────────────────────────────────────────────
+function setColumns(n) {
+  document.getElementById('grid').style.columns = n;
+  document.querySelectorAll('.pill').forEach(p => p.classList.remove('active'));
+  document.getElementById(`btn-${n}col`).classList.add('active');
+}
+
+function setEase(btn, name) {
+  currentEase = name;
+  document.querySelectorAll('.ease-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+}
+
+// Close on scrim click
+document.getElementById('scrim').addEventListener('click', closeDetail);
+
+// Keyboard
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeDetail();
+});
+
+// Init
+buildGrid();
+</script>
+
+</body>
+</html>

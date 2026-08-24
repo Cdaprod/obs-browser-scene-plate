@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Overlay</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    /* ── OVERLAY CORE ─────────────────────────────────────────────────── */
+    html, body {
+      width: 100%; height: 100%;
+      /* Do NOT set overflow:hidden on body — that can cause fixed/absolute
+         children to not paint in sandboxed file:// / WKWebView contexts */
+      background: transparent;
+      font-family: 'Syne', sans-serif;
+      /* Establish a stacking context so z-index works in WebView */
+      position: relative;
+    }
+
+    body.solid-bg { background: #0a0a0f; }
+
+    /* Use position:absolute (not fixed) — fixed can collapse to 0×0 in
+       WKWebView / OBS browser source when the page has no scroll height */
+    #overlay-root {
+      position: absolute;
+      inset: 0;
+      min-width: 100vw;
+      min-height: 100vh;
+      pointer-events: none;
+      z-index: 9999;
+    }
+
+    /* ── SLIDE VIEWPORT ───────────────────────────────────────────────── */
+    .slide-viewport {
+      position: absolute;
+      /* Position via URL params: ?x, ?y, ?w, ?h  (default: bottom-left) */
+      bottom: var(--pos-bottom, 40px);
+      left: var(--pos-left, 40px);
+      right: var(--pos-right, auto);
+      top: var(--pos-top, auto);
+      width: var(--slide-w, 420px);
+      overflow: hidden;
+      pointer-events: auto;            /* clicks land here */
+    }
+
+    /* ── SLIDE STRIP (vertical scroll) ───────────────────────────────── */
+    .slide-strip {
+      display: flex;
+      flex-direction: column;
+      will-change: transform;
+      transition: transform 0.65s cubic-bezier(0.77, 0, 0.175, 1);
+    }
+
+    /* ── SINGLE SLIDE CARD ────────────────────────────────────────────── */
+    .slide {
+      position: relative;              /* anchor ::after + progress-bar */
+      flex-shrink: 0;                  /* prevent strip from squishing cards */
+      width: 100%;
+      min-height: var(--slide-h, 200px);
+      padding: 28px 32px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+
+      /* Glass panel */
+      background: rgba(8, 8, 16, 0.82);
+      backdrop-filter: blur(18px) saturate(160%);
+      -webkit-backdrop-filter: blur(18px) saturate(160%);
+      border: 1px solid rgba(255,255,255,0.07);
+      border-top: 1px solid rgba(255,255,255,0.13);
+      border-radius: 12px;
+
+      box-shadow:
+        0 0 0 1px rgba(0,191,255,0.04),
+        0 8px 32px rgba(0,0,0,0.6),
+        inset 0 1px 0 rgba(255,255,255,0.05);
+
+      opacity: 1;
+      transform: none;
+    }
+
+
+    .slide-meta {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .slide-index {
+      font-family: 'Space Mono', monospace;
+      font-size: 10px;
+      color: rgba(0,191,255,0.5);
+      letter-spacing: 0.1em;
+      flex-shrink: 0;
+    }
+
+    .slide-eyebrow {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.3);
+      flex: 1;
+    }
+
+    .slide-icon {
+      font-size: 18px;
+      color: var(--accent, #00bfff);
+      opacity: 0.9;
+      flex-shrink: 0;
+    }
+
+    /* ── TITLE ────────────────────────────────────────────────────────── */
+    .slide-title {
+      font-size: var(--title-size, 22px);
+      font-weight: 800;
+      line-height: 1.2;
+      color: #fff;
+      letter-spacing: -0.02em;
+    }
+
+    .slide-title .accent {
+      color: var(--accent, #00bfff);
+    }
+
+    /* ── BODY TEXT ────────────────────────────────────────────────────── */
+    .slide-body {
+      font-size: 13px;
+      line-height: 1.65;
+      color: rgba(255,255,255,0.55);
+      font-family: 'Space Mono', monospace;
+    }
+
+    /* ── TAGS / CHIPS ─────────────────────────────────────────────────── */
+    .slide-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 4px;
+    }
+
+    .tag {
+      font-family: 'Space Mono', monospace;
+      font-size: 10px;
+      padding: 3px 8px;
+      border-radius: 3px;
+      background: rgba(0,191,255,0.08);
+      border: 1px solid rgba(0,191,255,0.2);
+      color: rgba(0,191,255,0.8);
+      letter-spacing: 0.05em;
+    }
+
+    /* ── PROGRESS BAR ─────────────────────────────────────────────────── */
+    .progress-bar {
+      position: absolute;
+      bottom: 0; left: 0;
+      height: 2px;
+      background: var(--accent, #00bfff);
+      opacity: 0.6;
+      width: 0%;
+      transition: width linear;
+    }
+
+    /* ── SLIDE NAV DOTS ───────────────────────────────────────────────── */
+    .nav-dots {
+      display: flex;
+      gap: 6px;
+      margin-top: 16px;
+      justify-content: flex-end;
+      padding-right: 4px;
+    }
+
+    .dot {
+      width: 5px; height: 5px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.18);
+      cursor: pointer;
+      transition: background 0.3s, transform 0.3s;
+      pointer-events: auto;
+    }
+
+    .dot.active {
+      background: var(--accent, #00bfff);
+      transform: scale(1.4);
+    }
+
+    /* ── BRANDING BADGE (optional, ?brand=0 to hide) ──────────────────── */
+    .brand-badge {
+      position: absolute;
+      top: 0; left: 0;
+      transform: translateY(-100%) translateY(-8px);
+      font-family: 'Space Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 0.15em;
+      color: rgba(255,255,255,0.2);
+      text-transform: uppercase;
+    }
+
+    /* ── CORNER DECORATION ────────────────────────────────────────────── */
+    .slide::after {
+      content: '';
+      position: absolute;
+      bottom: 0; right: 0;
+      width: 60px; height: 60px;
+      background: radial-gradient(circle at bottom right, rgba(0,191,255,0.08), transparent 70%);
+      border-radius: 0 0 12px 0;
+      pointer-events: none;
+    }
+
+    /* ── SCANLINES (optional, ?fx=1) ─────────────────────────────────── */
+    body.scanlines #overlay-root::before {
+      content: '';
+      position: fixed; inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0,0,0,0.03) 2px,
+        rgba(0,0,0,0.03) 4px
+      );
+      pointer-events: none;
+      z-index: 1;
+    }
+  </style>
+</head>
+<body>
+
+<div id="overlay-root">
+  <div class="slide-viewport" id="viewport">
+    <div class="brand-badge" id="brandBadge"></div>
+    <div class="slide-strip" id="strip"></div>
+    <div class="nav-dots" id="navDots"></div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════════
+// OVERLAY.HTML  —  URL PARAMETER REFERENCE
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// Base URL: overlay.html?solid=1&brand=CdaProd&pos=bl&x=40&y=40&w=420&interval=6&accent=%2300bfff
+// Default URL: overlay.html?solid=1&brand=CdaProd&pos=bl&x=40&y=40&w=420&interval=6&accent=%2300bfff&c1=Architecture|CdaProd Middleware Registry|Unified service orchestration layer. One registry to own them all.|golang,fastapi,obs,davinci&c1icon=fa-solid%20fa-cloud&c2=Problem Space|Microservices as Technical Debt|Distributed complexity without discipline collapses into chaos. Every hop is a liability.|distributed,coupling,latency&c2icon=fa-solid%20fa-exclamation-triangle&c3=Pattern|Single Source of Truth|The God-Object Registry. One authoritative state tree, zero reconciliation overhead.|state,registry,consistency&c3icon=fa-solid%20fa-database&c4=Implementation|Middleware Without Lock-In|Adapters all the way down. Vendor interfaces are an implementation detail.|agnostic,adapters,portability&c4icon=fa-solid%20fa-puzzle-piece&c5=Internals|Autonomous Actors and Events|Scalable core. Event-driven actors replace blocking RPC chains.|events,actors,async&c5icon=fa-solid%20fa-robot&c6=Ops|Idempotent *Agnosticism*|Every operation is safe to retry. Every interface is swappable. Zero state surprise.|idempotent,cli,tooling&c6icon=fa-solid%20fa-terminal
+
+//
+//
+// ── GLOBAL LAYOUT ─────────────────────────────────────────────────────────────
+//   ?pos=bl|br|tl|tr|center   card anchor position (default: bl)
+//   ?x=40  ?y=40              px offset from the anchor corner
+//   ?w=420                    card width in px
+//   ?h=200                    card min-height in px
+//
+// ── TIMING ────────────────────────────────────────────────────────────────────
+//   ?interval=6               seconds per slide
+//   ?loop=1                   loop back after last slide (default: 1)
+//
+// ── APPEARANCE ────────────────────────────────────────────────────────────────
+//   ?accent=%2300bfff         accent hex color (URL-encode # as %23)
+//   ?titlesize=22             title font size in px
+//   ?solid=1                  show dark background (dev/preview mode)
+//   ?fx=1                     enable scanline overlay
+//   ?brand=CdaProd            label shown above card
+//
+// ── PER-CARD CONTENT  (pipe-delimited, URL-encoded) ───────────────────────────
+//   ?cN=eyebrow               card N, eyebrow label only
+//   ?cN=eyebrow|title         + title
+//   ?cN=eyebrow|title|body    + body text
+//   ?cN=eyebrow|title|body|tag1,tag2,tag3   + comma-separated tags
+//
+//   ?cNicon=fa-solid fa-cloud  Font Awesome class(es) for card N's icon
+//
+//   N = 1, 2, 3 … (no hard limit, scanned until cN is missing)
+//
+// ── TITLE ACCENT (auto) ───────────────────────────────────────────────────────
+//   The "right-middlish" word of the title is automatically wrapped in
+//   <span class="accent"> so the colored-word effect is always present.
+//
+//   To OVERRIDE which word is accented, wrap it with *asterisks* in the title:
+//     ?c1=Arch|My *Middleware* Registry|body text
+//   This gives you explicit control when needed.
+//
+// ── EXTERNAL SLIDES (JSON) ────────────────────────────────────────────────────
+//   ?slides=https://your-api/slides.json
+//   JSON array of objects: { eyebrow, title, body, tags[], icon }
+//   title may contain *word* for explicit accent control.
+//   URL params cN take priority over ?slides if both present.
+//
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ── PRIMITIVES ────────────────────────────────────────────────────────────────
+const QS = new URLSearchParams(location.search);
+
+function param(key, fallback)         { const v = QS.get(key); return v !== null ? v : fallback; }
+function paramInt(key, fallback)      { const v = parseInt(param(key, fallback)); return isNaN(v) ? fallback : v; }
+function paramBool(key, fallback=false){ const v = QS.get(key); if (v===null) return fallback; return v!=='0'&&v!=='false'; }
+
+// ── GLOBAL CONFIG ─────────────────────────────────────────────────────────────
+const CFG = {
+  pos:       param('pos', 'bl'),
+  x:         paramInt('x', 40),
+  y:         paramInt('y', 40),
+  w:         paramInt('w', 420),
+  h:         paramInt('h', 200),
+  interval:  paramInt('interval', 6),
+  loop:      paramBool('loop', true),
+  accent:    param('accent', '#00bfff'),
+  titlesize: paramInt('titlesize', 22),
+  solid:     paramBool('solid', false),
+  fx:        paramBool('fx', false),
+  brand:     param('brand', ''),
+  slidesUrl: param('slides', ''),
+};
+
+// ── CSS VARS + POSITIONING ────────────────────────────────────────────────────
+const root = document.documentElement;
+root.style.setProperty('--accent',     CFG.accent);
+root.style.setProperty('--slide-w',    CFG.w + 'px');
+root.style.setProperty('--slide-h',    CFG.h + 'px');
+root.style.setProperty('--title-size', CFG.titlesize + 'px');
+
+const POS_MAP = {
+  bl:     { bottom: CFG.y+'px', left:  CFG.x+'px', top: 'auto',  right: 'auto' },
+  br:     { bottom: CFG.y+'px', right: CFG.x+'px', top: 'auto',  left:  'auto' },
+  tl:     { top:    CFG.y+'px', left:  CFG.x+'px', bottom:'auto',right: 'auto' },
+  tr:     { top:    CFG.y+'px', right: CFG.x+'px', bottom:'auto',left:  'auto' },
+  center: { top: '50%', left: '50%', transform: 'translate(-50%,-50%)', bottom:'auto', right:'auto' },
+};
+const vp = document.getElementById('viewport');
+Object.assign(vp.style, POS_MAP[CFG.pos] || POS_MAP.bl);
+
+if (CFG.solid) document.body.classList.add('solid-bg');
+if (CFG.fx)    document.body.classList.add('scanlines');
+if (CFG.brand) document.getElementById('brandBadge').textContent = CFG.brand;
+
+// ── TITLE ACCENT ENGINE ───────────────────────────────────────────────────────
+// Wraps the accent word in <span class="accent">…</span>.
+//
+// Priority:
+//   1. Explicit: *word* syntax in the raw title string → accent that word
+//   2. Auto:     accent the word at floor(wordCount / 2)  ("right-middlish")
+//
+// Works on plain text titles coming from URL params and on JSON slide titles.
+// Strips any existing <span class='accent'>…</span> from JSON titles first
+// so they go through the same pipeline (no more hardcoded HTML in data).
+
+function accentTitle(raw) {
+  if (!raw) return '';
+
+  // Strip any legacy <span class='accent'>…</span> already in the string
+  const clean = raw.replace(/<span\s+class=['"]accent['"][^>]*>(.*?)<\/span>/gi, '$1');
+
+  // Case 1: explicit *word* markup
+  if (clean.includes('*')) {
+    // Replace first *word* found with accented span; remove remaining asterisks
+    let found = false;
+    return clean
+      .replace(/\*([^*]+)\*/g, (_, w) => {
+        if (!found) { found = true; return `<span class="accent">${w}</span>`; }
+        return w;
+      });
+  }
+
+  // Case 2: auto — tokenise preserving whitespace, find the target word token
+  // Tokens = alternating [whitespace, word, whitespace, word …]
+  const tokens = clean.split(/(\s+)/);           // keeps delimiters
+  const wordIndices = [];
+  tokens.forEach((t, i) => { if (t.trim()) wordIndices.push(i); });
+
+  if (!wordIndices.length) return clean;
+
+  // "right-middlish": bias toward the latter half for 2-word titles,
+  // exact middle for longer ones
+  const targetWordPos = Math.floor(wordIndices.length / 2);
+  const targetTokenIdx = wordIndices[targetWordPos];
+
+  tokens[targetTokenIdx] = `<span class="accent">${tokens[targetTokenIdx]}</span>`;
+  return tokens.join('');
+}
+
+// ── CARD PIPE PARSER ──────────────────────────────────────────────────────────
+// ?cN=eyebrow|title|body|tag1,tag2
+// ?cNicon=fa-solid fa-star
+//
+// Returns a slide object or null if the param doesn't exist.
+
+function parseCardParam(n) {
+  const raw = QS.get(`c${n}`);
+  if (raw === null) return null;
+
+  const parts = raw.split('|');
+  const eyebrow = parts[0] || '';
+  const titleRaw = parts[1] || '';
+  const body     = parts[2] || '';
+  const tagsRaw  = parts[3] || '';
+  const icon     = param(`c${n}icon`, '');
+
+  return {
+    eyebrow,
+    title: accentTitle(titleRaw),   // auto-accent applied here
+    body,
+    tags: tagsRaw ? tagsRaw.split(',').map(t => t.trim()).filter(Boolean) : [],
+    icon,
+  };
+}
+
+// ── SCAN cN PARAMS ────────────────────────────────────────────────────────────
+// Collect all ?c1, ?c2, … until the sequence breaks (max scan: 20)
+function parseUrlCards() {
+  const cards = [];
+  for (let n = 1; n <= 20; n++) {
+    const card = parseCardParam(n);
+    if (!card) break;
+    cards.push(card);
+  }
+  return cards;
+}
+
+// ── DEFAULT SLIDES ────────────────────────────────────────────────────────────
+// Plain text titles — accentTitle() applies the effect at runtime.
+// No hardcoded <span> in data. Swap these for your own defaults freely.
+const DEFAULT_SLIDES = [
+  { eyebrow: "Architecture",   icon: "fa-solid fa-cloud",                title: "CdaProd Middleware Registry",        body: "Unified service orchestration layer. One registry to own them all.",                              tags: ["golang","fastapi","obs","davinci"] },
+  { eyebrow: "Problem Space",  icon: "fa-solid fa-exclamation-triangle", title: "Microservices as Technical Debt",    body: "Distributed complexity without discipline collapses into chaos. Every hop is a liability.",      tags: ["distributed","coupling","latency"] },
+  { eyebrow: "Pattern",        icon: "fa-solid fa-database",             title: "Single Source of Truth",             body: "The God-Object Registry: one authoritative state tree, zero reconciliation overhead.",          tags: ["state","registry","consistency"] },
+  { eyebrow: "Implementation", icon: "fa-solid fa-puzzle-piece",         title: "Middleware Without Lock-In",         body: "Adapters all the way down. Vendor interfaces are an implementation detail.",                  tags: ["agnostic","adapters","portability"] },
+  { eyebrow: "Internals",      icon: "fa-solid fa-robot",                title: "Autonomous Actors and Events",       body: "Scalable core: event-driven actors replace blocking RPC chains.",                             tags: ["events","actors","async"] },
+  { eyebrow: "Ops",            icon: "fa-solid fa-terminal",             title: "Idempotent *Agnosticism*",           body: "Every operation is safe to retry. Every interface is swappable. Zero state surprise.",         tags: ["idempotent","cli","tooling"] },
+];
+
+// ── SLIDE LOADER ──────────────────────────────────────────────────────────────
+// Priority: URL card params  >  ?slides JSON  >  DEFAULT_SLIDES
+async function loadSlides() {
+  // 1. Inline URL params take highest priority
+  const urlCards = parseUrlCards();
+  if (urlCards.length) return urlCards;
+
+  // 2. External JSON
+  if (CFG.slidesUrl) {
+    try {
+      const res  = await fetch(CFG.slidesUrl);
+      const data = await res.json();
+      if (Array.isArray(data) && data.length) {
+        // Run accentTitle on any JSON titles too (strips legacy hardcoded spans)
+        return data.map(s => ({ ...s, title: accentTitle(s.title || '') }));
+      }
+    } catch(e) {
+      console.warn('[overlay] Failed to fetch slides from', CFG.slidesUrl, e);
+    }
+  }
+
+  // 3. Built-in defaults (accentTitle already applied at parse time above)
+  return DEFAULT_SLIDES.map(s => ({ ...s, title: accentTitle(s.title) }));
+}
+
+async function init() {
+  const slides = await loadSlides();
+  const strip   = document.getElementById('strip');
+  const dotsEl  = document.getElementById('navDots');
+  let current   = 0;
+  let timer;
+
+  // Build slide DOM
+  slides.forEach((s, i) => {
+    const el = document.createElement('div');
+    el.className = 'slide';
+    el.innerHTML = `
+      <div class="slide-meta">
+        <span class="slide-index">${String(i+1).padStart(2,'0')} / ${String(slides.length).padStart(2,'0')}</span>
+        <span class="slide-eyebrow">${s.eyebrow || ''}</span>
+        ${s.icon ? `<i class="slide-icon ${s.icon}"></i>` : ''}
+      </div>
+      <div class="slide-title">${s.title}</div>
+      ${s.body ? `<div class="slide-body">${s.body}</div>` : ''}
+      ${s.tags?.length ? `<div class="slide-tags">${s.tags.map(t=>`<span class="tag">${t}</span>`).join('')}</div>` : ''}
+      <div class="progress-bar" id="pb-${i}"></div>
+    `;
+    strip.appendChild(el);
+
+    // dot
+    const dot = document.createElement('div');
+    dot.className = 'dot' + (i === 0 ? ' active' : '');
+    dot.addEventListener('click', () => goTo(i, true));
+    dotsEl.appendChild(dot);
+  });
+
+  // ── CARD HEIGHT HELPER ─────────────────────────────────────────────────────
+  // CRITICAL: measure the *card* height, NOT vp.offsetHeight.
+  // vp has no explicit height set, so offsetHeight = 0 before layout settles.
+  function cardHeight(idx) {
+    const el = strip.children[idx];
+    return el ? el.offsetHeight : CFG.h;
+  }
+
+  // ── ACCUMULATED OFFSET to slide[idx] ──────────────────────────────────────
+  // Cards may have different heights, so we sum from 0..idx-1
+  function offsetToCard(idx) {
+    let total = 0;
+    for (let i = 0; i < idx; i++) {
+      total += cardHeight(i);
+    }
+    return total;
+  }
+
+  function goTo(idx, resetTimer = false) {
+    document.querySelectorAll('.dot').forEach((d,i) => d.classList.toggle('active', i===idx));
+
+    // reset previous progress bar
+    const prevPb = document.getElementById(`pb-${current}`);
+    if (prevPb) { prevPb.style.transition = 'none'; prevPb.style.width = '0%'; }
+
+    current = idx;
+
+    // Clamp viewport height to the current card height so only one card shows
+    const h = cardHeight(idx);
+    vp.style.height = h + 'px';
+
+    strip.style.transform = `translateY(-${offsetToCard(idx)}px)`;
+
+    // animate progress bar
+    const pb = document.getElementById(`pb-${idx}`);
+    if (pb) {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          pb.style.transition = `width ${CFG.interval}s linear`;
+          pb.style.width = '100%';
+        });
+      });
+    }
+
+    if (resetTimer) { clearTimeout(timer); scheduleNext(); }
+  }
+
+  function advance() {
+    const next = current + 1;
+    if (next >= slides.length) {
+      if (CFG.loop) goTo(0);
+    } else {
+      goTo(next);
+    }
+  }
+
+  function scheduleNext() {
+    timer = setTimeout(() => { advance(); scheduleNext(); }, CFG.interval * 1000);
+  }
+
+  // tap/click to advance
+  vp.addEventListener('click', (e) => {
+    if (e.target.classList.contains('dot')) return;
+    clearTimeout(timer);
+    advance();
+    scheduleNext();
+  });
+
+  // resize recalc
+  window.addEventListener('resize', () => {
+    strip.style.transition = 'none';
+    const h = cardHeight(current);
+    vp.style.height = h + 'px';
+    strip.style.transform = `translateY(-${offsetToCard(current)}px)`;
+    requestAnimationFrame(() => { strip.style.transition = ''; });
+  });
+
+  // IMPORTANT: defer first goTo by two rAF ticks so DOM has laid out
+  // (fixes blank-white bug in WKWebView / OBS browser source where
+  //  offsetHeight returns 0 if read synchronously after appendChild)
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      goTo(0);
+      scheduleNext();
+    });
+  });
+}
+
+init();
+</script>
+</body>
+</html>

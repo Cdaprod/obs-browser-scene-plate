@@ -1,0 +1,1191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+  />
+  <title>Explorer — Zoom v3.1 Attached Preview</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;600;700;800&display=swap');
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --bg: #09090f;
+      --surface: #0f0f18;
+      --card-bg: #111120;
+      --border: rgba(255,255,255,0.07);
+      --text: #e8e8f0;
+      --muted: rgba(255,255,255,0.42);
+      --accent: #5b7fff;
+      --gap: 6px;
+      --radius: 10px;
+      --header-h: 48px;
+      --soft-shadow: 0 24px 80px rgba(0,0,0,0.45);
+      --hero-shadow: 0 40px 120px rgba(0,0,0,0.58), 0 0 0 1px rgba(255,255,255,0.05);
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Syne', sans-serif;
+      overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+      user-select: none;
+    }
+
+    body {
+      background:
+        radial-gradient(circle at top, rgba(91,127,255,0.08), transparent 28%),
+        var(--bg);
+    }
+
+    /* ───────────────── HEADER ───────────────── */
+    #header {
+      position: fixed;
+      inset: 0 0 auto 0;
+      height: var(--header-h);
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 14px;
+      background: rgba(9, 9, 15, 0.72);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .logo {
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .logo em {
+      color: var(--accent);
+      font-style: normal;
+    }
+
+    .meta {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }
+
+    .col-btns {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .col-btn {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      line-height: 1;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease;
+    }
+
+    .col-btn:hover,
+    .col-btn.active {
+      border-color: rgba(91,127,255,0.55);
+      color: var(--accent);
+      background: rgba(91,127,255,0.1);
+    }
+
+    /* ───────────────── VIEWPORT / GRID ───────────────── */
+    #viewport {
+      position: fixed;
+      top: var(--header-h);
+      left: 0;
+      right: 0;
+      bottom: 0;
+      overflow-x: hidden;
+      overflow-y: auto;
+      z-index: 1;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    #viewport.locked {
+      overflow: hidden;
+      touch-action: none;
+    }
+
+    #grid-wrap {
+      min-height: 100%;
+      padding: var(--gap);
+      will-change: transform, opacity, filter;
+      transform-origin: center top;
+    }
+
+    #grid {
+      columns: 4;
+      column-gap: var(--gap);
+    }
+
+    .card {
+      break-inside: avoid;
+      display: block;
+      position: relative;
+      margin-bottom: var(--gap);
+      border-radius: var(--radius);
+      overflow: hidden;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      cursor: pointer;
+      will-change: transform, opacity;
+      display: block;
+    }
+
+    .card-media {
+      position: relative;
+      width: 100%;
+      display: block;
+      overflow: hidden;
+      background: #0c0c14;
+    }
+
+    .card img {
+      width: 100%;
+      height: auto;
+      display: block;
+      object-fit: cover;
+      transform: scale(1.001);
+    }
+
+    .card.tall .card-media { aspect-ratio: 9 / 16; }
+    .card.wide .card-media { aspect-ratio: 16 / 9; }
+    .card.sq   .card-media { aspect-ratio: 1 / 1; }
+
+    .card.audio {
+      min-height: 92px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background:
+        radial-gradient(circle at 50% 35%, rgba(91,127,255,0.14), transparent 35%),
+        linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0));
+    }
+
+    .card-audio-inner {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .aud-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      border: 1px solid rgba(255,255,255,0.12);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .aud-label {
+      font-family: 'DM Mono', monospace;
+      font-size: 9px;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+
+    .card-overlay {
+      position: absolute;
+      inset: auto 0 0 0;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      background: linear-gradient(to top, rgba(9,9,15,0.72), rgba(9,9,15,0));
+      pointer-events: none;
+      transition: opacity 0.22s ease;
+    }
+
+    .card-overlay .title {
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1.05;
+    }
+
+    .card-overlay .sub {
+      font-family: 'DM Mono', monospace;
+      font-size: 8px;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+    }
+
+    #grid-wrap.zooming .card:not(.source-card) .card-overlay {
+      opacity: 0;
+    }
+
+    /* ───────────────── FRONT LAYER / PREVIEW ───────────────── */
+    #front {
+      position: fixed;
+      inset: 0;
+      z-index: 80;
+      pointer-events: none;
+      opacity: 0;
+    }
+
+    #front.open {
+      pointer-events: auto;
+    }
+
+    #front-scrim {
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(circle at center, rgba(8,8,14,0.08), rgba(8,8,14,0.5) 72%, rgba(8,8,14,0.68)),
+        rgba(6, 6, 10, 0.18);
+      opacity: 0;
+    }
+
+    #hero {
+      position: absolute;
+      overflow: hidden;
+      border-radius: var(--radius);
+      background: #05050a;
+      box-shadow: none;
+      will-change: left, top, width, height, border-radius, transform, opacity;
+      isolation: isolate;
+    }
+
+    #hero-media {
+      position: absolute;
+      inset: 0;
+      background: #05050a;
+    }
+
+    #hero-media img,
+    #hero-media video {
+      position: absolute;
+      display: block;
+      object-fit: contain;
+      background: #05050a;
+    }
+
+    #hero-media.audio {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background:
+        radial-gradient(circle at center, rgba(91,127,255,0.12), transparent 34%),
+        linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0));
+    }
+
+    .hero-audio-inner {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .hero-audio-inner .aud-icon {
+      width: 44px;
+      height: 44px;
+      font-size: 18px;
+    }
+
+    .hero-audio-inner .aud-label {
+      font-size: 10px;
+    }
+
+    /* soft matte, not hard bars */
+    #hero-matte-top,
+    #hero-matte-bottom {
+      position: absolute;
+      left: 0;
+      right: 0;
+      pointer-events: none;
+      opacity: 0;
+    }
+
+    #hero-matte-top {
+      background: linear-gradient(to bottom, rgba(0,0,0,0.72), rgba(0,0,0,0.24) 50%, rgba(0,0,0,0));
+    }
+
+    #hero-matte-bottom {
+      background: linear-gradient(to top, rgba(0,0,0,0.72), rgba(0,0,0,0.24) 50%, rgba(0,0,0,0));
+    }
+
+    #hero-frame {
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
+      pointer-events: none;
+    }
+
+    #detail-ui {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 3;
+      padding: 22px 22px 26px;
+      opacity: 0;
+      transform: translateY(14px);
+      background:
+        linear-gradient(to top, rgba(9,9,15,0.92), rgba(9,9,15,0.56) 28%, rgba(9,9,15,0));
+      pointer-events: none;
+    }
+
+    #detail-topline {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+      font-family: 'DM Mono', monospace;
+      font-size: 9px;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+
+    .dot {
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.2);
+    }
+
+    #detail-title {
+      font-size: clamp(18px, 2.6vw, 26px);
+      font-weight: 800;
+      line-height: 0.96;
+      margin-bottom: 7px;
+      max-width: min(680px, 88%);
+    }
+
+    #detail-meta {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      line-height: 1.4;
+      letter-spacing: 0.05em;
+      color: rgba(255,255,255,0.62);
+      max-width: min(760px, 92%);
+    }
+
+    #close-btn {
+      position: fixed;
+      top: 12px;
+      right: 14px;
+      z-index: 100;
+      width: 34px;
+      height: 34px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.08);
+      color: var(--text);
+      font-size: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      pointer-events: none;
+      cursor: pointer;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+    }
+
+    #close-btn.visible {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    /* ───────────────── LAB ───────────────── */
+    #lab {
+      position: fixed;
+      left: 50%;
+      bottom: max(14px, env(safe-area-inset-bottom));
+      transform: translateX(-50%);
+      z-index: 110;
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: center;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(10,10,16,0.86);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      font-family: 'DM Mono', monospace;
+      font-size: 9px;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      transition: opacity 0.25s ease, transform 0.25s ease;
+    }
+
+    #lab.hidden {
+      opacity: 0;
+      pointer-events: none;
+      transform: translateX(-50%) translateY(8px);
+    }
+
+    .lb {
+      font-family: 'DM Mono', monospace;
+      font-size: 9px;
+      line-height: 1;
+      padding: 5px 9px;
+      border-radius: 999px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .lb:hover,
+    .lb.active {
+      color: var(--accent);
+      border-color: rgba(91,127,255,0.55);
+      background: rgba(91,127,255,0.08);
+    }
+
+    .divider {
+      width: 1px;
+      height: 14px;
+      background: var(--border);
+      margin: 0 2px;
+    }
+
+    #ease-wrap {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    #ease-slider {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 84px;
+      height: 2px;
+      border-radius: 2px;
+      background: rgba(255,255,255,0.12);
+      outline: none;
+      cursor: pointer;
+    }
+
+    #ease-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      background: var(--accent);
+      cursor: pointer;
+    }
+
+    #ease-val {
+      color: var(--accent);
+      min-width: 26px;
+      text-align: right;
+    }
+
+    @media (max-width: 820px) {
+      #grid {
+        columns: 3;
+      }
+
+      #detail-ui {
+        padding: 18px 16px 20px;
+      }
+
+      #detail-title {
+        max-width: 94%;
+      }
+    }
+
+    @media (max-width: 540px) {
+      #header {
+        padding: 0 10px;
+      }
+
+      .logo {
+        font-size: 11px;
+        letter-spacing: 0.08em;
+      }
+
+      .meta {
+        display: none;
+      }
+
+      #grid {
+        columns: 2;
+      }
+
+      #lab {
+        width: min(94vw, 560px);
+        border-radius: 18px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="header">
+    <div class="logo"><em>C</em>DAPROD · EXPLORER</div>
+    <div class="meta" id="item-count">— items</div>
+    <div class="col-btns">
+      <button class="col-btn active" onclick="setCols(4, this)">4</button>
+      <button class="col-btn" onclick="setCols(3, this)">3</button>
+      <button class="col-btn" onclick="setCols(2, this)">2</button>
+    </div>
+  </div>
+
+  <div id="viewport">
+    <div id="grid-wrap">
+      <div id="grid"></div>
+    </div>
+  </div>
+
+  <div id="front">
+    <div id="front-scrim"></div>
+
+    <div id="hero">
+      <div id="hero-media"></div>
+      <div id="hero-matte-top"></div>
+      <div id="hero-matte-bottom"></div>
+      <div id="hero-frame"></div>
+
+      <div id="detail-ui">
+        <div id="detail-topline">
+          <span>Preview</span>
+          <span class="dot"></span>
+          <span id="detail-kind">Media</span>
+        </div>
+        <div id="detail-title"></div>
+        <div id="detail-meta"></div>
+      </div>
+    </div>
+  </div>
+
+  <button id="close-btn" aria-label="Close preview" onclick="closeDetail()">✕</button>
+
+  <div id="lab">
+    <span>EASE</span>
+    <button class="lb active" onclick="setEaseFamily(this,'power4.inOut')">power4</button>
+    <button class="lb" onclick="setEaseFamily(this,'power2.inOut')">power2</button>
+    <button class="lb" onclick="setEaseFamily(this,'expo.inOut')">expo</button>
+    <button class="lb" onclick="setEaseFamily(this,'circ.inOut')">circ</button>
+    <div class="divider"></div>
+    <div id="ease-wrap">
+      <span>FEEL</span>
+      <input
+        id="ease-slider"
+        type="range"
+        min="0"
+        max="100"
+        step="1"
+        value="55"
+        oninput="setEaseIntensityFromSlider(this.value)"
+      />
+      <span id="ease-val">55</span>
+    </div>
+  </div>
+
+  <script>
+    const ASSETS = [
+      { id: 1,  type: 'wide',  src: 'https://picsum.photos/seed/a1/960/540',  title: 'Setup Overview',      meta: 'IMG · 3.2MB · 2024-03-12' },
+      { id: 2,  type: 'tall',  src: 'https://picsum.photos/seed/a2/720/1280', title: 'Self Portrait',       meta: 'IMG · 2.1MB · 2024-03-11' },
+      { id: 3,  type: 'sq',    src: 'https://picsum.photos/seed/a3/800/800',  title: 'Close Up Study',      meta: 'IMG · 1.8MB · 2024-03-10' },
+      { id: 4,  type: 'sq',    src: 'https://picsum.photos/seed/a4/800/800',  title: 'Night Drive',         meta: 'VID · 47MB · 2024-03-09' },
+      { id: 5,  type: 'tall',  src: 'https://picsum.photos/seed/a5/720/1280', title: 'Street Sign',         meta: 'IMG · 1.4MB · 2024-03-09' },
+      { id: 6,  type: 'sq',    src: 'https://picsum.photos/seed/a6/800/800',  title: 'Trash Day',           meta: 'IMG · 2.7MB · 2024-03-08' },
+      { id: 7,  type: 'wide',  src: 'https://picsum.photos/seed/a7/960/540',  title: 'Walking Trail',       meta: 'VID · 91MB · 2024-03-07' },
+      { id: 8,  type: 'tall',  src: 'https://picsum.photos/seed/a8/720/1280', title: 'Lava Lamp Green',     meta: 'VID · 34MB · 2024-03-06' },
+      { id: 9,  type: 'sq',    src: 'https://picsum.photos/seed/a9/800/800',  title: 'Kids at Target',      meta: 'IMG · 1.9MB · 2024-03-06' },
+      { id: 10, type: 'wide',  src: 'https://picsum.photos/seed/a10/960/540', title: 'Black Car Snow',      meta: 'VID · 55MB · 2024-03-05' },
+      { id: 11, type: 'tall',  src: 'https://picsum.photos/seed/a11/720/1280',title: 'Drink Closeup',       meta: 'VID · 22MB · 2024-03-05' },
+      { id: 12, type: 'sq',    src: 'https://picsum.photos/seed/a12/800/800', title: 'Sand Pour',           meta: 'VID · 18MB · 2024-03-04' },
+      { id: 13, type: 'audio', src: null,                                        title: 'Voice Memo 01',      meta: 'AUD · 4.2MB · 2024-03-04' },
+      { id: 14, type: 'tall',  src: 'https://picsum.photos/seed/a14/720/1280', title: 'Camera Rig',         meta: 'IMG · 3.1MB · 2024-03-03' },
+      { id: 15, type: 'wide',  src: 'https://picsum.photos/seed/a15/960/540',  title: 'Toys Aisle',         meta: 'VID · 62MB · 2024-03-03' },
+      { id: 16, type: 'sq',    src: 'https://picsum.photos/seed/a16/800/800',  title: 'Lava Lamp Blue',     meta: 'VID · 29MB · 2024-03-02' },
+      { id: 17, type: 'tall',  src: 'https://picsum.photos/seed/a17/720/1280', title: 'Smoke Driveway',     meta: 'VID · 77MB · 2024-03-02' },
+      { id: 18, type: 'sq',    src: 'https://picsum.photos/seed/a18/800/800',  title: 'Paulding County',    meta: 'IMG · 1.2MB · 2024-03-01' },
+      { id: 19, type: 'audio', src: null,                                        title: 'Voice Memo 02',      meta: 'AUD · 2.8MB · 2024-03-01' },
+      { id: 20, type: 'tall',  src: 'https://picsum.photos/seed/a20/720/1280', title: 'Sunglasses Self',    meta: 'IMG · 2.3MB · 2024-02-28' },
+      { id: 21, type: 'wide',  src: 'https://picsum.photos/seed/a21/960/540',  title: 'Code Screenshot',    meta: 'SCN · 0.9MB · 2024-02-27' },
+      { id: 22, type: 'sq',    src: 'https://picsum.photos/seed/a22/800/800',  title: 'Shopping Carts',     meta: 'IMG · 1.7MB · 2024-02-27' },
+      { id: 23, type: 'audio', src: null,                                        title: 'Voice Memo 03',      meta: 'AUD · 6.1MB · 2024-02-26' },
+      { id: 24, type: 'wide',  src: 'https://picsum.photos/seed/a24/960/540',  title: 'County Sign Wide',   meta: 'IMG · 2.0MB · 2024-02-26' },
+      { id: 25, type: 'sq',    src: 'https://picsum.photos/seed/a25/800/800',  title: 'Holding Device',     meta: 'IMG · 1.5MB · 2024-02-25' },
+      { id: 26, type: 'tall',  src: 'https://picsum.photos/seed/a26/720/1280', title: 'Concert Lights',     meta: 'VID · 48MB · 2024-02-25' },
+      { id: 27, type: 'audio', src: null,                                        title: 'Voice Memo 04',      meta: 'AUD · 3.4MB · 2024-02-24' },
+      { id: 28, type: 'sq',    src: 'https://picsum.photos/seed/a28/800/800',  title: 'Document Scan',      meta: 'DOC · 0.4MB · 2024-02-24' }
+    ];
+
+    let currentEaseFamily = 'power4.inOut';
+    let easeIntensity = 55; /* 0-100 */
+
+    let isOpen = false;
+    let activeAsset = null;
+    let activeCard = null;
+    let openTL = null;
+    let closeTL = null;
+
+    let sourceCardRect = null;
+    let sourceCardRadius = 10;
+    let sourceOrigin = { x: 0, y: 0 };
+    let currentHeroLayout = null;
+
+    const els = {
+      viewport: document.getElementById('viewport'),
+      grid: document.getElementById('grid'),
+      gridWrap: document.getElementById('grid-wrap'),
+      itemCount: document.getElementById('item-count'),
+      front: document.getElementById('front'),
+      frontScrim: document.getElementById('front-scrim'),
+      hero: document.getElementById('hero'),
+      heroMedia: document.getElementById('hero-media'),
+      heroMatteTop: document.getElementById('hero-matte-top'),
+      heroMatteBottom: document.getElementById('hero-matte-bottom'),
+      detailTitle: document.getElementById('detail-title'),
+      detailMeta: document.getElementById('detail-meta'),
+      detailKind: document.getElementById('detail-kind'),
+      detailUi: document.getElementById('detail-ui'),
+      closeBtn: document.getElementById('close-btn'),
+      lab: document.getElementById('lab'),
+      easeVal: document.getElementById('ease-val'),
+      easeSlider: document.getElementById('ease-slider')
+    };
+
+    function kindFromMeta(meta = '') {
+      return meta.split('·')[0]?.trim() || 'MEDIA';
+    }
+
+    function getTransitionProfile() {
+      const t = easeIntensity / 100;
+
+      return {
+        zoomScale: lerp(1.35, 3.0, t),
+        zoomDur: lerp(0.64, 1.32, t),
+        blurPx: lerp(0.5, 2.3, t),
+        gridDimOpacity: lerp(0.42, 0.12, t),
+        scrimOpacity: lerp(0.32, 0.66, t),
+        uiDelay: lerp(0.30, 0.56, t),
+        matteStrength: lerp(0.42, 0.92, t),
+        cardHideDelay: lerp(0.02, 0.08, t)
+      };
+    }
+
+    function lerp(a, b, t) {
+      return a + (b - a) * t;
+    }
+
+    function buildGrid() {
+      els.grid.innerHTML = '';
+      els.itemCount.textContent = `${ASSETS.length} items`;
+
+      ASSETS.forEach((asset, i) => {
+        const card = document.createElement('article');
+        card.className = `card ${asset.type}`;
+        card.dataset.id = String(asset.id);
+
+        if (asset.type === 'audio') {
+          card.innerHTML = `
+            <div class="card-audio-inner">
+              <div class="aud-icon">♪</div>
+              <div class="aud-label">AUDIO</div>
+            </div>
+            <div class="card-overlay">
+              <div class="title">${escapeHtml(asset.title)}</div>
+              <div class="sub">${escapeHtml(asset.meta)}</div>
+            </div>
+          `;
+        } else {
+          card.innerHTML = `
+            <div class="card-media">
+              <img src="${asset.src}" alt="${escapeAttr(asset.title)}" draggable="false" />
+            </div>
+            <div class="card-overlay">
+              <div class="title">${escapeHtml(asset.title)}</div>
+              <div class="sub">${escapeHtml(asset.meta)}</div>
+            </div>
+          `;
+        }
+
+        gsap.set(card, { opacity: 0, y: 14, scale: 0.97 });
+        gsap.to(card, {
+          opacity: 1,
+          y: 0,
+          scale: 1,
+          duration: 0.52,
+          ease: 'power3.out',
+          delay: 0.02 + i * 0.02
+        });
+
+        card.addEventListener('click', () => openDetail(asset, card));
+        els.grid.appendChild(card);
+      });
+    }
+
+    function openDetail(asset, cardEl) {
+      if (isOpen) return;
+      isOpen = true;
+      activeAsset = asset;
+      activeCard = cardEl;
+
+      if (closeTL) closeTL.kill();
+      if (openTL) openTL.kill();
+
+      const profile = getTransitionProfile();
+
+      document.querySelectorAll('.card').forEach(card => {
+        card.classList.toggle('source-card', card === cardEl);
+      });
+
+      const cardRect = cardEl.getBoundingClientRect();
+      const vpRect = els.viewport.getBoundingClientRect();
+      const scrollY = els.viewport.scrollTop;
+
+      const originX = (cardRect.left + cardRect.width / 2) - vpRect.left;
+      const originY = (cardRect.top + cardRect.height / 2) - vpRect.top + scrollY;
+
+      sourceCardRect = {
+        left: cardRect.left,
+        top: cardRect.top,
+        width: cardRect.width,
+        height: cardRect.height
+      };
+      sourceCardRadius =
+        parseFloat(getComputedStyle(cardEl).borderTopLeftRadius) || 10;
+      sourceOrigin = { x: originX, y: originY };
+
+      els.gridWrap.style.transformOrigin = `${originX}px ${originY}px`;
+
+      const heroStart = {
+        left: sourceCardRect.left,
+        top: sourceCardRect.top,
+        width: sourceCardRect.width,
+        height: sourceCardRect.height,
+        radius: sourceCardRadius
+      };
+
+      currentHeroLayout = computeHeroLayout(asset);
+      mountHeroMedia(asset, currentHeroLayout);
+      applyHeroBox(heroStart);
+      applyMatte(currentHeroLayout, 0, profile.matteStrength);
+
+      els.detailTitle.textContent = asset.title;
+      els.detailMeta.textContent = asset.meta;
+      els.detailKind.textContent = kindFromMeta(asset.meta);
+
+      els.front.classList.add('open');
+      els.viewport.classList.add('locked');
+      els.gridWrap.classList.add('zooming');
+
+      gsap.set(els.front, { opacity: 1 });
+      gsap.set(els.frontScrim, { opacity: 0 });
+      gsap.set(els.detailUi, { opacity: 0, y: 14 });
+      gsap.set(els.closeBtn, { opacity: 0, scale: 0.88 });
+      els.closeBtn.classList.add('visible');
+
+      openTL = gsap.timeline({
+        defaults: { overwrite: 'auto' }
+      });
+
+      openTL
+        .to(els.frontScrim, {
+          opacity: profile.scrimOpacity,
+          duration: 0.28,
+          ease: 'power2.out'
+        }, 0)
+        .to(els.gridWrap, {
+          scale: profile.zoomScale,
+          duration: profile.zoomDur,
+          ease: currentEaseFamily
+        }, 0)
+        .to(els.gridWrap, {
+          opacity: profile.gridDimOpacity,
+          filter: `blur(${profile.blurPx}px)`,
+          duration: profile.zoomDur * 0.72,
+          ease: 'power2.out'
+        }, profile.zoomDur * 0.14)
+        .to(cardEl, {
+          opacity: 0,
+          duration: 0.14,
+          ease: 'power1.out'
+        }, profile.cardHideDelay)
+        .to(els.hero, {
+          left: currentHeroLayout.left,
+          top: currentHeroLayout.top,
+          width: currentHeroLayout.width,
+          height: currentHeroLayout.height,
+          borderRadius: currentHeroLayout.radius,
+          boxShadow: 'var(--hero-shadow)',
+          duration: profile.zoomDur,
+          ease: currentEaseFamily,
+          onUpdate: () => {
+            syncMountedMedia(activeAsset, getHeroBox(), currentHeroLayout);
+          }
+        }, 0)
+        .to({}, {
+          duration: profile.zoomDur * 0.44,
+          onUpdate: function () {
+            applyMatte(currentHeroLayout, this.progress(), profile.matteStrength);
+          }
+        }, profile.zoomDur * 0.16)
+        .to(els.detailUi, {
+          opacity: 1,
+          y: 0,
+          duration: 0.34,
+          ease: 'power3.out'
+        }, profile.zoomDur * profile.uiDelay)
+        .to(els.closeBtn, {
+          opacity: 1,
+          scale: 1,
+          duration: 0.22,
+          ease: 'power2.out'
+        }, profile.zoomDur * (profile.uiDelay - 0.06));
+    }
+
+    function closeDetail() {
+      if (!isOpen || !activeCard || !sourceCardRect) return;
+
+      if (openTL) openTL.kill();
+      if (closeTL) closeTL.kill();
+
+      const profile = getTransitionProfile();
+
+      els.gridWrap.style.transformOrigin = `${sourceOrigin.x}px ${sourceOrigin.y}px`;
+
+      const target = {
+        left: sourceCardRect.left,
+        top: sourceCardRect.top,
+        width: sourceCardRect.width,
+        height: sourceCardRect.height,
+        radius: sourceCardRadius
+      };
+
+      const collapseDur = Math.max(0.48, profile.zoomDur * 0.82);
+
+      closeTL = gsap.timeline({
+        defaults: { overwrite: 'auto' },
+        onComplete: () => {
+          gsap.set(els.gridWrap, { clearProps: 'transform,opacity,filter,transformOrigin' });
+          gsap.set(activeCard, { clearProps: 'opacity' });
+          gsap.set(els.hero, { clearProps: 'all' });
+          gsap.set(els.detailUi, { clearProps: 'all' });
+          gsap.set(els.closeBtn, { clearProps: 'all' });
+          gsap.set(els.frontScrim, { clearProps: 'all' });
+
+          els.heroMedia.innerHTML = '';
+          els.heroMedia.className = '';
+          els.heroMatteTop.style.opacity = '0';
+          els.heroMatteBottom.style.opacity = '0';
+          els.heroMatteTop.style.height = '0px';
+          els.heroMatteBottom.style.height = '0px';
+
+          els.front.classList.remove('open');
+          els.viewport.classList.remove('locked');
+          els.gridWrap.classList.remove('zooming');
+          els.closeBtn.classList.remove('visible');
+          els.front.style.opacity = '0';
+
+          document.querySelectorAll('.card').forEach(card => {
+            card.classList.remove('source-card');
+          });
+
+          isOpen = false;
+          activeAsset = null;
+          activeCard = null;
+          currentHeroLayout = null;
+          sourceCardRect = null;
+        }
+      });
+
+      closeTL
+        .to(els.detailUi, {
+          opacity: 0,
+          y: 12,
+          duration: 0.18,
+          ease: 'power2.in'
+        }, 0)
+        .to(els.closeBtn, {
+          opacity: 0,
+          scale: 0.9,
+          duration: 0.18,
+          ease: 'power2.in'
+        }, 0)
+        .to(els.frontScrim, {
+          opacity: 0,
+          duration: collapseDur * 0.58,
+          ease: 'power2.out'
+        }, 0.02)
+        .to(els.gridWrap, {
+          opacity: 1,
+          filter: 'blur(0px)',
+          duration: collapseDur * 0.48,
+          ease: 'power2.out'
+        }, 0.08)
+        .to(els.gridWrap, {
+          scale: 1,
+          duration: collapseDur,
+          ease: currentEaseFamily
+        }, 0.08)
+        .to(els.hero, {
+          left: target.left,
+          top: target.top,
+          width: target.width,
+          height: target.height,
+          borderRadius: target.radius,
+          boxShadow: '0 0 0 rgba(0,0,0,0)',
+          duration: collapseDur,
+          ease: currentEaseFamily,
+          onUpdate: () => {
+            syncMountedMedia(activeAsset, getHeroBox(), currentHeroLayout || target);
+          }
+        }, 0.04)
+        .to({}, {
+          duration: collapseDur * 0.42,
+          onUpdate: function () {
+            const p = 1 - this.progress();
+            applyMatte(currentHeroLayout || target, p, profile.matteStrength);
+          }
+        }, 0)
+        .to(activeCard, {
+          opacity: 1,
+          duration: 0.10,
+          ease: 'power1.out'
+        }, collapseDur * 0.84)
+        .to(els.hero, {
+          opacity: 0.001,
+          duration: 0.08,
+          ease: 'none'
+        }, collapseDur * 0.93);
+    }
+
+    function computeHeroLayout(asset) {
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+
+      const closeButtonZone = 52;
+      const topSafe = 12 + closeButtonZone;
+      const bottomSafe = 18;
+      const sidePad = Math.max(12, Math.round(vw * 0.02));
+
+      const availableW = vw - sidePad * 2;
+      const availableH = vh - topSafe - bottomSafe;
+
+      let mediaRatio = 16 / 9;
+      if (asset.type === 'tall') mediaRatio = 9 / 16;
+      else if (asset.type === 'sq') mediaRatio = 1;
+      else if (asset.type === 'wide') mediaRatio = 16 / 9;
+      else if (asset.type === 'audio') mediaRatio = 16 / 9;
+
+      const uiReserve = Math.min(116, Math.max(92, vh * 0.15));
+      const maxMediaH = availableH - uiReserve;
+
+      let mediaW = availableW;
+      let mediaH = mediaW / mediaRatio;
+
+      if (mediaH > maxMediaH) {
+        mediaH = maxMediaH;
+        mediaW = mediaH * mediaRatio;
+      }
+
+      const width = Math.round(mediaW);
+      const height = Math.round(mediaH + uiReserve);
+
+      /* actual vertical centering of the whole preview panel */
+      const left = Math.round((vw - width) / 2);
+      const top = Math.round(topSafe + (availableH - height) / 2);
+
+      return {
+        left,
+        top,
+        width,
+        height,
+        radius: 16,
+        mediaTop: 0,
+        mediaHeight: Math.round(mediaH),
+        mediaRatio
+      };
+    }
+
+    function mountHeroMedia(asset, heroLayout) {
+      els.heroMedia.innerHTML = '';
+      els.heroMedia.className = '';
+
+      if (asset.type === 'audio') {
+        els.heroMedia.className = 'audio';
+        els.heroMedia.innerHTML = `
+          <div class="hero-audio-inner">
+            <div class="aud-icon">♪</div>
+            <div class="aud-label">AUDIO PREVIEW</div>
+          </div>
+        `;
+        return;
+      }
+
+      const img = document.createElement('img');
+      img.src = asset.src;
+      img.alt = asset.title;
+      img.draggable = false;
+      els.heroMedia.appendChild(img);
+      syncMountedMedia(asset, heroLayout, heroLayout);
+    }
+
+    function syncMountedMedia(asset, box, layoutRef) {
+      if (!asset || asset.type === 'audio') return;
+
+      const node = els.heroMedia.querySelector('img, video');
+      if (!node) return;
+
+      const mediaRatio =
+        asset.type === 'tall' ? 9 / 16 :
+        asset.type === 'sq'   ? 1 :
+        16 / 9;
+
+      const areaW = box.width;
+      const maxMediaH = layoutRef?.mediaHeight || box.height;
+
+      let finalW = areaW;
+      let finalH = finalW / mediaRatio;
+
+      if (finalH > maxMediaH) {
+        finalH = maxMediaH;
+        finalW = finalH * mediaRatio;
+      }
+
+      const x = (areaW - finalW) / 2;
+      const y = 0;
+
+      node.style.left = `${x}px`;
+      node.style.top = `${y}px`;
+      node.style.width = `${finalW}px`;
+      node.style.height = `${finalH}px`;
+    }
+
+    function applyMatte(heroLayout, progress, matteStrength = 1) {
+      if (!heroLayout || activeAsset?.type === 'audio') {
+        els.heroMatteTop.style.opacity = '0';
+        els.heroMatteBottom.style.opacity = '0';
+        return;
+      }
+
+      const totalH = getHeroBox().height;
+      const mediaH = heroLayout.mediaHeight || totalH;
+      const unused = Math.max(0, totalH - mediaH);
+      const split = unused / 2;
+
+      els.heroMatteTop.style.top = '0px';
+      els.heroMatteTop.style.height = `${split}px`;
+      els.heroMatteBottom.style.bottom = '0px';
+      els.heroMatteBottom.style.height = `${split}px`;
+
+      const base = split > 4 ? 0.92 * matteStrength : 0;
+      const matteOpacity = Math.min(0.95, base * progress);
+
+      els.heroMatteTop.style.opacity = String(matteOpacity);
+      els.heroMatteBottom.style.opacity = String(matteOpacity);
+    }
+
+    function applyHeroBox(box) {
+      gsap.set(els.hero, {
+        left: box.left,
+        top: box.top,
+        width: box.width,
+        height: box.height,
+        borderRadius: box.radius,
+        boxShadow: '0 0 0 rgba(0,0,0,0)',
+        opacity: 1
+      });
+    }
+
+    function getHeroBox() {
+      return {
+        left: parseFloat(gsap.getProperty(els.hero, 'left')) || 0,
+        top: parseFloat(gsap.getProperty(els.hero, 'top')) || 0,
+        width: parseFloat(gsap.getProperty(els.hero, 'width')) || 0,
+        height: parseFloat(gsap.getProperty(els.hero, 'height')) || 0
+      };
+    }
+
+    function setCols(n, btn) {
+      if (isOpen) return;
+      els.grid.style.columns = String(n);
+      document.querySelectorAll('.col-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    }
+
+    function setEaseFamily(btn, name) {
+      currentEaseFamily = name;
+      document.querySelectorAll('.lb').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    }
+
+    function setEaseIntensityFromSlider(value) {
+      easeIntensity = Number(value);
+      els.easeVal.textContent = String(value);
+    }
+
+    function escapeHtml(str) {
+      return String(str)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+    }
+
+    function escapeAttr(str) {
+      return escapeHtml(str);
+    }
+
+    window.addEventListener('resize', () => {
+      if (!isOpen || !activeAsset) return;
+
+      currentHeroLayout = computeHeroLayout(activeAsset);
+      applyHeroBox({
+        left: currentHeroLayout.left,
+        top: currentHeroLayout.top,
+        width: currentHeroLayout.width,
+        height: currentHeroLayout.height,
+        radius: currentHeroLayout.radius
+      });
+      syncMountedMedia(activeAsset, currentHeroLayout, currentHeroLayout);
+
+      const profile = getTransitionProfile();
+      applyMatte(currentHeroLayout, 1, profile.matteStrength);
+    });
+
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') closeDetail();
+    });
+
+    els.frontScrim.addEventListener('click', closeDetail);
+
+    /* initialize */
+    setEaseIntensityFromSlider(els.easeSlider.value);
+    buildGrid();
+  </script>
+</body>
+</html>

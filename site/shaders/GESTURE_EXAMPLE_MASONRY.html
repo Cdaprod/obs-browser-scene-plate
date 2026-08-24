@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>Pinch Density Overlay</title>
+  <style>
+    :root { color-scheme: dark; }
+    html, body {
+      margin: 0; padding: 0;
+      width: 100%; height: 100%;
+      background: #0a0f14;
+      overflow: hidden;
+      touch-action: none;
+      -webkit-user-select: none; user-select: none;
+      font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+    }
+    canvas#bg {
+      position: fixed; inset: 0;
+      width: 100vw; height: 100vh;
+      display: block;
+      pointer-events: none;
+    }
+    /* Fake masonry grid behind */
+    #grid {
+      position: fixed; inset: 0;
+      display: grid;
+      grid-template-columns: repeat(var(--cols, 3), 1fr);
+      gap: 6px;
+      padding: 70px 8px 8px;
+      box-sizing: border-box;
+      transition: grid-template-columns 0.38s cubic-bezier(0.4,0,0.2,1);
+      pointer-events: none;
+    }
+    .cell {
+      border-radius: 8px;
+      background: #111820;
+      border: 1px solid rgba(255,255,255,0.045);
+      aspect-ratio: 9/16;
+      overflow: hidden;
+      position: relative;
+      transition: transform 0.38s cubic-bezier(0.4,0,0.2,1);
+    }
+    .cell-label {
+      position: absolute;
+      bottom: 6px; left: 8px;
+      font-size: 9px;
+      color: rgba(255,255,255,0.28);
+      letter-spacing: 0.04em;
+    }
+    /* HUD */
+    #hud {
+      position: fixed;
+      top: 12px; left: 12px; right: 12px;
+      z-index: 100;
+      pointer-events: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 14px;
+      border-radius: 12px;
+      background: rgba(10,15,20,0.72);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255,255,255,0.07);
+      color: rgba(255,255,255,0.9);
+      font-size: 12px;
+    }
+    #hud .title { font-weight: 600; letter-spacing: 0.04em; color: rgba(80,180,255,0.9); }
+    #hud .info  { color: rgba(255,255,255,0.45); font-size: 11px; }
+    #density-badge {
+      position: fixed;
+      bottom: 28px; left: 50%;
+      transform: translateX(-50%);
+      z-index: 100;
+      pointer-events: none;
+      padding: 6px 18px;
+      border-radius: 999px;
+      background: rgba(10,15,20,0.8);
+      border: 1px solid rgba(80,180,255,0.25);
+      color: rgba(80,180,255,0.9);
+      font-size: 13px;
+      letter-spacing: 0.06em;
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+    #hint {
+      position: fixed;
+      bottom: 80px; left: 0; right: 0;
+      text-align: center;
+      color: rgba(255,255,255,0.2);
+      font-size: 12px;
+      pointer-events: none;
+      letter-spacing: 0.05em;
+    }
+    canvas#overlay {
+      position: fixed; inset: 0;
+      width: 100vw; height: 100vh;
+      display: block;
+      pointer-events: none;
+      z-index: 50;
+    }
+  </style>
+</head>
+<body>
+
+<div id="grid"></div>
+
+<canvas id="bg"></canvas>
+<canvas id="overlay"></canvas>
+
+<div id="hud">
+  <span class="title">Explorer · Pinch Demo</span>
+  <span class="info" id="hud-info">cols: 3 · pinch to resize</span>
+</div>
+
+<div id="density-badge" id="density-badge">3 cols</div>
+<div id="hint">Use two fingers to pinch</div>
+
+<script>
+(() => {
+  const grid = document.getElementById('grid');
+  const hudInfo = document.getElementById('hud-info');
+  const densityBadge = document.getElementById('density-badge');
+  const hint = document.getElementById('hint');
+
+  // --- Grid setup ---
+  const MIN_COLS = 1, MAX_COLS = 5;
+  let currentCols = 3;
+  const CELL_COUNT = 24;
+
+  const COLORS = [
+    '#1a2535','#0f1d2b','#16202e','#1c2b3a','#0d1a26',
+    '#152030','#1e2d3d','#0b1720','#182538','#1a2840',
+  ];
+
+  for (let i = 0; i < CELL_COUNT; i++) {
+    const cell = document.createElement('div');
+    cell.className = 'cell';
+    cell.style.background = COLORS[i % COLORS.length];
+    const lbl = document.createElement('div');
+    lbl.className = 'cell-label';
+    lbl.textContent = `asset-${String(i+1).padStart(2,'0')}`;
+    cell.appendChild(lbl);
+    grid.appendChild(cell);
+  }
+
+  const setCols = (n) => {
+    n = Math.max(MIN_COLS, Math.min(MAX_COLS, n));
+    if (n === currentCols) return;
+    currentCols = n;
+    grid.style.setProperty('--cols', n);
+    hudInfo.textContent = `cols: ${n} · pinch to resize`;
+    densityBadge.textContent = `${n} col${n > 1 ? 's' : ''}`;
+    densityBadge.style.opacity = '1';
+    clearTimeout(densityBadge._t);
+    densityBadge._t = setTimeout(() => { densityBadge.style.opacity = '0'; }, 1200);
+  };
+
+  grid.style.setProperty('--cols', currentCols);
+
+  // --- Overlay canvas (2D, drawn each frame) ---
+  const oc = document.getElementById('overlay');
+  const ctx = oc.getContext('2d');
+
+  const resize = () => {
+    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    oc.width = Math.floor(window.innerWidth * dpr);
+    oc.height = Math.floor(window.innerHeight * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  };
+  window.addEventListener('resize', resize, { passive: true });
+  resize();
+
+  // --- Touch state ---
+  const pointers = new Map(); // id → {x, y, ox, oy, down}
+
+  let pinchActive = false;
+  let pinchStartDist = 0;
+  let pinchStartCols = currentCols;
+  let pinchLastDist = 0;
+
+  // Animation state
+  let ringA = { x: 0, y: 0, r: 0, opacity: 0 };
+  let ringB = { x: 0, y: 0, r: 0, opacity: 0 };
+  let bridgeActive = false;
+  let pulseT = 0; // 0..1, for threshold pulse
+  let pulseSide = 0; // -1 shrink +1 expand
+
+  const RING_RADIUS = 60; // px logical
+  const BRIDGE_WAYPOINTS = 5; // including the two poles → 3 inner points
+
+  // Waypoint spring state
+  const waypoints = Array.from({ length: 3 }, () => ({ x: 0, y: 0, tx: 0, ty: 0 }));
+
+  const onPointerDown = (e) => {
+    e.preventDefault();
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    try { oc.setPointerCapture(e.pointerId); } catch(_) {}
+    updatePinch();
+    hint.style.opacity = '0';
+  };
+  const onPointerMove = (e) => {
+    e.preventDefault();
+    if (!pointers.has(e.pointerId)) return;
+    const p = pointers.get(e.pointerId);
+    p.x = e.clientX; p.y = e.clientY;
+    updatePinch();
+  };
+  const onPointerUp = (e) => {
+    e.preventDefault();
+    pointers.delete(e.pointerId);
+    try { oc.releasePointerCapture(e.pointerId); } catch(_) {}
+    updatePinch();
+  };
+
+  oc.addEventListener('pointerdown', onPointerDown, { passive: false });
+  oc.style.pointerEvents = 'all';
+  window.addEventListener('pointermove', onPointerMove, { passive: false });
+  window.addEventListener('pointerup', onPointerUp, { passive: false });
+  window.addEventListener('pointercancel', onPointerUp, { passive: false });
+
+  const updatePinch = () => {
+    const pts = [...pointers.values()];
+    if (pts.length >= 2) {
+      const a = pts[0], b = pts[1];
+      const dist = Math.hypot(b.x - a.x, b.y - a.y);
+
+      if (!pinchActive) {
+        pinchActive = true;
+        pinchStartDist = dist;
+        pinchLastDist = dist;
+        pinchStartCols = currentCols;
+        ringA.opacity = 1;
+        ringB.opacity = 1;
+        bridgeActive = true;
+      }
+
+      ringA.x = a.x; ringA.y = a.y; ringA.r = RING_RADIUS;
+      ringB.x = b.x; ringB.y = b.y; ringB.r = RING_RADIUS;
+
+      // Density: each ~80px of pinch change = 1 col step
+      const STEP_PX = 90;
+      const delta = dist - pinchStartDist;
+      const colDelta = Math.round(-delta / STEP_PX); // pinch in → more cols
+      const targetCols = Math.max(MIN_COLS, Math.min(MAX_COLS, pinchStartCols + colDelta));
+
+      if (targetCols !== currentCols) {
+        pulseSide = targetCols > currentCols ? 1 : -1;
+        pulseT = 1.0;
+        setCols(targetCols);
+      }
+
+      pinchLastDist = dist;
+
+      // Update waypoint targets along the bridge
+      for (let i = 0; i < 3; i++) {
+        const t = (i + 1) / 4;
+        waypoints[i].tx = a.x + (b.x - a.x) * t;
+        waypoints[i].ty = a.y + (b.y - a.y) * t;
+      }
+
+    } else {
+      if (pinchActive) {
+        pinchActive = false;
+        bridgeActive = false;
+        ringA.opacity = 0;
+        ringB.opacity = 0;
+      }
+    }
+  };
+
+  // --- Draw ---
+  const W = () => window.innerWidth;
+  const H = () => window.innerHeight;
+
+  let lastNow = performance.now();
+
+  const draw = (now) => {
+    requestAnimationFrame(draw);
+    const dt = Math.min(0.05, (now - lastNow) / 1000);
+    lastNow = now;
+
+    ctx.clearRect(0, 0, W(), H());
+
+    if (pulseT > 0) pulseT = Math.max(0, pulseT - dt * 3.5);
+
+    if (!pinchActive && ringA.opacity <= 0.01) return;
+
+    // Fade out rings when released
+    if (!pinchActive) {
+      ringA.opacity = Math.max(0, ringA.opacity - dt * 4);
+      ringB.opacity = Math.max(0, ringB.opacity - dt * 4);
+    }
+
+    const op = pinchActive ? 1 : ringA.opacity;
+
+    // Spring waypoints
+    const SPRING = 18;
+    for (const wp of waypoints) {
+      wp.x += (wp.tx - wp.x) * Math.min(1, SPRING * dt);
+      wp.y += (wp.ty - wp.y) * Math.min(1, SPRING * dt);
+    }
+
+    // --- Draw bridge ---
+    if (bridgeActive || op > 0.01) {
+      const ax = ringA.x, ay = ringA.y;
+      const bx = ringB.x, by = ringB.y;
+
+      // Build spline points: A → wp[0] → wp[1] → wp[2] → B
+      const pts = [
+        { x: ax, y: ay },
+        ...waypoints,
+        { x: bx, y: by },
+      ];
+
+      // Core bridge line
+      ctx.save();
+      ctx.globalAlpha = 0.55 * op;
+      ctx.strokeStyle = 'rgba(60,160,255,1)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([]);
+      ctx.shadowBlur = 18;
+      ctx.shadowColor = 'rgba(60,160,255,0.7)';
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length - 1; i++) {
+        const mx = (pts[i].x + pts[i+1].x) / 2;
+        const my = (pts[i].y + pts[i+1].y) / 2;
+        ctx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my);
+      }
+      ctx.lineTo(pts[pts.length-1].x, pts[pts.length-1].y);
+      ctx.stroke();
+      ctx.restore();
+
+      // Outer glow bridge
+      ctx.save();
+      ctx.globalAlpha = 0.18 * op;
+      ctx.strokeStyle = 'rgba(80,200,255,1)';
+      ctx.lineWidth = 8;
+      ctx.shadowBlur = 30;
+      ctx.shadowColor = 'rgba(40,140,255,0.5)';
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length - 1; i++) {
+        const mx = (pts[i].x + pts[i+1].x) / 2;
+        const my = (pts[i].y + pts[i+1].y) / 2;
+        ctx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my);
+      }
+      ctx.lineTo(pts[pts.length-1].x, pts[pts.length-1].y);
+      ctx.stroke();
+      ctx.restore();
+
+      // Waypoint nodes
+      for (let i = 0; i < waypoints.length; i++) {
+        const wp = waypoints[i];
+
+        // Snap distance to nearest ring — pulls toward A or B if close
+        const dA = Math.hypot(wp.x - ax, wp.y - ay);
+        const dB = Math.hypot(wp.x - bx, wp.y - by);
+        const totalD = Math.hypot(bx - ax, by - ay);
+        const proximity = Math.min(dA, dB) / Math.max(1, totalD);
+        const nodeR = 3.5 + proximity * 2.5;
+
+        ctx.save();
+        ctx.globalAlpha = (0.6 + 0.4 * (1 - proximity)) * op;
+        ctx.shadowBlur = 14;
+        ctx.shadowColor = 'rgba(80,200,255,0.9)';
+        ctx.fillStyle = 'rgba(120,220,255,1)';
+        ctx.beginPath();
+        ctx.arc(wp.x, wp.y, nodeR, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        // Node outer ring
+        ctx.save();
+        ctx.globalAlpha = 0.3 * op * proximity;
+        ctx.strokeStyle = 'rgba(80,180,255,1)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(wp.x, wp.y, nodeR + 5, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+
+    // --- Draw rings ---
+    const drawRing = (rx, ry, rr, alpha) => {
+      if (alpha < 0.01) return;
+
+      // Outer pulse on threshold cross
+      if (pulseT > 0) {
+        const pr = rr + (1 - pulseT) * 28;
+        ctx.save();
+        ctx.globalAlpha = pulseT * 0.5 * alpha;
+        ctx.strokeStyle = pulseSide > 0 ? 'rgba(80,255,160,1)' : 'rgba(255,160,80,1)';
+        ctx.lineWidth = 2;
+        ctx.shadowBlur = 20;
+        ctx.shadowColor = pulseSide > 0 ? 'rgba(80,255,160,0.8)' : 'rgba(255,160,80,0.8)';
+        ctx.beginPath();
+        ctx.arc(rx, ry, pr, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // Inner fill glow
+      const grad = ctx.createRadialGradient(rx, ry, rr * 0.3, rx, ry, rr);
+      grad.addColorStop(0, `rgba(60,160,255,${0.12 * alpha})`);
+      grad.addColorStop(1, `rgba(60,160,255,0)`);
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(rx, ry, rr, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      // Main ring
+      ctx.save();
+      ctx.globalAlpha = 0.85 * alpha;
+      ctx.strokeStyle = 'rgba(80,190,255,1)';
+      ctx.lineWidth = 1.5;
+      ctx.shadowBlur = 16;
+      ctx.shadowColor = 'rgba(60,160,255,0.9)';
+      ctx.beginPath();
+      ctx.arc(rx, ry, rr, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+
+      // Bright ring inner edge
+      ctx.save();
+      ctx.globalAlpha = 0.4 * alpha;
+      ctx.strokeStyle = 'rgba(180,230,255,1)';
+      ctx.lineWidth = 0.5;
+      ctx.shadowBlur = 6;
+      ctx.shadowColor = 'rgba(180,230,255,1)';
+      ctx.beginPath();
+      ctx.arc(rx, ry, rr - 2, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+
+      // Center dot
+      ctx.save();
+      ctx.globalAlpha = 0.5 * alpha;
+      ctx.fillStyle = 'rgba(180,230,255,1)';
+      ctx.shadowBlur = 10;
+      ctx.shadowColor = 'rgba(80,200,255,1)';
+      ctx.beginPath();
+      ctx.arc(rx, ry, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    };
+
+    drawRing(ringA.x, ringA.y, ringA.r, pinchActive ? 1 : ringA.opacity);
+    drawRing(ringB.x, ringB.y, ringB.r, pinchActive ? 1 : ringB.opacity);
+
+    // Midpoint density label
+    if (op > 0.05 && pinchActive) {
+      const mx = (ringA.x + ringB.x) / 2;
+      const my = (ringA.y + ringB.y) / 2;
+      const dist = Math.hypot(ringB.x - ringA.x, ringB.y - ringA.y);
+      if (dist > 80) {
+        ctx.save();
+        ctx.globalAlpha = Math.min(1, (dist - 80) / 40) * op;
+        ctx.font = '600 11px ui-monospace, "SF Mono", Menlo, monospace';
+        ctx.fillStyle = 'rgba(120,210,255,1)';
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = 'rgba(60,160,255,0.8)';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(`${currentCols} cols`, mx, my - 18);
+        ctx.restore();
+      }
+    }
+  };
+
+  // Init waypoints at center
+  const cx = window.innerWidth / 2, cy = window.innerHeight / 2;
+  for (let i = 0; i < 3; i++) {
+    waypoints[i].x = waypoints[i].tx = cx;
+    waypoints[i].y = waypoints[i].ty = cy;
+  }
+
+  requestAnimationFrame(draw);
+})();
+</script>
+</body>
+</html>

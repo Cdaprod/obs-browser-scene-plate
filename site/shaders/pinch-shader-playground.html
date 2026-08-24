@@ -1,0 +1,564 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Pinch Shader Playground</title>
+  <style>
+    :root {
+      --panel-bg: rgba(10, 14, 24, 0.86);
+      --panel-border: rgba(120, 170, 255, 0.22);
+      --text: #e8f0ff;
+      --muted: #9eb3d9;
+      --accent: #61b3ff;
+      --danger: #ff8a6a;
+      --ok: #67f6a6;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: radial-gradient(circle at 20% 20%, #0d1930 0%, #04070d 52%, #000 100%);
+      color: var(--text);
+      font: 14px/1.4 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    #app {
+      position: fixed;
+      inset: 0;
+    }
+    #gl {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+      cursor: crosshair;
+    }
+    .hud {
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      width: min(420px, calc(100vw - 24px));
+      max-height: calc(100vh - 24px);
+      overflow: auto;
+      padding: 14px;
+      border-radius: 16px;
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      backdrop-filter: blur(18px);
+      box-shadow: 0 16px 50px rgba(0,0,0,0.4);
+      z-index: 5;
+    }
+    .hud h1 {
+      margin: 0 0 6px;
+      font-size: 16px;
+    }
+    .hud p {
+      margin: 0 0 12px;
+      color: var(--muted);
+    }
+    .group {
+      margin: 12px 0;
+      padding-top: 10px;
+      border-top: 1px solid rgba(255,255,255,0.08);
+    }
+    .row {
+      display: grid;
+      grid-template-columns: 120px 1fr 64px;
+      align-items: center;
+      gap: 10px;
+      margin: 8px 0;
+    }
+    .row label {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .row output {
+      text-align: right;
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+    input[type="range"] {
+      width: 100%;
+    }
+    .btns {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    button {
+      border: 1px solid rgba(255,255,255,0.1);
+      background: rgba(255,255,255,0.05);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 9px 12px;
+      cursor: pointer;
+    }
+    button:hover { background: rgba(255,255,255,0.09); }
+    button[data-kind="pulse-in"] { border-color: rgba(103,246,166,0.35); color: var(--ok); }
+    button[data-kind="pulse-out"] { border-color: rgba(255,138,106,0.35); color: var(--danger); }
+    .hint {
+      margin-top: 12px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: rgba(97,179,255,0.14);
+      color: #bfdcff;
+      font-size: 11px;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+    .dot {
+      position: fixed;
+      width: 18px;
+      height: 18px;
+      margin: -9px 0 0 -9px;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.9);
+      box-shadow: 0 0 0 6px rgba(97,179,255,0.14), 0 0 28px rgba(97,179,255,0.35);
+      pointer-events: none;
+      z-index: 4;
+      opacity: 0.9;
+      transform: translate3d(0,0,0);
+    }
+    .dot.b { box-shadow: 0 0 0 6px rgba(103,246,166,0.12), 0 0 28px rgba(103,246,166,0.35); }
+    details {
+      margin-top: 10px;
+    }
+    textarea {
+      width: 100%;
+      min-height: 180px;
+      margin-top: 8px;
+      background: rgba(0,0,0,0.28);
+      color: #dfe9ff;
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 10px;
+      padding: 10px;
+      font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      resize: vertical;
+    }
+    .status {
+      margin-top: 8px;
+      font-size: 12px;
+      color: var(--muted);
+      min-height: 1.2em;
+    }
+    @media (max-width: 680px) {
+      .hud { width: calc(100vw - 20px); left: 10px; top: 10px; }
+      .row { grid-template-columns: 100px 1fr 56px; gap: 8px; }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <canvas id="gl"></canvas>
+    <div id="dotA" class="dot"></div>
+    <div id="dotB" class="dot b"></div>
+
+    <aside class="hud">
+      <h1>Pinch Shader Playground <span class="badge">single-file</span></h1>
+      <p>Drag the two handles on the viewport. Tweak values live. Paste edited fragment shader code and recompile without rebuilding your app.</p>
+
+      <div class="group">
+        <div class="row"><label for="fade">Fade</label><input id="fade" type="range" min="0" max="1" step="0.001" value="1"><output id="fadeOut">1.000</output></div>
+        <div class="row"><label for="pulse">Pulse</label><input id="pulse" type="range" min="0" max="1" step="0.001" value="0"><output id="pulseOut">0.000</output></div>
+        <div class="row"><label for="pulseDir">Pulse Dir</label><input id="pulseDir" type="range" min="-1" max="1" step="1" value="1"><output id="pulseDirOut">1</output></div>
+        <div class="row"><label for="timeScale">Time Scale</label><input id="timeScale" type="range" min="0" max="3" step="0.01" value="1"><output id="timeScaleOut">1.00</output></div>
+      </div>
+
+      <div class="btns">
+        <button id="pulseIn" data-kind="pulse-in">Trigger + Pulse</button>
+        <button id="pulseOutBtn" data-kind="pulse-out">Trigger - Pulse</button>
+        <button id="swapBtn">Swap A / B</button>
+        <button id="spreadBtn">Wide Spread</button>
+        <button id="centerBtn">Center</button>
+      </div>
+
+      <div class="hint">Tip: you can also drag with mouse. The white dot is finger A, the green dot is finger B.</div>
+
+      <details open>
+        <summary>Fragment shader source</summary>
+        <textarea id="fragEditor"></textarea>
+        <div class="btns">
+          <button id="applyShader">Apply Shader</button>
+          <button id="resetShader">Reset Shader</button>
+        </div>
+        <div id="status" class="status"></div>
+      </details>
+    </aside>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('gl');
+    const dotA = document.getElementById('dotA');
+    const dotB = document.getElementById('dotB');
+    const statusEl = document.getElementById('status');
+    const fragEditor = document.getElementById('fragEditor');
+
+    const controls = {
+      fade: document.getElementById('fade'),
+      pulse: document.getElementById('pulse'),
+      pulseDir: document.getElementById('pulseDir'),
+      timeScale: document.getElementById('timeScale'),
+    };
+    const outputs = {
+      fade: document.getElementById('fadeOut'),
+      pulse: document.getElementById('pulseOut'),
+      pulseDir: document.getElementById('pulseDirOut'),
+      timeScale: document.getElementById('timeScaleOut'),
+    };
+
+    const VERT_SOURCE = `
+attribute vec2 a_pos;
+varying   vec2 v_uv;
+void main() {
+  v_uv = a_pos * .5 + .5;
+  gl_Position = vec4(a_pos, 0., 1.);
+}`.trim();
+
+    const DEFAULT_FRAG = `
+precision highp float;
+varying vec2 v_uv;
+
+uniform vec2  u_res;
+uniform float u_aspect;
+uniform float u_time;
+uniform vec2  u_a;
+uniform vec2  u_b;
+uniform float u_active;
+uniform float u_fade;
+uniform float u_pulse;
+uniform float u_pulse_dir;
+
+float adist(vec2 p, vec2 c) {
+  vec2 d = p - c; d.x *= u_aspect; return length(d);
+}
+float ring(vec2 p, vec2 c, float r, float iw, float ow) {
+  float d = adist(p, c);
+  return smoothstep(r-iw,r,d)*(1.-smoothstep(r,r+ow,d));
+}
+float blob(vec2 p, vec2 c, float r) {
+  float d = adist(p,c); return exp(-d*d/(r*r)*4.2);
+}
+float sdSeg(vec2 p, vec2 a, vec2 b) {
+  vec2 pa=p-a,ba=b-a;
+  float denom=max(dot(ba,ba), 1e-7);
+  float h=clamp(dot(pa,ba)/denom,0.,1.);
+  vec2 d=pa-ba*h; d.x*=u_aspect; return length(d);
+}
+float segT(vec2 p, vec2 a, vec2 b) {
+  vec2 ba=b-a;
+  return clamp(dot(p-a,ba)/max(dot(ba,ba),1e-7),0.,1.);
+}
+float hash21(vec2 p) {
+  p=fract(p*vec2(127.1,311.7)); p+=dot(p,p+19.19);
+  return fract(p.x*p.y);
+}
+
+void main() {
+  vec2 uv=v_uv; float fade=u_fade;
+  vec2 a=u_a, b=u_b;
+  vec3 col=vec3(0.); float alpha=0.;
+
+  float ringR=0.072, innerW=0.003, outerW=0.009;
+  float breath=1.+0.013*sin(u_time*3.2);
+
+  float rA=ring(uv,a,ringR*breath,innerW,outerW);
+  float rB=ring(uv,b,ringR*breath,innerW,outerW);
+  float gA=blob(uv,a,ringR*.60), gB=blob(uv,b,ringR*.60);
+  float dotA=1.-smoothstep(.003,.007,adist(uv,a));
+  float dotB=1.-smoothstep(.003,.007,adist(uv,b));
+
+  vec3 ringCol=vec3(.28,.72,1.), glowCol=vec3(.12,.45,.95), dotCol=vec3(.75,.92,1.);
+  col+=(rA+rB)*ringCol*.95; alpha=max(alpha,max(rA,rB)*.92);
+  col+=(gA+gB)*glowCol*.32; alpha=max(alpha,max(gA,gB)*.20);
+  col+=(dotA+dotB)*dotCol;  alpha=max(alpha,max(dotA,dotB));
+
+  float sep=adist(a,b);
+  float bridgeFade=smoothstep(0.,.14,sep);
+  float sd=sdSeg(uv,a,b), t=segT(uv,a,b);
+  float taper=smoothstep(0.,.14,t)*smoothstep(1.,.86,t);
+  float core=(1.-smoothstep(.000,.005,sd))*taper*bridgeFade;
+  float halo=(1.-smoothstep(.005,.028,sd))*taper*bridgeFade;
+  float energy=.72+.28*sin(t*12.-u_time*4.);
+  vec3 bridgeCol=vec3(.20,.65,1.);
+  col+=bridgeCol*core*energy*.90; alpha=max(alpha,core*energy*.88);
+  col+=bridgeCol*halo*.28;        alpha=max(alpha,halo*.22);
+
+  for(int i=1;i<=3;i++){
+    float nt=float(i)*.25;
+    vec2 np=mix(a,b,nt);
+    float pole=smoothstep(0.,.20,min(adist(np,a),adist(np,b)));
+    float nodeR=.007+pole*.005;
+    float nd=adist(uv,np);
+    float nDot=1.-smoothstep(nodeR*.55,nodeR,nd);
+    float nRng=ring(uv,np,nodeR+.005,.0015,.004);
+    float nGlw=blob(uv,np,nodeR*2.8);
+    vec3 nodeCol=mix(vec3(.35,.78,1.),vec3(.60,.94,1.),pole);
+    col+=nodeCol*nDot*bridgeFade;       alpha=max(alpha,nDot*bridgeFade);
+    col+=nodeCol*nRng*.55*bridgeFade;   alpha=max(alpha,nRng*.50*bridgeFade);
+    col+=nodeCol*nGlw*.18*bridgeFade;   alpha=max(alpha,nGlw*.14*bridgeFade);
+  }
+
+  if(u_pulse>.001){
+    float pT=u_pulse;
+    float pR=ringR+(1.-pT)*.11;
+    float pA=ring(uv,a,pR,.002,mix(.016,.006,pT))*pT;
+    float pB=ring(uv,b,pR,.002,mix(.016,.006,pT))*pT;
+    vec3 pCol=u_pulse_dir>0.?vec3(.22,1.,.52):vec3(1.,.52,.18);
+    col+=pCol*(pA+pB)*.95; alpha=max(alpha,(pA+pB)*.90);
+    float bFlash=halo*taper*pT*.7*bridgeFade;
+    col+=pCol*bFlash;      alpha=max(alpha,bFlash*.55);
+  }
+
+  float grain=(hash21(uv*u_res+u_time*47.3)-.5)*.025;
+  alpha=clamp(alpha*fade+grain*fade,0.,1.);
+  col=col*fade;
+  gl_FragColor=vec4(col,alpha);
+}`.trim();
+
+    fragEditor.value = DEFAULT_FRAG;
+
+    const gl = canvas.getContext('webgl', { alpha: true, premultipliedAlpha: false, antialias: true });
+    if (!gl) {
+      alert('WebGL not available in this browser.');
+      throw new Error('WebGL unavailable');
+    }
+
+    function compileShader(type, source) {
+      const shader = gl.createShader(type);
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        const info = gl.getShaderInfoLog(shader) || 'Unknown shader compile error';
+        gl.deleteShader(shader);
+        throw new Error(info);
+      }
+      return shader;
+    }
+
+    function createProgram(fragSource) {
+      const vert = compileShader(gl.VERTEX_SHADER, VERT_SOURCE);
+      const frag = compileShader(gl.FRAGMENT_SHADER, fragSource);
+      const program = gl.createProgram();
+      gl.attachShader(program, vert);
+      gl.attachShader(program, frag);
+      gl.linkProgram(program);
+      gl.deleteShader(vert);
+      gl.deleteShader(frag);
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        const info = gl.getProgramInfoLog(program) || 'Unknown program link error';
+        gl.deleteProgram(program);
+        throw new Error(info);
+      }
+      return program;
+    }
+
+    let program = null;
+    let uniformLoc = null;
+
+    function bindProgram(nextProgram) {
+      program = nextProgram;
+      uniformLoc = {
+        aPos: gl.getAttribLocation(program, 'a_pos'),
+        uRes: gl.getUniformLocation(program, 'u_res'),
+        uAspect: gl.getUniformLocation(program, 'u_aspect'),
+        uTime: gl.getUniformLocation(program, 'u_time'),
+        uA: gl.getUniformLocation(program, 'u_a'),
+        uB: gl.getUniformLocation(program, 'u_b'),
+        uActive: gl.getUniformLocation(program, 'u_active'),
+        uFade: gl.getUniformLocation(program, 'u_fade'),
+        uPulse: gl.getUniformLocation(program, 'u_pulse'),
+        uPulseDir: gl.getUniformLocation(program, 'u_pulse_dir'),
+      };
+      statusEl.textContent = 'Shader compiled successfully.';
+    }
+
+    function applyShaderSource(src) {
+      try {
+        const next = createProgram(src);
+        if (program) gl.deleteProgram(program);
+        bindProgram(next);
+        statusEl.textContent = 'Shader compiled successfully.';
+        statusEl.style.color = '#8df5b5';
+      } catch (error) {
+        statusEl.textContent = error.message;
+        statusEl.style.color = '#ff9f8b';
+      }
+    }
+
+    applyShaderSource(DEFAULT_FRAG);
+
+    const quadBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
+    gl.bufferData(
+      gl.ARRAY_BUFFER,
+      new Float32Array([-1, -1, 1, -1, -1, 1, -1, 1, 1, -1, 1, 1]),
+      gl.STATIC_DRAW,
+    );
+
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+    const state = {
+      a: { x: 0.38, y: 0.52 },
+      b: { x: 0.62, y: 0.52 },
+      dragging: null,
+      pulseAutoDecay: true,
+      manualPulseOverride: false,
+      active: true,
+    };
+
+    function syncOutputs() {
+      outputs.fade.value = Number(controls.fade.value).toFixed(3);
+      outputs.pulse.value = Number(controls.pulse.value).toFixed(3);
+      outputs.pulseDir.value = controls.pulseDir.value;
+      outputs.timeScale.value = Number(controls.timeScale.value).toFixed(2);
+    }
+    syncOutputs();
+    Object.values(controls).forEach((input) => input.addEventListener('input', syncOutputs));
+
+    function resize() {
+      const dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 2));
+      const width = Math.max(1, Math.floor(window.innerWidth * dpr));
+      const height = Math.max(1, Math.floor(window.innerHeight * dpr));
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+      }
+      canvas.style.width = window.innerWidth + 'px';
+      canvas.style.height = window.innerHeight + 'px';
+      gl.viewport(0, 0, width, height);
+      placeDots();
+    }
+
+    function uvToClient(p) {
+      return { x: p.x * window.innerWidth, y: (1 - p.y) * window.innerHeight };
+    }
+    function clientToUv(x, y) {
+      return {
+        x: Math.max(0, Math.min(1, x / window.innerWidth)),
+        y: Math.max(0, Math.min(1, 1 - (y / window.innerHeight))),
+      };
+    }
+    function placeDots() {
+      const pa = uvToClient(state.a);
+      const pb = uvToClient(state.b);
+      dotA.style.left = pa.x + 'px';
+      dotA.style.top = pa.y + 'px';
+      dotB.style.left = pb.x + 'px';
+      dotB.style.top = pb.y + 'px';
+    }
+    placeDots();
+
+    function nearestHandle(x, y) {
+      const pa = uvToClient(state.a);
+      const pb = uvToClient(state.b);
+      const da = Math.hypot(x - pa.x, y - pa.y);
+      const db = Math.hypot(x - pb.x, y - pb.y);
+      return da <= db ? 'a' : 'b';
+    }
+
+    canvas.addEventListener('pointerdown', (event) => {
+      state.dragging = nearestHandle(event.clientX, event.clientY);
+      canvas.setPointerCapture?.(event.pointerId);
+      const p = clientToUv(event.clientX, event.clientY);
+      state[state.dragging] = p;
+      state.active = true;
+      placeDots();
+    });
+    canvas.addEventListener('pointermove', (event) => {
+      if (!state.dragging) return;
+      state[state.dragging] = clientToUv(event.clientX, event.clientY);
+      placeDots();
+    });
+    function stopDrag() { state.dragging = null; }
+    canvas.addEventListener('pointerup', stopDrag);
+    canvas.addEventListener('pointercancel', stopDrag);
+
+    document.getElementById('pulseIn').addEventListener('click', () => {
+      controls.pulse.value = '1';
+      controls.pulseDir.value = '1';
+      state.manualPulseOverride = false;
+      syncOutputs();
+    });
+    document.getElementById('pulseOutBtn').addEventListener('click', () => {
+      controls.pulse.value = '1';
+      controls.pulseDir.value = '-1';
+      state.manualPulseOverride = false;
+      syncOutputs();
+    });
+    document.getElementById('swapBtn').addEventListener('click', () => {
+      const tmp = state.a;
+      state.a = state.b;
+      state.b = tmp;
+      placeDots();
+    });
+    document.getElementById('spreadBtn').addEventListener('click', () => {
+      state.a = { x: 0.28, y: 0.55 };
+      state.b = { x: 0.72, y: 0.45 };
+      placeDots();
+    });
+    document.getElementById('centerBtn').addEventListener('click', () => {
+      state.a = { x: 0.44, y: 0.5 };
+      state.b = { x: 0.56, y: 0.5 };
+      placeDots();
+    });
+    document.getElementById('applyShader').addEventListener('click', () => applyShaderSource(fragEditor.value));
+    document.getElementById('resetShader').addEventListener('click', () => {
+      fragEditor.value = DEFAULT_FRAG;
+      applyShaderSource(DEFAULT_FRAG);
+    });
+
+    window.addEventListener('resize', resize);
+    resize();
+
+    let prev = performance.now();
+    const start = prev;
+
+    function frame(now) {
+      const dt = Math.max(0, (now - prev) / 1000);
+      prev = now;
+
+      const pulseControlVal = Number(controls.pulse.value);
+      if (pulseControlVal > 0.0001) {
+        const next = Math.max(0, pulseControlVal - dt * 0.9);
+        controls.pulse.value = String(next);
+        syncOutputs();
+      }
+
+      gl.clearColor(0, 0, 0, 0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+
+      if (program) {
+        gl.useProgram(program);
+        gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
+        gl.enableVertexAttribArray(uniformLoc.aPos);
+        gl.vertexAttribPointer(uniformLoc.aPos, 2, gl.FLOAT, false, 0, 0);
+        gl.uniform2f(uniformLoc.uRes, canvas.width, canvas.height);
+        gl.uniform1f(uniformLoc.uAspect, canvas.width / Math.max(1, canvas.height));
+        gl.uniform1f(uniformLoc.uTime, ((now - start) / 1000) * Number(controls.timeScale.value));
+        gl.uniform2f(uniformLoc.uA, state.a.x, state.a.y);
+        gl.uniform2f(uniformLoc.uB, state.b.x, state.b.y);
+        gl.uniform1f(uniformLoc.uActive, state.active ? 1 : 0);
+        gl.uniform1f(uniformLoc.uFade, Number(controls.fade.value));
+        gl.uniform1f(uniformLoc.uPulse, Number(controls.pulse.value));
+        gl.uniform1f(uniformLoc.uPulseDir, Number(controls.pulseDir.value));
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
+      }
+
+      requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+  </script>
+</body>
+</html>

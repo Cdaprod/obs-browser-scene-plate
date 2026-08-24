@@ -1,0 +1,486 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>404 — Lost in the Void</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:ital,wght@0,300;1,300&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%; height: 100%;
+      background: #000;
+      overflow: hidden;
+      -webkit-user-select: none; user-select: none;
+    }
+
+    canvas {
+      position: fixed; inset: 0;
+      width: 100vw; height: 100vh;
+      display: block;
+      transition: opacity 1.2s ease;
+    }
+
+    /* ── shared UI shell ─────────────────────────── */
+    .ui {
+      position: fixed; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      z-index: 10; pointer-events: none;
+    }
+
+    /* ── PHASE A — void ──────────────────────────── */
+    .phase-void { display: contents; }
+
+    .label-404 {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: clamp(120px, 25vw, 260px);
+      line-height: 0.88; letter-spacing: -0.02em;
+      color: transparent;
+      background: linear-gradient(160deg,
+        rgba(255,255,255,.96) 0%,
+        rgba(180,160,255,.85) 40%,
+        rgba(100,80,200,.5) 100%);
+      -webkit-background-clip: text; background-clip: text;
+      mix-blend-mode: screen;
+      animation: breathe 4.2s ease-in-out infinite;
+      transition: transform 1s cubic-bezier(.4,0,.2,1), opacity .7s ease;
+      transform-origin: center center;
+    }
+    .label-404.warping { transform: scale(.22) translateY(-20px); opacity: 0; }
+
+    .tagline {
+      margin-top: 28px;
+      font-family: 'DM Mono', monospace; font-style: italic; font-weight: 300;
+      font-size: clamp(11px, 1.6vw, 18px); letter-spacing: .28em; text-transform: uppercase;
+      color: rgba(160,140,255,.75); mix-blend-mode: screen;
+      animation: fadein 2.4s ease .6s both;
+      transition: opacity .6s ease;
+    }
+
+    .back-btn {
+      pointer-events: all;
+      margin-top: 52px;
+      font-family: 'DM Mono', monospace; font-weight: 300;
+      font-size: clamp(10px, 1.2vw, 14px); letter-spacing: .22em; text-transform: uppercase;
+      color: rgba(255,255,255,.35); background: transparent;
+      border: 1px solid rgba(255,255,255,.12);
+      padding: 12px 32px; border-radius: 2px; cursor: pointer;
+      transition: color .3s, border-color .3s, background .3s, opacity .6s;
+      animation: fadein 2.8s ease 1.2s both;
+    }
+    .back-btn:hover:not(:disabled) {
+      color: rgba(200,180,255,.95);
+      border-color: rgba(180,140,255,.4);
+      background: rgba(120,80,255,.08);
+    }
+    .back-btn:disabled { cursor: default; opacity: .3; pointer-events: none; }
+
+    /* ── PHASE B — arrival ───────────────────────── */
+    .phase-arrival {
+      display: flex; flex-direction: column; align-items: center;
+      pointer-events: all;
+      opacity: 0;
+      transform: translateY(14px) scale(.97);
+      transition: opacity .9s ease, transform .9s ease;
+    }
+    .phase-arrival.visible { opacity: 1; transform: translateY(0) scale(1); }
+
+    .arrival-eyebrow {
+      font-family: 'DM Mono', monospace; font-style: italic; font-weight: 300;
+      font-size: clamp(10px, 1.4vw, 14px); letter-spacing: .38em; text-transform: uppercase;
+      color: rgba(255,180,80,.7); mix-blend-mode: screen;
+    }
+    .arrival-title {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: clamp(52px, 10vw, 108px); line-height: .9; letter-spacing: .04em;
+      color: transparent;
+      background: linear-gradient(150deg,
+        rgba(255,210,80,.98) 0%, rgba(255,120,30,.85) 55%, rgba(180,60,10,.6) 100%);
+      -webkit-background-clip: text; background-clip: text;
+      mix-blend-mode: screen; margin-top: 12px;
+      animation: breathe 3.5s ease-in-out infinite;
+    }
+    .arrival-sub {
+      margin-top: 18px;
+      font-family: 'DM Mono', monospace; font-style: italic; font-weight: 300;
+      font-size: clamp(10px, 1.3vw, 15px); letter-spacing: .24em; text-transform: uppercase;
+      color: rgba(255,160,60,.6); mix-blend-mode: screen;
+    }
+    .enter-btn {
+      pointer-events: all;
+      margin-top: 44px;
+      font-family: 'DM Mono', monospace; font-weight: 300;
+      font-size: clamp(10px, 1.2vw, 14px); letter-spacing: .22em; text-transform: uppercase;
+      color: rgba(255,180,80,.55); background: transparent;
+      border: 1px solid rgba(255,160,60,.22);
+      padding: 12px 36px; border-radius: 2px; cursor: pointer;
+      transition: color .3s, border-color .3s, background .3s;
+    }
+    .enter-btn:hover {
+      color: rgba(255,205,80,.95);
+      border-color: rgba(255,160,60,.55);
+      background: rgba(200,80,10,.1);
+    }
+
+    /* ── HUD ─────────────────────────────────────── */
+    .hud-l, .hud-r {
+      position: fixed; bottom: 24px;
+      font-family: 'DM Mono', monospace; font-style: italic; font-weight: 300;
+      font-size: 10px; letter-spacing: .18em; line-height: 1.8;
+      pointer-events: none; z-index: 10;
+      transition: color 1.2s ease;
+    }
+    .hud-l { left: 28px;  color: rgba(255,255,255,.18); }
+    .hud-r { right: 28px; text-align: right; color: rgba(160,130,255,.3); }
+    .hud-l.amber { color: rgba(255,160,60,.28); }
+    .hud-r.amber { color: rgba(255,160,60,.3); }
+
+    /* ── keyframes ───────────────────────────────── */
+    @keyframes breathe {
+      0%,100% { opacity:.88; filter:brightness(1); }
+      50%      { opacity:1;   filter:brightness(1.12); }
+    }
+    @keyframes fadein {
+      from { opacity:0; transform:translateY(8px); }
+      to   { opacity:1; transform:translateY(0); }
+    }
+  </style>
+</head>
+<body>
+
+<canvas id="gl"></canvas>
+
+<!-- Phase A: void -->
+<div class="ui" id="uiVoid">
+  <div class="phase-void">
+    <div class="label-404" id="label404">404</div>
+    <div class="tagline" id="tagline">This page fell through the void</div>
+    <button class="back-btn" id="btnSurface">← Surface</button>
+  </div>
+</div>
+
+<!-- Phase B: arrival (hidden until needed) -->
+<div class="ui" id="uiArrival" style="display:none">
+  <div class="phase-arrival" id="arrivalPanel">
+    <div class="arrival-eyebrow">Return Vector Locked</div>
+    <div class="arrival-title">SURFACE FOUND</div>
+    <div class="arrival-sub">Explorer is ready — reacquiring index</div>
+    <button class="enter-btn" id="btnEnter">Enter Explorer →</button>
+  </div>
+</div>
+
+<!-- HUD -->
+<div class="hud-l" id="hudL">
+  <div id="hx">X  —</div>
+  <div id="hy">Y  —</div>
+  <div id="hz">Z  —</div>
+</div>
+<div class="hud-r" id="hudR">
+  <div id="hdepth">DEPTH   —</div>
+  <div id="hsector">SECTOR  —</div>
+</div>
+
+<script>
+(() => {
+  // ── GL setup ───────────────────────────────────────────────────────────────
+  const canvas = document.getElementById('gl');
+  const gl = canvas.getContext('webgl', { antialias:false, alpha:false });
+  if (!gl) { document.body.innerHTML = '<p style="color:#fff;padding:2rem">WebGL unavailable</p>'; return; }
+
+  const VERT = `
+    attribute vec2 a_pos;
+    varying vec2 v_uv;
+    void main(){
+      v_uv = a_pos * 0.5 + 0.5;
+      gl_Position = vec4(a_pos, 0.0, 1.0);
+    }
+  `;
+
+  const FRAG = `
+    precision highp float;
+    varying vec2 v_uv;
+    uniform vec2  u_res;
+    uniform float u_time;
+    uniform float u_envMix;
+    uniform float u_warp;
+
+    #define TAU 6.28318530717959
+
+    float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+
+    vec3 paletteA(float depth, float angle){
+      float h = depth * 0.18 + u_time * 0.12;
+      vec3 amber  = vec3(1.00, 0.50, 0.06);
+      vec3 violet = vec3(0.30, 0.06, 0.85);
+      vec3 ice    = vec3(0.06, 0.65, 1.00);
+      float ta = sin(h) * 0.5 + 0.5;
+      float tb = sin(h * 0.61 + 1.9) * 0.5 + 0.5;
+      float angWarm = sin(angle + u_time * 0.08) * 0.5 + 0.5;
+      vec3 base = mix(mix(violet, amber, ta * 0.7), ice, tb * 0.3);
+      return base * (0.7 + 0.3 * angWarm);
+    }
+
+    vec3 paletteB(float depth, float angle){
+      float h = depth * 0.14 + u_time * 0.09;
+      vec3 ember  = vec3(1.00, 0.38, 0.02);
+      vec3 gold   = vec3(1.00, 0.75, 0.10);
+      vec3 copper = vec3(0.72, 0.28, 0.04);
+      float ta = sin(h) * 0.5 + 0.5;
+      float tb = sin(h * 0.73 + 1.2) * 0.5 + 0.5;
+      float angWarm = cos(angle * 0.5 + u_time * 0.06) * 0.5 + 0.5;
+      vec3 base = mix(mix(ember, gold, ta * 0.8), copper, tb * 0.25);
+      return base * (0.75 + 0.25 * angWarm);
+    }
+
+    void main(){
+      vec2 uv = v_uv * 2.0 - 1.0;
+      uv.x *= u_res.x / u_res.y;
+
+      float warpPull = pow(u_warp, 2.2);
+      uv *= 1.0 - warpPull * 0.88;
+
+      float driftScale = 1.0 - warpPull * 0.9;
+      float sway = sin(u_time * 0.19) * 0.10 * driftScale;
+      float nod  = cos(u_time * 0.14) * 0.07 * driftScale;
+      uv -= vec2(sway, nod);
+
+      float radius = length(uv);
+      float angle  = atan(uv.y, uv.x);
+
+      float warpBoost   = 1.0 + u_warp * 4.8;
+      float arrivalDamp = 1.0 - u_envMix * 0.55;
+      float speed = 1.4 * warpBoost * arrivalDamp;
+
+      float depth = 1.0 / max(radius, 0.001) + u_time * speed;
+
+      float twistA = depth * 0.22 + sin(depth * 0.11) * 0.5;
+      float twistB = depth * 0.08 + sin(depth * 0.05) * 0.3;
+      float tAngle = angle + mix(twistA, twistB, u_envMix);
+
+      float freq  = mix(2.8, 2.0, u_envMix);
+      float ring1 = sin(fract(depth * freq) * TAU);
+      float ring2 = sin(fract(depth * freq + 0.5) * TAU);
+
+      float segs    = mix(5.0, 3.0, u_envMix);
+      float angMod  = 0.82 + 0.18 * sin(tAngle * segs       + depth * 0.3);
+      float angMod2 = 0.88 + 0.12 * cos(tAngle * (segs-1.0) - depth * 0.2);
+
+      float sharp = mix(18.0, 12.0, u_envMix);
+      float g1 = pow(max(ring1 * angMod,  0.0), sharp);
+      float g2 = pow(max(ring2 * angMod2, 0.0), sharp) * 0.6;
+
+      float glow = (g1 + g2) * radius * 1.6;
+
+      vec3 col = mix(
+        paletteA(depth, tAngle),
+        paletteB(depth, tAngle),
+        u_envMix
+      ) * glow;
+
+      float centerStr  = mix(0.25, 1.20, u_envMix);
+      float centerFall = mix(3.5,  1.8,  u_envMix);
+      col += mix(paletteA(depth+40.0,angle), paletteB(depth+20.0,angle), u_envMix)
+           * exp(-radius * centerFall) * centerStr;
+
+      col += mix(vec3(0.6,0.3,1.0), vec3(1.0,0.6,0.1), u_envMix)
+           * pow(u_warp, 4.0) * exp(-radius * 6.0) * 3.0;
+
+      col += mix(vec3(0.008,0.003,0.018), vec3(0.022,0.008,0.002), u_envMix);
+
+      col = col / (col + vec3(0.45));
+      col = pow(max(col, 0.0), vec3(0.88));
+
+      float vigR = mix(1.35, 0.9, warpPull);
+      col *= 1.0 - smoothstep(0.5, vigR, length((v_uv*2.0-1.0)*vec2(0.75,0.95)));
+
+      col += (hash(v_uv * u_res + fract(u_time * 0.07)) - 0.5) * 0.014;
+      gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
+    }
+  `;
+
+  function mkShader(type, src) {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
+      throw new Error(gl.getShaderInfoLog(s));
+    return s;
+  }
+  const prog = gl.createProgram();
+  gl.attachShader(prog, mkShader(gl.VERTEX_SHADER, VERT));
+  gl.attachShader(prog, mkShader(gl.FRAGMENT_SHADER, FRAG));
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS))
+    throw new Error(gl.getProgramInfoLog(prog));
+  gl.useProgram(prog);
+
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER,
+    new Float32Array([-1,-1, 1,-1, -1,1, -1,1, 1,-1, 1,1]),
+    gl.STATIC_DRAW);
+  const aPos = gl.getAttribLocation(prog, 'a_pos');
+  gl.enableVertexAttribArray(aPos);
+  gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+  const uRes    = gl.getUniformLocation(prog, 'u_res');
+  const uTime   = gl.getUniformLocation(prog, 'u_time');
+  const uEnvMix = gl.getUniformLocation(prog, 'u_envMix');
+  const uWarp   = gl.getUniformLocation(prog, 'u_warp');
+
+  const DPR = Math.min(window.devicePixelRatio || 1, 2);
+  const SCALE = 0.85;
+  let lw = 0, lh = 0;
+  function resize() {
+    const w = Math.floor(innerWidth  * DPR * SCALE);
+    const h = Math.floor(innerHeight * DPR * SCALE);
+    if (w === lw && h === lh) return;
+    lw = w; lh = h;
+    canvas.width = w; canvas.height = h;
+    gl.viewport(0, 0, w, h);
+  }
+  window.addEventListener('resize', resize, { passive: true });
+  resize();
+
+  // ── Phase state ────────────────────────────────────────────────────────────
+  // idle → warp → arrival → exit → (redirect)
+  const PHASES = { IDLE: 'idle', WARP: 'warp', ARRIVAL: 'arrival', EXIT: 'exit' };
+  const WARP_DUR    = 2.6;
+  const ARRIVAL_DUR = 3.2;
+  const EXIT_DUR    = 1.2;
+
+  let phase      = PHASES.IDLE;
+  let phaseStart = 0;   // performance.now()
+  let envMix     = 0;
+  let warp       = 0;
+
+  // ease helpers
+  const clamp01 = v => Math.max(0, Math.min(1, v));
+  const easeInOutCubic = t => t < .5 ? 4*t*t*t : 1 - Math.pow(-2*t+2, 3) / 2;
+
+  // ── DOM refs ───────────────────────────────────────────────────────────────
+  const label404    = document.getElementById('label404');
+  const tagline     = document.getElementById('tagline');
+  const btnSurface  = document.getElementById('btnSurface');
+  const uiVoid      = document.getElementById('uiVoid');
+  const uiArrival   = document.getElementById('uiArrival');
+  const arrivalPanel= document.getElementById('arrivalPanel');
+  const btnEnter    = document.getElementById('btnEnter');
+  const hudL        = document.getElementById('hudL');
+  const hudR        = document.getElementById('hudR');
+  const hx = document.getElementById('hx');
+  const hy = document.getElementById('hy');
+  const hz = document.getElementById('hz');
+  const hdepth  = document.getElementById('hdepth');
+  const hsector = document.getElementById('hsector');
+
+  // ── Phase transitions ──────────────────────────────────────────────────────
+  function beginWarp() {
+    if (phase !== PHASES.IDLE) return;
+    phase = PHASES.WARP;
+    phaseStart = performance.now();
+    btnSurface.disabled = true;
+    label404.classList.add('warping');
+  }
+
+  function enterArrival() {
+    phase = PHASES.ARRIVAL;
+    phaseStart = performance.now();
+    warp = 0;
+    // swap UI panels
+    uiVoid.style.display = 'none';
+    uiArrival.style.display = '';
+    // stagger arrival panel fade in
+    setTimeout(() => arrivalPanel.classList.add('visible'), 700);
+    // amber HUD
+    hudL.classList.add('amber');
+    hudR.classList.add('amber');
+  }
+
+  function beginExit() {
+    if (phase !== PHASES.ARRIVAL) return;
+    phase = PHASES.EXIT;
+    phaseStart = performance.now();
+    arrivalPanel.classList.remove('visible');
+  }
+
+  // ── Buttons ────────────────────────────────────────────────────────────────
+  btnSurface.addEventListener('click', beginWarp);
+  btnEnter.addEventListener('click', beginExit);
+
+  // respect reduced motion — skip straight to redirect
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    btnSurface.addEventListener('click', () => { window.location.href = '/'; }, { once: true });
+  }
+
+  // ── Render loop ────────────────────────────────────────────────────────────
+  const t0 = performance.now();
+  let lastRaf = t0;
+
+  function loop(now) {
+    requestAnimationFrame(loop);
+    if (now - lastRaf < 16.5) return;
+    lastRaf = now;
+    resize();
+
+    const t       = (now - t0) / 1000;
+    const elapsed = (now - phaseStart) / 1000;
+
+    // ── phase logic ──────────────────────────────────────────────────────────
+    if (phase === PHASES.WARP) {
+      const p01 = clamp01(elapsed / WARP_DUR);
+      warp    = easeInOutCubic(p01);
+      envMix  = clamp01((p01 - 0.5) / 0.5);
+
+      // fade out void UI opacity
+      const uiAlpha = clamp01(1 - p01 * 2.2);
+      tagline.style.opacity   = uiAlpha;
+      btnSurface.style.opacity = uiAlpha;
+
+      if (p01 >= 1) enterArrival();
+    }
+
+    if (phase === PHASES.ARRIVAL) {
+      envMix = 1;
+      warp   = 0;
+      // arrival auto-advances after ARRIVAL_DUR if user hasn't clicked
+      if (clamp01(elapsed / ARRIVAL_DUR) >= 1) beginExit();
+    }
+
+    if (phase === PHASES.EXIT) {
+      const p01 = clamp01(elapsed / EXIT_DUR);
+      canvas.style.opacity = 1 - easeInOutCubic(p01);
+      if (p01 >= 1) window.location.href = '/';
+    }
+
+    // ── draw ─────────────────────────────────────────────────────────────────
+    gl.uniform2f(uRes, canvas.width, canvas.height);
+    gl.uniform1f(uTime,   t);
+    gl.uniform1f(uEnvMix, envMix);
+    gl.uniform1f(uWarp,   warp);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+    // ── HUD ──────────────────────────────────────────────────────────────────
+    const spd    = 1.4 + envMix * 0.6;
+    const sway   = Math.sin(t * 0.23) * 0.12;
+    const nod    = Math.cos(t * 0.17) * 0.07;
+    const z      = t * spd;
+    const depth  = z * 3.2;
+    const sector = Math.floor(t / 8);
+    const fmt    = (n, d = 2) => n.toFixed(d).padStart(7);
+    hx.textContent     = 'X  ' + fmt(sway, 4);
+    hy.textContent     = 'Y  ' + fmt(nod,  4);
+    hz.textContent     = 'Z  ' + fmt(z,    2);
+    hdepth.textContent  = 'DEPTH   ' + fmt(depth, 1) + 'm';
+    hsector.textContent = 'SECTOR  ' + String(sector).padStart(4, '0');
+  }
+
+  requestAnimationFrame(loop);
+  canvas.addEventListener('webglcontextlost', e => e.preventDefault());
+})();
+</script>
+</body>
+</html>

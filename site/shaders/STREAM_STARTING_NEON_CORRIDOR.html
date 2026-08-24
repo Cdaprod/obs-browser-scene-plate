@@ -121,10 +121,10 @@ uniform int   iFrame;
 uniform int   u_steps; // quality-controlled loop count
 
 const float SPEED    = 2.2;   // was ~6.0 (too fast)
-const float SWAY_X   = 0.10;  // was 0.35
-const float SWAY_Y   = 0.06;  // was 0.20
-const float EXPOSURE = 0.55;  // lower = darker
-const float GLOW_K   = 0.006; // was ~0.02 (too bright)
+const float SWAY_X   = 0.0;  // was 0.35
+const float SWAY_Y   = 0.0;  // was 0.20
+const float EXPOSURE = 0.002;  // lower = darker
+const float GLOW_K   = 0.005; // was ~0.02 (too bright)
 
 // Portable tanh approximation (WebGL1-safe)
 vec4 fastTanh(vec4 x){
@@ -279,7 +279,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord){
 
     // glow gather (beam + frames)
     // smaller distance -> more glow
-    glow += 0.02 * safeInv(abs(h.x) + 0.02) * smoothstep(0.2, 1.0, h.y);
+    glow += 0.02 * safeInv(abs(h.x) + 0.2) * smoothstep(0.2, 1.0, h.y);
 
     dist += h.x * 0.7; // understep for stability
     mat = h.y;

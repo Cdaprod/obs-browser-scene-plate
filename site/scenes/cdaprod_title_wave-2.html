@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>CDAPROD Wave Title Lite</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
+
+    body {
+      font-family: Arial, Helvetica, sans-serif;
+    }
+
+    #c {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+      background: #000;
+    }
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<script>
+(() => {
+  const canvas = document.getElementById('c');
+  const gl = canvas.getContext('webgl', {
+    alpha: false,
+    antialias: false,
+    premultipliedAlpha: false,
+    preserveDrawingBuffer: false,
+    powerPreference: 'high-performance'
+  });
+
+  if (!gl) {
+    document.body.innerHTML =
+      '<pre style="color:#fff;background:#000;padding:16px;white-space:pre-wrap;font:14px monospace;">WebGL not supported</pre>';
+    return;
+  }
+
+  const DPR_CAP = 1.0;
+
+  const VERT = `
+    attribute vec2 a_pos;
+    varying vec2 v_uv;
+    void main() {
+      v_uv = a_pos * 0.5 + 0.5;
+      gl_Position = vec4(a_pos, 0.0, 1.0);
+    }
+  `;
+
+  const FRAG = `
+    precision mediump float;
+
+    varying vec2 v_uv;
+
+    uniform vec2  u_res;
+    uniform float u_time;
+    uniform float u_titleReveal;
+    uniform float u_titleGlow;
+    uniform float u_cameraDrift;
+
+    #define PI 3.14159265359
+    #define STEPS 26
+    #define WAVE_LAYERS 12
+
+    float hash21(vec2 p){
+      return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+    }
+
+    float noise(vec2 p){
+      vec2 i = floor(p);
+      vec2 f = fract(p);
+      vec2 u = f * f * (3.0 - 2.0 * f);
+
+      float a = hash21(i + vec2(0.0, 0.0));
+      float b = hash21(i + vec2(1.0, 0.0));
+      float c = hash21(i + vec2(0.0, 1.0));
+      float d = hash21(i + vec2(1.0, 1.0));
+
+      return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+    }
+
+    float fbm(vec2 p){
+      float v = 0.0;
+      float a = 0.5;
+      for(int i = 0; i < 3; i++){
+        v += a * noise(p);
+        p = p * 2.0 + vec2(1.7, 9.2);
+        a *= 0.5;
+      }
+      return v;
+    }
+
+    mat2 rot(float a){
+      float c = cos(a), s = sin(a);
+      return mat2(c,-s,s,c);
+    }
+
+    float sdSegment(vec2 p, vec2 a, vec2 b){
+      vec2 pa = p - a;
+      vec2 ba = b - a;
+      float h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-5), 0.0, 1.0);
+      return length(pa - ba * h);
+    }
+
+    float sdCircle(vec2 p, float r){
+      return length(p) - r;
+    }
+
+    float opU(float a, float b){ return min(a, b); }
+
+    // ----------------------------
+    // Hand-authored CDAPROD glyphs
+    // More reliable than the old procedural shorthand.
+    // ----------------------------
+
+    float glyphC(vec2 p){
+      float d = abs(length(p) - 0.115) - 0.016;
+      float cut = max(p.x - 0.02, abs(p.y) - 0.10);
+      return max(d, -cut);
+    }
+
+    float glyphD(vec2 p){
+      float stem = max(abs(p.x + 0.070) - 0.014, abs(p.y) - 0.112);
+      float bowl = abs(length(vec2(max(p.x + 0.020, 0.0), p.y)) - 0.108) - 0.016;
+      return min(stem, bowl);
+    }
+
+    float glyphA(vec2 p){
+      float d = 1e5;
+      d = opU(d, sdSegment(p, vec2(-0.085, 0.11), vec2(0.0, -0.11)) - 0.014);
+      d = opU(d, sdSegment(p, vec2( 0.085, 0.11), vec2(0.0, -0.11)) - 0.014);
+      d = opU(d, sdSegment(p, vec2(-0.040, 0.00), vec2(0.040, 0.00)) - 0.012);
+      return d;
+    }
+
+    float glyphP(vec2 p){
+      float stem = max(abs(p.x + 0.070) - 0.014, abs(p.y) - 0.112);
+      float loop = abs(length(p - vec2(-0.010, 0.050)) - 0.060) - 0.015;
+      float clip = max(p.y + 0.010, abs(p.x - 0.020) - 0.080);
+      return min(stem, max(loop, -clip));
+    }
+
+    float glyphR(vec2 p){
+      float d = glyphP(p);
+      d = opU(d, sdSegment(p, vec2(-0.005, -0.005), vec2(0.085, -0.112)) - 0.013);
+      return d;
+    }
+
+    float glyphO(vec2 p){
+      return abs(length(p) - 0.108) - 0.016;
+    }
+
+    float glyphText(vec2 p){
+      float d = 1e5;
+
+      // C D A P R O D
+      d = opU(d, glyphC(p - vec2(-0.72, 0.0)));
+      d = opU(d, glyphD(p - vec2(-0.48, 0.0)));
+      d = opU(d, glyphA(p - vec2(-0.24, 0.0)));
+      d = opU(d, glyphP(p - vec2( 0.00, 0.0)));
+      d = opU(d, glyphR(p - vec2( 0.24, 0.0)));
+      d = opU(d, glyphO(p - vec2( 0.49, 0.0)));
+      d = opU(d, glyphD(p - vec2( 0.74, 0.0)));
+
+      return d;
+    }
+
+    float titleMask(vec2 uv){
+      vec2 p = uv;
+      p.y += 0.04;
+      p.x *= 1.02;
+      p *= 0.95;
+
+      float d = glyphText(p);
+
+      float solid = smoothstep(0.032, -0.004, d);
+
+      // clean left-to-right reveal
+      float revealFront = mix(-1.35, 1.20, u_titleReveal);
+      float reveal = smoothstep(revealFront - 0.18, revealFront + 0.06, p.x);
+
+      // particle breakup on the title
+      vec2 g = floor((p + vec2(1.8, 0.5)) * vec2(170.0, 70.0));
+      float grain = hash21(g);
+      float particulate = smoothstep(0.10, 1.0, grain);
+
+      return solid * reveal * particulate;
+    }
+
+    float waveHeight(vec2 xz, float lf){
+      vec2 p = xz;
+      float t = u_time;
+
+      p *= mix(0.90, 1.20, lf);
+
+      float h = 0.0;
+      h += sin(p.x * 1.25 + t * 0.65 + lf * 4.5) * 0.18;
+      h += sin(p.y * 1.55 - t * 0.58 + lf * 3.0) * 0.12;
+      h += sin((p.x + p.y) * 0.85 + t * 0.40 + lf * 7.0) * 0.08;
+      h += (fbm(p * 0.65 + vec2(t * 0.05, -t * 0.04) + lf * 1.7) - 0.5) * 0.18;
+
+      return h;
+    }
+
+    vec3 camRay(vec2 uv, vec3 ro, vec3 ta){
+      vec3 ww = normalize(ta - ro);
+      vec3 uu = normalize(cross(ww, vec3(0.0, 1.0, 0.0)));
+      vec3 vv = normalize(cross(uu, ww));
+      return normalize(uu * uv.x + vv * uv.y + ww * 1.9);
+    }
+
+    float dottedBand(vec2 p, float density, float thickness){
+      vec2 q = fract(p * density) - 0.5;
+      float d = length(q);
+      return 1.0 - smoothstep(thickness, thickness + 0.10, d);
+    }
+
+    void main(){
+      vec2 uv = v_uv * 2.0 - 1.0;
+      uv.x *= u_res.x / max(1.0, u_res.y);
+
+      float t = u_time;
+
+      vec3 ro = vec3(
+        sin(t * 0.10) * 0.12,
+        0.88 + sin(t * 0.14) * 0.03 + u_cameraDrift * 0.05,
+        2.55
+      );
+      vec3 ta = vec3(
+        0.0,
+        0.10 + sin(t * 0.10) * 0.015,
+        -1.00
+      );
+
+      vec3 rd = camRay(uv, ro, ta);
+
+      vec3 col = vec3(0.0);
+      float totalRed = 0.0;
+      float totalWhite = 0.0;
+
+      for(int i = 0; i < STEPS; i++){
+        float fi = float(i) / float(STEPS - 1);
+        float z = mix(0.1, -3.1, fi);
+
+        float s = (z - ro.z) / rd.z;
+        if (s <= 0.0) continue;
+
+        vec3 p = ro + rd * s;
+
+        for(int l = 0; l < WAVE_LAYERS; l++){
+          float lf = float(l) / float(WAVE_LAYERS - 1);
+
+          float y = waveHeight(p.xz + vec2(0.0, lf * 0.45), lf) * mix(0.25, 0.95, lf);
+          float dy = abs(p.y - y);
+
+          float ridge = exp(-dy * mix(90.0, 30.0, lf));
+
+          float dots = dottedBand(
+            vec2(p.x * mix(0.85, 1.15, lf), z * 0.72 + lf * 2.2),
+            mix(22.0, 42.0, lf),
+            mix(0.12, 0.22, lf)
+          );
+
+          float band = ridge * dots;
+          float depthFade = mix(1.10, 0.18, fi);
+
+          vec3 redBase = mix(
+            vec3(0.12, 0.00, 0.01),
+            vec3(1.20, 0.06, 0.10),
+            ridge
+          );
+
+          col += redBase * band * depthFade * mix(0.15, 1.00, lf);
+          totalRed += band * depthFade;
+
+          float crest = exp(-dy * mix(180.0, 52.0, lf));
+          float whiteSweep = 0.5 + 0.5 * sin(p.x * 1.2 - z * 0.95 + t * 0.90 + lf * 5.5);
+          float hot = crest * whiteSweep * smoothstep(0.25, 1.0, lf);
+          totalWhite += hot * depthFade;
+        }
+      }
+
+      col += vec3(1.0, 0.18, 0.20) * totalRed * 0.03;
+      col += vec3(1.0, 0.96, 0.98) * totalWhite * 0.028;
+
+      float foregroundFog = smoothstep(0.72, -0.48, uv.y);
+      col += vec3(0.16, 0.00, 0.02) * foregroundFog * 0.32;
+
+      vec2 tuv = uv;
+      tuv.y += 0.02;
+      float tm = titleMask(tuv);
+      float tg = tm * u_titleGlow;
+
+      col += vec3(1.30, 1.30, 1.30) * tm;
+      col += vec3(1.00, 0.16, 0.18) * tg * 0.10;
+      col += vec3(1.00, 0.98, 0.99) * tg * 0.07;
+
+      float vig = 1.0 - dot(v_uv - 0.5, v_uv - 0.5) * 1.05;
+      col *= clamp(vig, 0.0, 1.0);
+
+      col = 1.0 - exp(-col);
+      col = pow(col, vec3(0.94));
+
+      gl_FragColor = vec4(col, 1.0);
+    }
+  `;
+
+  function createShader(gl, type, src) {
+    const shader = gl.createShader(type);
+    if (!shader) throw new Error('createShader returned null');
+    gl.shaderSource(shader, src);
+    gl.compileShader(shader);
+
+    const ok = gl.getShaderParameter(shader, gl.COMPILE_STATUS);
+    const log = gl.getShaderInfoLog(shader);
+    if (!ok) {
+      console.error(type === gl.VERTEX_SHADER ? 'VERT FAIL' : 'FRAG FAIL');
+      console.error(log);
+      gl.deleteShader(shader);
+      throw new Error(log || 'shader compile failed');
+    }
+    return shader;
+  }
+
+  function createProgram(gl, vertSrc, fragSrc) {
+    const program = gl.createProgram();
+    if (!program) throw new Error('createProgram returned null');
+
+    const vs = createShader(gl, gl.VERTEX_SHADER, vertSrc);
+    const fs = createShader(gl, gl.FRAGMENT_SHADER, fragSrc);
+
+    gl.attachShader(program, vs);
+    gl.attachShader(program, fs);
+    gl.linkProgram(program);
+
+    const ok = gl.getProgramParameter(program, gl.LINK_STATUS);
+    const log = gl.getProgramInfoLog(program);
+    if (!ok) {
+      console.error('LINK FAIL');
+      console.error(log);
+      throw new Error(log || 'program link failed');
+    }
+
+    return program;
+  }
+
+  const quad = new Float32Array([
+    -1, -1,
+     1, -1,
+    -1,  1,
+     1,  1
+  ]);
+
+  let program;
+  try {
+    program = createProgram(gl, VERT, FRAG);
+  } catch (err) {
+    document.body.innerHTML =
+      '<pre style="color:#fff;background:#000;padding:16px;white-space:pre-wrap;font:14px monospace;">' +
+      String(err && err.stack ? err.stack : err) +
+      '</pre>';
+    throw err;
+  }
+
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
+
+  const aPos = gl.getAttribLocation(program, 'a_pos');
+  const uRes = gl.getUniformLocation(program, 'u_res');
+  const uTime = gl.getUniformLocation(program, 'u_time');
+  const uTitleReveal = gl.getUniformLocation(program, 'u_titleReveal');
+  const uTitleGlow = gl.getUniformLocation(program, 'u_titleGlow');
+  const uCameraDrift = gl.getUniformLocation(program, 'u_cameraDrift');
+
+  function resize() {
+    const dpr = Math.min(window.devicePixelRatio || 1, DPR_CAP);
+    const w = Math.max(1, Math.round(innerWidth * dpr));
+    const h = Math.max(1, Math.round(innerHeight * dpr));
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+    }
+    gl.viewport(0, 0, w, h);
+  }
+
+  resize();
+  addEventListener('resize', resize, { passive: true });
+
+  gl.useProgram(program);
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.enableVertexAttribArray(aPos);
+  gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+  gl.disable(gl.DEPTH_TEST);
+  gl.disable(gl.CULL_FACE);
+
+  const start = performance.now();
+
+  function render(now) {
+    const t = (now - start) * 0.001;
+
+    // slower, cleaner reveal
+    const reveal = Math.min(1.0, Math.max(0.0, (t - 1.0) / 2.6));
+    const glow = Math.min(1.0, Math.max(0.0, (t - 1.4) / 1.8));
+    const camDrift = 0.5 + 0.5 * Math.sin(t * 0.14);
+
+    gl.clearColor(0, 0, 0, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    gl.useProgram(program);
+    gl.uniform2f(uRes, canvas.width, canvas.height);
+    gl.uniform1f(uTime, t);
+    gl.uniform1f(uTitleReveal, reveal);
+    gl.uniform1f(uTitleGlow, glow);
+    gl.uniform1f(uCameraDrift, camDrift);
+
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    requestAnimationFrame(render);
+  }
+
+  requestAnimationFrame(render);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Explorer — WebGL AssetGrid</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@800&family=DM+Mono:ital,wght@1,300;0,400&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
+:root {
+  --mint:#4fffce; --mint-glow:rgba(79,255,206,0.06);
+  --void:#060810; --surface:#0b0f1a;
+  --text:#c8d4e8; --text-dim:#4a5878; --amber:#ffb340;
+}
+html,body { width:100%; height:100%; background:var(--void); color:var(--text); font-family:'DM Mono',monospace; overflow:hidden; }
+
+.topbar {
+position:fixed; top:0; left:0; right:0; height:44px;
+display:flex; align-items:center; padding:0 14px;
+background:rgba(6,8,16,0.92); backdrop-filter:blur(12px);
+border-bottom:1px solid rgba(79,255,206,0.08); z-index:100; gap:10px;
+}
+.topbar-title { font-family:‘Syne’,sans-serif; font-weight:800; font-size:13px; letter-spacing:0.12em; color:var(–mint); text-transform:uppercase; }
+.topbar-sub   { font-size:10px; color:var(–text-dim); letter-spacing:0.07em; font-style:italic; }
+.topbar-spacer{ flex:1; }
+.density-ctrl { display:flex; gap:3px; }
+.density-btn {
+width:26px; height:26px; border:1px solid rgba(79,255,206,0.2);
+background:transparent; color:var(–text-dim); border-radius:3px; cursor:pointer;
+display:flex; align-items:center; justify-content:center; font-size:11px;
+transition:all 0.15s; font-family:‘DM Mono’,monospace;
+}
+.density-btn:hover,.density-btn.active { border-color:var(–mint); color:var(–mint); background:var(–mint-glow); }
+
+.scroll { position:fixed; top:44px; left:0; right:0; bottom:22px; overflow-y:auto; overflow-x:hidden; }
+.scroll::-webkit-scrollbar { width:3px; }
+.scroll::-webkit-scrollbar-thumb { background:rgba(79,255,206,0.2); border-radius:2px; }
+
+/* shared background stage canvas */
+#stage-canvas { position:absolute; top:0; left:0; width:100%; pointer-events:none; z-index:0; }
+
+.masonry-host    { position:relative; padding:10px; }
+.masonry-columns { position:relative; width:100%; }
+
+/*
+
+- Cards are created ONCE. Density change writes left/top/width/height only.
+- CSS transitions animate those four properties.
+- Stage shader reads getBCR every frame → tracks in-flight positions.
+- Per-card shader canvas fills the thumb layer.
+  */
+  .masonry-card {
+  position:absolute; overflow:hidden; border-radius:4px; cursor:pointer;
+  background:var(–surface); will-change:left,top,width,height;
+  opacity:0; transform:translateY(5px);
+  transition:
+  left 0.44s cubic-bezier(.4,0,.2,1), top 0.44s cubic-bezier(.4,0,.2,1),
+  width 0.44s cubic-bezier(.4,0,.2,1), height 0.44s cubic-bezier(.4,0,.2,1),
+  opacity 0.28s ease, transform 0.28s ease;
+  }
+  .masonry-card.revealed { opacity:1; transform:translateY(0); }
+  .masonry-card.settled  {
+  transition:
+  left 0.44s cubic-bezier(.4,0,.2,1), top 0.44s cubic-bezier(.4,0,.2,1),
+  width 0.44s cubic-bezier(.4,0,.2,1), height 0.44s cubic-bezier(.4,0,.2,1);
+  }
+  .masonry-card:hover .asset-overlay { opacity:1; }
+  .masonry-card.is-active { z-index:10; }
+  .masonry-card.is-active .cinematic-shell::after { opacity:1; }
+
+.cinematic-shell { width:100%; height:100%; position:relative; overflow:hidden; }
+.cinematic-shell::after {
+content:’’; position:absolute; inset:0; border-radius:4px;
+border:1.5px solid var(–mint); opacity:0; pointer-events:none;
+transition:opacity 0.22s;
+box-shadow:inset 0 0 16px rgba(79,255,206,0.10), 0 0 10px rgba(79,255,206,0.15);
+z-index:5;
+}
+
+/* Per-card shader canvas fills the thumb slot completely */
+.card-shader-canvas {
+position:absolute; inset:0; width:100%; height:100%;
+display:block; pointer-events:none; z-index:0;
+}
+
+.asset-overlay {
+position:absolute; inset:0; opacity:0; transition:opacity 0.18s;
+background:linear-gradient(to bottom,rgba(6,8,16,0.52) 0%,transparent 32%,transparent 58%,rgba(6,8,16,0.72) 100%);
+display:flex; flex-direction:column; justify-content:space-between; padding:5px; z-index:4;
+}
+.ov-top    { display:flex; justify-content:space-between; align-items:flex-start; }
+.ov-bottom { display:flex; flex-direction:column; gap:2px; }
+
+.badge { font-size:8px; letter-spacing:0.1em; text-transform:uppercase; padding:2px 4px; border-radius:2px; font-family:‘DM Mono’,monospace; font-style:italic; }
+.bv { background:rgba(79,255,206,0.14); color:var(–mint); border:1px solid rgba(79,255,206,0.28); }
+.bi { background:rgba(100,120,200,0.14); color:#8ab4f8;    border:1px solid rgba(100,120,200,0.28); }
+.br { background:rgba(255,180,60,0.11);  color:var(–amber);border:1px solid rgba(255,180,60,0.22); }
+.bd { background:rgba(6,8,16,0.5); color:var(–text-dim); border:none; }
+
+.asset-title    { font-size:9px; color:var(–text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.asset-subtitle { font-size:8px; color:var(–text-dim); font-style:italic; }
+
+.selector { width:20px; height:20px; display:flex; align-items:center; justify-content:center; }
+.sel-shell {
+width:16px; height:16px; border:1.5px solid rgba(79,255,206,0.4); border-radius:50%;
+display:flex; align-items:center; justify-content:center;
+background:rgba(6,8,16,0.6); transition:all 0.18s; cursor:pointer;
+}
+.sel-shell input { display:none; }
+.sel-order { font-size:7px; color:var(–mint); opacity:0; transition:opacity 0.12s; }
+.is-selected .sel-shell { background:var(–mint); border-color:var(–mint); }
+.is-selected .sel-order { opacity:1; color:var(–void); font-weight:700; }
+
+.status-bar {
+position:fixed; bottom:0; left:0; right:0; height:22px;
+display:flex; align-items:center; padding:0 12px; gap:14px;
+background:rgba(6,8,16,0.90); border-top:1px solid rgba(79,255,206,0.05);
+font-size:9px; color:var(–text-dim); letter-spacing:0.05em; z-index:100;
+}
+.hi { color:var(–mint); }
+</style>
+
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-title">Explorer</div>
+  <div class="topbar-sub">WebGL · hybrid cards</div>
+  <div class="topbar-spacer"></div>
+  <div class="density-ctrl">
+    <button class="density-btn active" data-cols="2">2</button>
+    <button class="density-btn" data-cols="3">3</button>
+    <button class="density-btn" data-cols="4">4</button>
+    <button class="density-btn" data-cols="5">5</button>
+  </div>
+</div>
+
+<div class="scroll" id="scroll">
+  <div class="masonry-host" id="masonryHost">
+    <canvas id="stage-canvas"></canvas>
+    <div class="masonry-columns" id="masonryColumns"></div>
+  </div>
+</div>
+
+<div class="status-bar">
+  <span>cols: <span class="hi" id="sCols">2</span></span>
+  <span id="sReflow">settled</span>
+  <div style="flex:1"></div>
+  <span>stage: <span class="hi">WebGL</span></span>
+  <span>cards: <span class="hi">WebGL</span></span>
+</div>
+
+<script>
+// ─────────────────────────────────────────────────────────
+// DATA
+// ─────────────────────────────────────────────────────────
+const KINDS   = ['video','video','video','image','image','raw','video','image'];
+const ORIENTS = ['portrait','landscape','square','portrait','landscape','portrait','square','landscape'];
+const TITLES  = [
+  'SHOT_4K_0012.mov','beach_drone_r01.mp4','studio_bts_v2.mp4','DSC_0447.ARW',
+  'portrait_final.jpg','BTS_wide_09.tif','interview_a_cut.mov','gradient_test.png',
+  'LOG_C_00234.mxf','backstage_reel.mp4','DSC_8812.NEF','aerial_seq3.mp4',
+  'comp_v7_master.mov','raw_scan_01.tif','event_recap.mp4','thumbnail_frame.jpg',
+  'colorgrd_test.mov','DSC_0991.ARW',
+];
+const SIZES=['1.2 GB','340 MB','2.1 GB','28 MB','4 MB','180 MB','890 MB','2 MB',
+             '1.8 GB','460 MB','34 MB','1.1 GB','3.4 GB','220 MB','700 MB','890 KB','540 MB','19 MB'];
+
+const assets = Array.from({length:38},(_,i)=>{
+  const orient=ORIENTS[i%8];
+  return {
+    id:`a${i}`, kind:KINDS[i%8], orient,
+    ratio: orient==='portrait'?1.28+Math.random()*0.32 : orient==='landscape'?0.56+Math.random()*0.28 : 0.88+Math.random()*0.24,
+    title:TITLES[i%18], size:SIZES[i%18],
+    hue:Math.random(), sat:0.5+Math.random()*0.5,
+    selected:false, selOrder:0, active:false,
+  };
+});
+let selOrder=[], colCount=2;
+
+// ─────────────────────────────────────────────────────────
+// LAYOUT
+// ─────────────────────────────────────────────────────────
+function computeLayout(items,cw,cols,gap){
+  const colW=(cw-gap*(cols+1))/cols;
+  const colH=new Array(cols).fill(gap);
+  const out=items.map(item=>{
+    const ci=colH.indexOf(Math.min(...colH));
+    const x=gap+ci*(colW+gap), y=colH[ci], h=colW*item.ratio;
+    colH[ci]=y+h+gap;
+    return {item,x,y,w:colW,h};
+  });
+  return {items:out, stageH:Math.max(...colH)};
+}
+
+// ─────────────────────────────────────────────────────────
+// PER-CARD SHADER  (Stage 1 — shader IS the card's visual surface)
+//
+// Each card gets one small WebGL canvas that covers the thumb area.
+// The fragment shader renders living texture: domain-warped noise,
+// chromatic color field, edge pulse, kind-aware palette.
+//
+// Safari/iOS GLSL ES 1.0 constraints observed:
+//   - no dynamic loop bounds (loop counts must be compile-time constant)
+//   - no non-constant indexing of arrays in loops — not used here
+// ─────────────────────────────────────────────────────────
+const CARD_VERT = `
+attribute vec2 a;
+void main(){ gl_Position=vec4(a,0.,1.); }
+`;
+
+// Returns GLSL source customised per-kind so each card has a distinct energy signature
+function buildCardFrag(kindIndex, hue, sat) {
+  // kindIndex: 0=video, 1=image, 2=raw
+  // All palette constants baked in — no uniform arrays, no dynamic loops
+  return `
+precision highp float;
+uniform float u_t;
+uniform vec2  u_res;
+
+#define PI 3.14159265
+
+float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+float hash1(float p){ return fract(sin(p)*43758.5453); }
+
+float noise(vec2 p){
+  vec2 i=floor(p), f=fract(p);
+  f=f*f*(3.-2.*f);
+  float a=hash(i), b=hash(i+vec2(1,0)), c=hash(i+vec2(0,1)), d=hash(i+vec2(1,1));
+  return mix(mix(a,b,f.x),mix(c,d,f.x),f.y);
+}
+
+// 2-octave fbm — fixed iteration count, Safari-safe
+float fbm(vec2 p){
+  float v=0., a=0.5;
+  v += a*noise(p); p=p*2.1+vec2(1.7,9.2); a*=0.5;
+  v += a*noise(p); p=p*2.1+vec2(8.3,2.8); a*=0.5;
+  v += a*noise(p);
+  return v;
+}
+
+vec3 hsl2rgb(float h, float s, float l){
+  vec3 rgb=clamp(abs(mod(h*6.+vec3(0,4,2),6.)-3.)-1.,0.,1.);
+  return l+s*(rgb-.5)*(1.-abs(2.*l-1.));
+}
+
+void main(){
+  vec2 uv = gl_FragCoord.xy / u_res;
+  uv.y    = 1. - uv.y;
+
+  // domain warp
+  float ox = fbm(uv*2.8 + vec2(u_t*0.07, 1.7));
+  float oy = fbm(uv*2.8 + vec2(2.4, u_t*0.05));
+  vec2  wuv = uv + 0.28*vec2(ox,oy);
+
+  float field = fbm(wuv*3.2 + u_t*0.04);
+
+  // base hue from asset — baked as float constant
+  float H  = ${hue.toFixed(4)};
+  float S  = ${sat.toFixed(4)};
+
+  // kind-specific secondary hue offset
+  float H2 = H + ${kindIndex===0?'0.08':kindIndex===1?'-0.06':'0.14'};
+
+  vec3 colA = hsl2rgb(H,  S*0.9, 0.12 + field*0.10);
+  vec3 colB = hsl2rgb(H2, S,     0.18 + field*0.08);
+  vec3 col  = mix(colA, colB, field);
+
+  // mint energy vein
+  float vein = smoothstep(0.48, 0.52, fbm(wuv*5.5 - u_t*0.06));
+  col = mix(col, vec3(0.31,1.0,0.80)*0.35, vein*0.4);
+
+  // edge glow (distance from uv border)
+  float edgeDist = min(min(uv.x,1.-uv.x), min(uv.y,1.-uv.y));
+  float edgePulse = sin(u_t*2.2 + edgeDist*18.) * 0.5 + 0.5;
+  float edge = smoothstep(0.06, 0.0, edgeDist) * 0.18 * (0.6+edgePulse*0.4);
+  col += vec3(0.31,1.0,0.80) * edge;
+
+  // subtle scanlines
+  col -= step(0.5, fract(gl_FragCoord.y*0.5)) * 0.018;
+
+  // vignette
+  float vign = 1. - smoothstep(0.3, 0.85, length((uv-0.5)*1.4));
+  col *= vign*0.7 + 0.3;
+
+  gl_FragColor = vec4(col, 1.);
+}
+`;
+}
+
+function kindIndex(kind){ return kind==='video'?0:kind==='image'?1:2; }
+
+// Compile one program; returns {prog, uT, uRes} or null on failure
+function compileCardProg(gl, hue, sat, ki) {
+  function sh(src, type){
+    const s=gl.createShader(type);
+    gl.shaderSource(s,src); gl.compileShader(s);
+    if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)){
+      console.error('card shader compile:', gl.getShaderInfoLog(s));
+      return null;
+    }
+    return s;
+  }
+  const vs=sh(CARD_VERT, gl.VERTEX_SHADER);
+  const fs=sh(buildCardFrag(ki,hue,sat), gl.FRAGMENT_SHADER);
+  if(!vs||!fs) return null;
+  const p=gl.createProgram();
+  gl.attachShader(p,vs); gl.attachShader(p,fs); gl.linkProgram(p);
+  if(!gl.getProgramParameter(p,gl.LINK_STATUS)){
+    console.error('card program link:', gl.getProgramInfoLog(p));
+    return null;
+  }
+  const loc=gl.getAttribLocation(p,'a');
+  // VBO is shared — caller binds it
+  return { prog:p, uT:gl.getUniformLocation(p,'u_t'), uRes:gl.getUniformLocation(p,'u_res'), aLoc:loc };
+}
+
+// Per-card GL state
+const cardGLMap = new Map(); // cardId → {canvas, gl, prog, uT, uRes, aLoc, vbo, raf}
+
+function initCardShader(asset, canvasEl) {
+  const gl = canvasEl.getContext('webgl',{alpha:false,antialias:false,depth:false,preserveDrawingBuffer:false});
+  if(!gl){ console.warn('no webgl for card'); return; }
+  const ki = kindIndex(asset.kind);
+  const compiled = compileCardProg(gl, asset.hue, asset.sat, ki);
+  if(!compiled) return;
+  // fullscreen quad
+  const vbo=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,vbo);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
+  cardGLMap.set(asset.id,{canvas:canvasEl,gl,...compiled,vbo,t0:Date.now()});
+}
+
+function tickCardShader(id) {
+  const c=cardGLMap.get(id); if(!c) return;
+  const {canvas,gl,prog,uT,uRes,aLoc,vbo,t0}=c;
+  const w=canvas.offsetWidth, h=canvas.offsetHeight;
+  if(w<2||h<2) return;
+  if(canvas.width!==w||canvas.height!==h){ canvas.width=w; canvas.height=h; gl.viewport(0,0,w,h); }
+  gl.useProgram(prog);
+  gl.uniform1f(uT,(Date.now()-t0)/1000);
+  gl.uniform2f(uRes,w,h);
+  gl.bindBuffer(gl.ARRAY_BUFFER,vbo);
+  gl.enableVertexAttribArray(aLoc);
+  gl.vertexAttribPointer(aLoc,2,gl.FLOAT,false,0,0);
+  gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+}
+
+// RAF loop for all card shaders
+let cardRafId=0;
+function cardLoop(){
+  cardRafId=requestAnimationFrame(cardLoop);
+  cardGLMap.forEach((_,id)=>tickCardShader(id));
+}
+cardLoop();
+
+// ─────────────────────────────────────────────────────────
+// STAGE SHADER  (background atmosphere + energy rings)
+// Safari-safe: fixed iteration count, no dynamic loop bounds
+// ─────────────────────────────────────────────────────────
+const stageCanvas = document.getElementById('stage-canvas');
+let stageGL, stageProg, stageReady=false;
+let suTime,suRes,suScroll;
+const T0=Date.now();
+
+const STAGE_VERT=`attribute vec2 a; void main(){gl_Position=vec4(a,0.,1.);}`;
+
+// Stage frag — 38 cards, loop manually unrolled to avoid dynamic bound issue.
+// We use a fixed count of 38 and pass actual count separately as uniform,
+// but work around Safari's strict loop bound by using a flat array read
+// with a break-on-index-check pattern that IS constant-folded by the driver.
+// Safer: just unroll the SDF contribution with a macro pattern via JS template.
+function buildStageFrag(maxCards) {
+  // Generate unrolled card contributions
+  let cardLoop = '';
+  for(let i=0;i<maxCards;i++){
+    cardLoop += `
+  {
+    vec4 r=u_cards[${i}]; float hue=u_cex[${i}].x; float act=u_cex[${i}].y;
+    if(${i}<u_n){
+      vec2 ctr=r.xy+r.zw*.5; vec2 half=r.zw*.5;
+      vec2 dv=abs(px-ctr)-half;
+      float sdf=length(max(dv,0.))+min(max(dv.x,dv.y),0.);
+      float border=exp(-abs(sdf)*.14)*.06;
+      float inner=exp(sdf*.032)*.020;
+      float pulse=sin(u_time*1.7+hue*6.28+sdf*.032)*.5+.5;
+      float g=(border+inner)*(.5+pulse*.5);
+      if(act>.5) g*=3.2;
+      vec3 col=hsl(hue,.65,.55); col=mix(col,vec3(.31,1.,.80),.28);
+      light+=col*g;
+    }
+  }`;
+  }
+  return `
+precision mediump float;
+uniform float u_time;
+uniform vec2  u_res;
+uniform float u_scroll;
+uniform vec4  u_cards[${maxCards}];
+uniform vec4  u_cex[${maxCards}];
+uniform int   u_n;
+
+float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5);}
+float noise(vec2 p){
+  vec2 i=floor(p),f=fract(p); f=f*f*(3.-2.*f);
+  return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1)),f.x),f.y);
+}
+vec3 hsl(float h,float s,float l){
+  vec3 r=clamp(abs(mod(h*6.+vec3(0,4,2),6.)-3.)-1.,0.,1.);
+  return l+s*(r-.5)*(1.-abs(2.*l-1.));
+}
+void main(){
+  vec2 px=vec2(gl_FragCoord.x, u_res.y-gl_FragCoord.y+u_scroll);
+  vec2 uv=gl_FragCoord.xy/u_res;
+  vec2 nv=px/u_res;
+  float n=noise(nv*3.+u_time*.05)*.8+noise(nv*7.-u_time*.09)*.2;
+  vec3 base=vec3(.022+n*.010,.030+n*.014,.052+n*.022);
+  base-=step(.5,fract(gl_FragCoord.y*.5))*.012;
+  vec3 light=vec3(0.);
+  ${cardLoop}
+  float vign=pow(clamp(1.-length((uv-.5)*1.5),0.,1.),2.2);
+  gl_FragColor=vec4((base+light)*(vign*.82+.18),1.);
+}
+`;
+}
+
+function initStageGL(){
+  stageGL=stageCanvas.getContext('webgl',{alpha:false,antialias:false,depth:false});
+  if(!stageGL){console.warn('no stage WebGL');return;}
+  function sh(src,t){
+    const s=stageGL.createShader(t);
+    stageGL.shaderSource(s,src); stageGL.compileShader(s);
+    if(!stageGL.getShaderParameter(s,stageGL.COMPILE_STATUS)){
+      console.error('stage shader:',stageGL.getShaderInfoLog(s)); return null;
+    }
+    return s;
+  }
+  const vs=sh(STAGE_VERT,stageGL.VERTEX_SHADER);
+  const fs=sh(buildStageFrag(38),stageGL.FRAGMENT_SHADER);
+  if(!vs||!fs) return;
+  stageProg=stageGL.createProgram();
+  stageGL.attachShader(stageProg,vs); stageGL.attachShader(stageProg,fs);
+  stageGL.linkProgram(stageProg);
+  if(!stageGL.getProgramParameter(stageProg,stageGL.LINK_STATUS)){
+    console.error('stage link:',stageGL.getProgramInfoLog(stageProg)); return;
+  }
+  stageGL.useProgram(stageProg);
+  const buf=stageGL.createBuffer(); stageGL.bindBuffer(stageGL.ARRAY_BUFFER,buf);
+  stageGL.bufferData(stageGL.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),stageGL.STATIC_DRAW);
+  const loc=stageGL.getAttribLocation(stageProg,'a');
+  stageGL.enableVertexAttribArray(loc); stageGL.vertexAttribPointer(loc,2,stageGL.FLOAT,false,0,0);
+  suTime  =stageGL.getUniformLocation(stageProg,'u_time');
+  suRes   =stageGL.getUniformLocation(stageProg,'u_res');
+  suScroll=stageGL.getUniformLocation(stageProg,'u_scroll');
+  stageReady=true;
+}
+
+function resizeStage(){
+  const mh=document.getElementById('masonryHost');
+  const h=Math.max(mh.scrollHeight, document.getElementById('scroll').clientHeight, 400);
+  if(stageCanvas.width!==window.innerWidth||stageCanvas.height!==h){
+    stageCanvas.width=window.innerWidth; stageCanvas.height=h;
+    stageCanvas.style.height=h+'px';
+    if(stageGL) stageGL.viewport(0,0,stageCanvas.width,stageCanvas.height);
+  }
+}
+
+const sFlat=new Float32Array(38*4), sCex=new Float32Array(38*4);
+function renderStage(scrollY){
+  if(!stageReady) return;
+  const t=(Date.now()-T0)/1000, cw=stageCanvas.width, ch=stageCanvas.height;
+  let n=0;
+  cardMap.forEach((card,id)=>{
+    if(n>=38) return;
+    const b=card.getBoundingClientRect();
+    sFlat[n*4]=b.left; sFlat[n*4+1]=b.top-44+scrollY; sFlat[n*4+2]=b.width; sFlat[n*4+3]=b.height;
+    const a=assets.find(x=>x.id===id);
+    sCex[n*4]=a?a.hue:0.46; sCex[n*4+1]=(a&&a.active)?1:0; sCex[n*4+2]=0; sCex[n*4+3]=0;
+    n++;
+  });
+  stageGL.useProgram(stageProg);
+  stageGL.uniform1f(suTime,t);
+  stageGL.uniform2f(suRes,cw,ch);
+  stageGL.uniform1f(suScroll,scrollY);
+  stageGL.uniform4fv(stageGL.getUniformLocation(stageProg,'u_cards[0]'),sFlat);
+  stageGL.uniform4fv(stageGL.getUniformLocation(stageProg,'u_cex[0]'),sCex);
+  stageGL.uniform1i(stageGL.getUniformLocation(stageProg,'u_n'),n);
+  stageGL.drawArrays(stageGL.TRIANGLE_STRIP,0,4);
+}
+
+// RAF: stage
+(function stageLoop(){
+  requestAnimationFrame(stageLoop);
+  renderStage(document.getElementById('scroll').scrollTop);
+})();
+
+// ─────────────────────────────────────────────────────────
+// CARD POOL
+// ─────────────────────────────────────────────────────────
+const cardMap=new Map();
+const colsEl=document.getElementById('masonryColumns');
+const masonryHost=document.getElementById('masonryHost');
+
+function ensureCard(asset){
+  if(cardMap.has(asset.id)) return cardMap.get(asset.id);
+  const card=document.createElement('div');
+  card.className='masonry-card';
+  card.dataset.cardId=asset.id;
+  const bc=asset.kind==='video'?'bv':asset.kind==='raw'?'br':'bi';
+  card.innerHTML=`
+    <div class="cinematic-shell">
+      <canvas class="card-shader-canvas"></canvas>
+      <div class="asset-overlay">
+        <div class="ov-top">
+          <span class="badge ${bc}">${asset.kind}</span>
+          <div class="selector" data-nop="1">
+            <span class="sel-shell" data-nop="1">
+              <input type="checkbox"/>
+              <span class="sel-order js-ord"></span>
+            </span>
+          </div>
+        </div>
+        <div class="ov-bottom">
+          <span class="badge bd">${asset.size}</span>
+          <div class="asset-title">${asset.title}</div>
+          <div class="asset-subtitle">${asset.orient} · ${asset.id}</div>
+        </div>
+      </div>
+    </div>`;
+  card.addEventListener('click',e=>{
+    if(e.target.closest('[data-nop]')){ toggleSel(asset.id); return; }
+    toggleActive(asset.id);
+  });
+  colsEl.appendChild(card);
+  cardMap.set(asset.id,card);
+  // init per-card shader after element is in DOM
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{
+    const cv=card.querySelector('.card-shader-canvas');
+    if(cv) initCardShader(asset,cv);
+    card.classList.add('revealed');
+    setTimeout(()=>card.classList.add('settled'),420);
+  }));
+  return card;
+}
+
+function syncCard(card,asset){
+  card.classList.toggle('is-selected',asset.selected);
+  card.classList.toggle('is-active',asset.active);
+  const ord=card.querySelector('.js-ord');
+  if(ord) ord.textContent=asset.selected?String(asset.selOrder):'';
+}
+
+function applyLayout(){
+  const cw=masonryHost.offsetWidth-20;
+  const lay=computeLayout(assets,cw,colCount,6);
+  colsEl.style.height=lay.stageH+'px';
+  lay.items.forEach(({item,x,y,w,h})=>{
+    const card=ensureCard(item);
+    card.style.left=x+'px'; card.style.top=y+'px';
+    card.style.width=w+'px'; card.style.height=h+'px';
+    syncCard(card,item);
+  });
+  resizeStage();
+  document.getElementById('sCols').textContent=colCount;
+}
+
+// ─────────────────────────────────────────────────────────
+// INTERACTIONS
+// ─────────────────────────────────────────────────────────
+function toggleSel(id){
+  const a=assets.find(x=>x.id===id); if(!a) return;
+  if(a.selected){
+    a.selected=false; selOrder=selOrder.filter(x=>x!==id);
+    assets.forEach(x=>{ if(x.selected) x.selOrder=selOrder.indexOf(x.id)+1; });
+  } else { selOrder.push(id); a.selected=true; a.selOrder=selOrder.length; }
+  assets.forEach(x=>{ const c=cardMap.get(x.id); if(c) syncCard(c,x); });
+}
+function toggleActive(id){
+  assets.forEach(a=>a.active=(a.id===id?!a.active:false));
+  assets.forEach(a=>{ const c=cardMap.get(a.id); if(c) syncCard(c,a); });
+}
+
+// ─────────────────────────────────────────────────────────
+// CONTROLS
+// ─────────────────────────────────────────────────────────
+let reflowT=0;
+document.querySelectorAll('.density-btn').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    document.querySelectorAll('.density-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    colCount=parseInt(btn.dataset.cols);
+    applyLayout();
+    const el=document.getElementById('sReflow');
+    el.innerHTML=`reflow → <span class="hi">${colCount} col</span>`;
+    clearTimeout(reflowT);
+    reflowT=setTimeout(()=>el.textContent='settled',500);
+  });
+});
+window.addEventListener('resize',()=>applyLayout());
+
+// ─────────────────────────────────────────────────────────
+// BOOT
+// ─────────────────────────────────────────────────────────
+initStageGL();
+resizeStage();
+applyLayout();
+</script>
+
+</body>
+</html>

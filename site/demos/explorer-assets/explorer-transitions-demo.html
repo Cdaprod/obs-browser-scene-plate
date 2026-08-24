@@ -1,0 +1,904 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Explorer — Transition Preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+
+<style>
+/* ─── Timing tokens (mirrors useGridTransitions.ts) ─────────────────────── */
+:root {
+  --t-overlay:        300ms;
+  --t-density-out:    140ms;  /* 40% of 350ms */
+  --t-density-in:     210ms;  /* 60% of 350ms */
+  --t-scroll:         380ms;
+  --t-scroll-stagger: 35ms;
+  --t-page:           320ms;
+  --t-page-stagger:   28ms;
+  --t-page-delay:     80ms;
+
+  --ease-inout:  cubic-bezier(0.76, 0, 0.24, 1);
+  --ease-expo:   cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-quint:  cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* Explorer palette from screenshots */
+  --bg:          #0d0f14;
+  --surface:     #13161e;
+  --surface-2:   #1a1e2a;
+  --border:      rgba(255,255,255,0.07);
+  --accent:      #4f8fff;
+  --accent-dim:  rgba(79,143,255,0.15);
+  --text:        #e8eaf0;
+  --text-dim:    rgba(232,234,240,0.45);
+  --text-muted:  rgba(232,234,240,0.22);
+  --badge-bg:    rgba(13,15,20,0.82);
+  --green:       #2ecc8a;
+  --amber:       #f5a623;
+  --red:         #e8404a;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'DM Mono', monospace;
+  font-size: 13px;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* grain overlay */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.035'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0.6;
+}
+
+/* ─── Layout ──────────────────────────────────────────────────────────────── */
+.page-header {
+  padding: 48px 32px 0;
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.wordmark {
+  font-family: 'Syne', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+.page-title {
+  font-family: 'Syne', sans-serif;
+  font-size: clamp(24px, 5vw, 40px);
+  font-weight: 800;
+  line-height: 1.1;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.page-sub {
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.page-sub code {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.sections {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 48px 32px 120px;
+  display: flex;
+  flex-direction: column;
+  gap: 80px;
+}
+
+/* ─── Section chrome ─────────────────────────────────────────────────────── */
+.section-label {
+  font-family: 'Syne', sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
+
+.section-title {
+  font-family: 'Syne', sans-serif;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.section-desc {
+  color: var(--text-dim);
+  font-size: 11.5px;
+  line-height: 1.8;
+  margin-bottom: 24px;
+}
+
+.timing-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--accent-dim);
+  border: 1px solid rgba(79,143,255,0.25);
+  border-radius: 20px;
+  padding: 3px 10px;
+  font-size: 10.5px;
+  color: var(--accent);
+  margin-bottom: 20px;
+}
+
+.timing-pill::before {
+  content: '⏱';
+  font-size: 10px;
+}
+
+.demo-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.demo-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.demo-toolbar-title {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-right: auto;
+}
+
+/* ─── Buttons ────────────────────────────────────────────────────────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: 'DM Mono', monospace;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 150ms, border-color 150ms, color 150ms;
+  user-select: none;
+  white-space: nowrap;
+}
+.btn:hover { background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.14); }
+.btn:active { transform: scale(0.97); }
+
+.btn-accent {
+  background: var(--accent-dim);
+  border-color: rgba(79,143,255,0.35);
+  color: var(--accent);
+}
+.btn-accent:hover { background: rgba(79,143,255,0.22); }
+
+.btn-pill {
+  border-radius: 20px;
+  padding: 5px 14px;
+}
+
+/* ─── Cards ──────────────────────────────────────────────────────────────── */
+.card {
+  position: relative;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  aspect-ratio: 9/16;
+}
+
+.card-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  background: var(--surface-2);
+}
+
+/* Gradient placeholder thumbs */
+.card-thumb-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.card-inner {
+  position: absolute;
+  inset: 0;
+  transition: transform 200ms var(--ease-spring), box-shadow 200ms var(--ease-spring);
+}
+
+.card:hover .card-inner {
+  transform: translateY(-3px) scale(1.012);
+  box-shadow: 0 12px 32px rgba(0,0,0,.45), 0 2px 8px rgba(0,0,0,.3);
+}
+
+/* Overlays */
+.card-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 8px;
+  pointer-events: none;
+  transition: opacity var(--t-overlay) var(--ease-inout);
+}
+
+.card-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--badge-bg);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 3px 7px;
+  font-size: 10px;
+  color: var(--text-dim);
+  width: fit-content;
+}
+
+.card-badge-type {
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
+.card-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.card-name {
+  font-size: 10px;
+  color: var(--text);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 4px rgba(0,0,0,.8);
+}
+
+.card-path {
+  font-size: 9px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 4px rgba(0,0,0,.8);
+}
+
+.card-checkbox {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  border: 1.5px solid rgba(255,255,255,0.3);
+  background: var(--badge-bg);
+  backdrop-filter: blur(6px);
+  transition: opacity var(--t-overlay) var(--ease-inout);
+}
+
+.card-gradient {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  height: 60%;
+  background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, transparent 100%);
+  transition: opacity var(--t-overlay) var(--ease-inout);
+}
+
+/* ─── 1. OVERLAY FADE DEMO ───────────────────────────────────────────────── */
+#demo-overlay .grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+  padding: 18px;
+}
+
+.overlays-off .card-overlay,
+.overlays-off .card-checkbox,
+.overlays-off .card-gradient {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ─── 2. DENSITY REFLOW DEMO ─────────────────────────────────────────────── */
+#demo-density .grid-wrap {
+  padding: 18px;
+  transition: opacity var(--t-density-in) var(--ease-quint);
+}
+
+#demo-density .grid-wrap.fading-out {
+  opacity: 0;
+  transition: opacity var(--t-density-out) var(--ease-inout);
+}
+
+#demo-density .grid {
+  display: grid;
+  gap: 8px;
+  transition: none; /* grid itself doesn't transition — JS handles it */
+}
+
+.density-readout {
+  font-family: 'Syne', sans-serif;
+  font-size: 28px;
+  font-weight: 800;
+  color: var(--accent);
+  min-width: 32px;
+  text-align: right;
+}
+
+input[type=range] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255,255,255,0.12);
+  outline: none;
+  flex: 1;
+  cursor: pointer;
+}
+
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg);
+  box-shadow: 0 0 0 1px var(--accent);
+  cursor: pointer;
+}
+
+/* ─── 3. SCROLL-IN DEMO ──────────────────────────────────────────────────── */
+#demo-scroll .scroll-viewport {
+  height: 380px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 18px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.1) transparent;
+}
+
+#demo-scroll .grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  padding-bottom: 8px;
+}
+
+[data-card] {
+  opacity: 0;
+  transform: translateY(14px);
+  transition: opacity var(--t-scroll) var(--ease-expo),
+              transform var(--t-scroll) var(--ease-expo);
+  will-change: opacity, transform;
+}
+
+[data-card].visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ─── 4. PAGE LOAD DEMO ──────────────────────────────────────────────────── */
+#demo-pageload .grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+  padding: 18px;
+}
+
+[data-pagecard] {
+  opacity: 0;
+  transform: translateY(18px);
+  transition: opacity var(--t-page) var(--ease-expo),
+              transform var(--t-page) var(--ease-expo);
+  will-change: opacity, transform;
+}
+
+[data-pagecard].visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ─── Thumb color swatches (placeholder video frames) ───────────────────── */
+.thumb-0  { background: linear-gradient(135deg, #0d1520 0%, #0a2a4a 100%); }
+.thumb-1  { background: linear-gradient(135deg, #1a0d20 0%, #3d1a5e 100%); }
+.thumb-2  { background: linear-gradient(135deg, #0d2010 0%, #1a5e2a 100%); }
+.thumb-3  { background: linear-gradient(135deg, #201008 0%, #5e2e0a 100%); }
+.thumb-4  { background: linear-gradient(135deg, #080d20 0%, #152060 100%); }
+.thumb-5  { background: linear-gradient(135deg, #200808 0%, #5e1010 100%); }
+.thumb-6  { background: linear-gradient(135deg, #151520 0%, #2a2a5e 100%); }
+.thumb-7  { background: linear-gradient(135deg, #082010 0%, #104830 100%); }
+.thumb-8  { background: linear-gradient(135deg, #201808 0%, #6e4800 100%); }
+.thumb-9  { background: linear-gradient(135deg, #0a0a1a 0%, #1a1a3e 100%); }
+.thumb-10 { background: linear-gradient(135deg, #1a0a0a 0%, #4e1515 100%); }
+.thumb-11 { background: linear-gradient(135deg, #0a1a0a 0%, #154e15 100%); }
+.thumb-12 { background: linear-gradient(135deg, #1a1205 0%, #5e4010 100%); }
+.thumb-13 { background: linear-gradient(135deg, #050a1a 0%, #102050 100%); }
+.thumb-14 { background: linear-gradient(135deg, #15050a 0%, #45101e 100%); }
+.thumb-15 { background: linear-gradient(135deg, #050a05 0%, #15451a 100%); }
+.thumb-16 { background: linear-gradient(135deg, #101520 0%, #20305e 100%); }
+.thumb-17 { background: linear-gradient(135deg, #200d05 0%, #603010 100%); }
+.thumb-18 { background: linear-gradient(135deg, #051015 0%, #103040 100%); }
+.thumb-19 { background: linear-gradient(135deg, #15100a 0%, #504030 100%); }
+
+/* tiny visual noise on each thumb */
+.card-thumb-placeholder::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: url("data:image/svg+xml,%3Csvg viewBox='0 0 64 64' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.06'/%3E%3C/svg%3E");
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+/* ─── divider ─────────────────────────────────────────────────────────────── */
+.section-divider {
+  width: 100%;
+  height: 1px;
+  background: var(--border);
+  margin: 0;
+}
+
+/* ─── slider row ─────────────────────────────────────────────────────────── */
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.slider-label {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+</style>
+</head>
+<body>
+
+<header class="page-header">
+  <div class="wordmark">Cdaprod's Explorer</div>
+  <h1 class="page-title">Transition Preview</h1>
+  <p class="page-sub">
+    All four cinematic transitions from <code>useGridTransitions.ts</code> — same timing
+    constants, same easing curves, same JS logic. No framework needed.
+  </p>
+</header>
+
+<div class="sections">
+
+  <!-- ══════════════════════════════════════════════════════════
+       1. OVERLAY FADE
+  ══════════════════════════════════════════════════════════ -->
+  <section>
+    <div class="section-label">01 — Overlay Fade</div>
+    <div class="section-title">Metadata badges show/hide</div>
+    <p class="section-desc">
+      Targets every <code>[data-overlay]</code> element inside each card.
+      Toggle fires once; CSS transition handles the rest.
+    </p>
+    <div class="timing-pill">300ms · cubic-bezier(0.76, 0, 0.24, 1)</div>
+
+    <div class="demo-panel" id="demo-overlay">
+      <div class="demo-toolbar">
+        <span class="demo-toolbar-title">Overlays</span>
+        <button class="btn btn-accent btn-pill" id="btn-overlay-toggle">Overlays: On</button>
+      </div>
+      <div class="grid" id="overlay-grid"></div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════
+       2. DENSITY REFLOW
+  ══════════════════════════════════════════════════════════ -->
+  <section>
+    <div class="section-label">02 — Density Reflow</div>
+    <div class="section-title">Grid column cross-fade on slider</div>
+    <p class="section-desc">
+      Grid fades to opacity 0 (140ms), columns update, double-rAF waits for
+      layout commit, grid fades back in (210ms). GSAP Flip runs inside the dark window.
+    </p>
+    <div class="timing-pill">350ms total · fade-out 140ms + fade-in 210ms</div>
+
+    <div class="demo-panel" id="demo-density">
+      <div class="slider-row">
+        <span class="slider-label">Density</span>
+        <input type="range" id="density-slider" min="2" max="8" value="5" step="1">
+        <span class="density-readout" id="density-readout">5</span>
+      </div>
+      <div class="grid-wrap" id="density-grid-wrap">
+        <div class="grid" id="density-grid"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════
+       3. SCROLL-IN FADE
+  ══════════════════════════════════════════════════════════ -->
+  <section>
+    <div class="section-label">03 — Scroll-in Fade</div>
+    <div class="section-title">Cards enter viewport with stagger</div>
+    <p class="section-desc">
+      IntersectionObserver batches cards entering within a 16ms window,
+      then staggers them at 35ms each. Cards already seen are skipped.
+      Scroll down inside the panel.
+    </p>
+    <div class="timing-pill">380ms per card · 35ms stagger · threshold 0.05</div>
+
+    <div class="demo-panel" id="demo-scroll">
+      <div class="demo-toolbar">
+        <span class="demo-toolbar-title">Scroll to reveal</span>
+        <button class="btn" id="btn-scroll-reset">↺ Reset</button>
+      </div>
+      <div class="scroll-viewport" id="scroll-viewport">
+        <div class="grid" id="scroll-grid"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════════════════════════
+       4. PAGE / ROUTE LOAD
+  ══════════════════════════════════════════════════════════ -->
+  <section>
+    <div class="section-label">04 — Page Load Entrance</div>
+    <div class="section-title">Staggered grid mount animation</div>
+    <p class="section-desc">
+      On mount, each card enters with opacity + translateY stagger.
+      Fires once, marks each card <code>data-card-seen</code> so the
+      scroll observer skips already-animated cards.
+    </p>
+    <div class="timing-pill">320ms per card · 28ms stagger · 80ms initial delay</div>
+    <div class="demo-panel" id="demo-pageload">
+      <div class="demo-toolbar">
+        <span class="demo-toolbar-title">Page load simulation</span>
+        <button class="btn btn-accent" id="btn-replay">▶ Replay</button>
+      </div>
+      <div class="grid" id="pageload-grid"></div>
+    </div>
+  </section>
+
+</div><!-- /sections -->
+
+<script>
+// ─── Timing tokens (same as useGridTransitions.ts) ─────────────────────────
+const T = {
+  OVERLAY_FADE:   300,
+  DENSITY_OUT:    140,
+  DENSITY_IN:     210,
+  SCROLL_IN:      380,
+  SCROLL_STAGGER: 35,
+  PAGE_LOAD:      320,
+  PAGE_STAGGER:   28,
+  PAGE_DELAY:     80,
+}
+
+const EASE = {
+  INOUT:  'cubic-bezier(0.76, 0, 0.24, 1)',
+  EXPO:   'cubic-bezier(0.16, 1, 0.3, 1)',
+  QUINT:  'cubic-bezier(0.22, 1, 0.36, 1)',
+  SPRING: 'cubic-bezier(0.34, 1.56, 0.64, 1)',
+}
+
+// ─── Card data (mirrors Explorer asset shape) ───────────────────────────────
+const ASSETS = [
+  { name: 'compose-20260323190…', path: 'exports/compose-2026…', type: 'video', size: '9.8 MB',  thumb: 0  },
+  { name: 'compose-20260323170…', path: 'exports/compose-2026…', type: 'video', size: '25 MB',   thumb: 1  },
+  { name: 'compose-20260323155…', path: 'exports/compose-2026…', type: 'video', size: '32 MB',   thumb: 2  },
+  { name: 'compose-20260323003…', path: 'exports/compose-2026…', type: 'video', size: '43 MB',   thumb: 3  },
+  { name: 'compose-20260322234…', path: 'exports/compose-2026…', type: 'video', size: '20 MB',   thumb: 4  },
+  { name: 'repro-kid-two-asset…', path: 'exports/repro-kid-tw…', type: 'video', size: '84 MB',   thumb: 5  },
+  { name: 'compose-17741196760…', path: 'exports/compose-1774…', type: 'video', size: '216 MB',  thumb: 6  },
+  { name: 'compose-20260317214…', path: 'exports/compose-2026…', type: 'video', size: '7.8 MB',  thumb: 7  },
+  { name: 'compose-17735174480…', path: 'exports/compose-1773…', type: 'video', size: '26 MB',   thumb: 8  },
+  { name: 'compose-17735163940…', path: 'exports/compose-1773…', type: 'video', size: '33 MB',   thumb: 9  },
+  { name: 'compiled-0…',          path: 'exports/compiled-0…',   type: 'video', size: '140 MB',  thumb: 10 },
+  { name: 'compiled-0…',          path: 'exports/compiled-0…',   type: 'video', size: '39 MB',   thumb: 11 },
+  { name: 'compiled-0…',          path: 'exports/compiled-0…',   type: 'video', size: '3.4 MB',  thumb: 12 },
+  { name: 'electro-synt…',        path: 'ingest/original…',      type: 'audio', size: '2.7 MB',  thumb: 13 },
+  { name: 'cvilni-violin…',       path: 'ingest/original…',      type: 'audio', size: '6.0 MB',  thumb: 14 },
+  { name: 'compiled-te…',         path: 'exports/compiled-te…',  type: 'video', size: '3.2 MB',  thumb: 15 },
+  { name: 'IMG_8742…',            path: 'ingest/original…',      type: 'video', size: '75 MB',   thumb: 16 },
+  { name: 'copy_52F30…',          path: 'ingest/original…',      type: 'video', size: '284 MB',  thumb: 17 },
+  { name: 'copy_D9313…',          path: 'ingest/original…',      type: 'video', size: '315 MB',  thumb: 18 },
+  { name: 'copy_2346…',           path: 'ingest/original…',      type: 'video', size: '395 MB',  thumb: 19 },
+]
+
+function makeCard(asset, opts = {}) {
+  const card = document.createElement('div')
+  card.className = 'card'
+  if (opts.dataCard)     card.dataset.card = ''
+  if (opts.dataPageCard) card.dataset.pagecard = ''
+
+  const isAudio = asset.type === 'audio'
+
+  card.innerHTML = `
+    <div class="card-inner">
+      <div class="card-thumb-placeholder thumb-${asset.thumb}"></div>
+      ${isAudio ? `
+        <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;">
+          <div style="font-size:10px;letter-spacing:.15em;color:rgba(232,234,240,.35);font-family:'Syne',sans-serif;font-weight:700;">AUDIO</div>
+        </div>
+      ` : ''}
+      <div class="card-gradient" data-overlay></div>
+      <div class="card-overlay" data-overlay>
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;">
+          <div class="card-badge card-badge-type">${asset.type}</div>
+          <div class="card-badge">${asset.size}</div>
+        </div>
+        <div class="card-info">
+          <div class="card-name">${asset.name}</div>
+          <div class="card-path">${asset.path}</div>
+        </div>
+      </div>
+      <div class="card-checkbox" data-overlay></div>
+    </div>
+  `
+  return card
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 1. OVERLAY FADE
+// ══════════════════════════════════════════════════════════════════════════════
+;(() => {
+  const grid = document.getElementById('overlay-grid')
+  const btn = document.getElementById('btn-overlay-toggle')
+  let overlaysOn = true
+
+  // Populate grid
+  ASSETS.slice(0, 10).forEach(asset => {
+    grid.appendChild(makeCard(asset))
+  })
+
+  function applyOverlayFade(on) {
+    const overlays = grid.querySelectorAll('[data-overlay]')
+    overlays.forEach(el => {
+      el.style.transition = `opacity ${T.OVERLAY_FADE}ms ${EASE.INOUT}`
+      el.style.opacity = on ? '1' : '0'
+      el.style.pointerEvents = on ? '' : 'none'
+    })
+    btn.textContent = `Overlays: ${on ? 'On' : 'Off'}`
+    btn.style.background = on ? '' : 'rgba(255,255,255,0.04)'
+    btn.style.borderColor = on ? '' : 'rgba(255,255,255,0.1)'
+    btn.style.color = on ? '' : 'rgba(232,234,240,0.4)'
+  }
+
+  btn.addEventListener('click', () => {
+    overlaysOn = !overlaysOn
+    applyOverlayFade(overlaysOn)
+  })
+})()
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 2. DENSITY REFLOW
+// ══════════════════════════════════════════════════════════════════════════════
+;(() => {
+  const gridWrap = document.getElementById('density-grid-wrap')
+  const grid     = document.getElementById('density-grid')
+  const slider   = document.getElementById('density-slider')
+  const readout  = document.getElementById('density-readout')
+  let cols = 5
+  let inFlight = false
+
+  function buildGrid(c) {
+    grid.innerHTML = ''
+    grid.style.gridTemplateColumns = `repeat(${c}, 1fr)`
+    ASSETS.slice(0, 16).forEach(asset => {
+      grid.appendChild(makeCard(asset))
+    })
+  }
+
+  function triggerDensityFade(newCols) {
+    if (inFlight) { buildGrid(newCols); return }
+    inFlight = true
+
+    // Fade out
+    gridWrap.style.transition = `opacity ${T.DENSITY_OUT}ms ${EASE.INOUT}`
+    gridWrap.style.opacity = '0'
+
+    setTimeout(() => {
+      buildGrid(newCols)
+      // Double-rAF — wait for layout commit
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          gridWrap.style.transition = `opacity ${T.DENSITY_IN}ms ${EASE.QUINT}`
+          gridWrap.style.opacity = '1'
+          gridWrap.addEventListener('transitionend', () => {
+            inFlight = false
+            gridWrap.style.transition = ''
+          }, { once: true })
+        })
+      })
+    }, T.DENSITY_OUT)
+  }
+
+  buildGrid(cols)
+
+  slider.addEventListener('input', () => {
+    const newCols = parseInt(slider.value)
+    readout.textContent = newCols
+    if (newCols !== cols) {
+      cols = newCols
+      triggerDensityFade(newCols)
+    }
+  })
+})()
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 3. SCROLL-IN FADE
+// ══════════════════════════════════════════════════════════════════════════════
+;(() => {
+  const viewport  = document.getElementById('scroll-viewport')
+  const grid      = document.getElementById('scroll-grid')
+  const resetBtn  = document.getElementById('btn-scroll-reset')
+  let observer    = null
+  let batchTimer  = null
+  let pendingBatch = []
+
+  function flushBatch() {
+    const batch = [...pendingBatch]
+    pendingBatch = []
+    batch.forEach((el, i) => {
+      el.style.transitionDelay = `${i * T.SCROLL_STAGGER}ms`
+      el.classList.add('visible')
+    })
+    const clean = T.SCROLL_IN + batch.length * T.SCROLL_STAGGER + 50
+    setTimeout(() => {
+      batch.forEach(el => el.style.transitionDelay = '')
+    }, clean)
+  }
+
+  function attach() {
+    const cards = grid.querySelectorAll('[data-card]:not([data-card-seen])')
+    cards.forEach(card => {
+      card.classList.remove('visible')
+      card.style.opacity = '0'
+      card.style.transform = 'translateY(14px)'
+      card.style.transitionDelay = ''
+    })
+
+    observer?.disconnect()
+    observer = new IntersectionObserver(entries => {
+      entries.forEach(entry => {
+        if (!entry.isIntersecting) return
+        const el = entry.target
+        if (el.dataset.cardSeen) return
+        el.dataset.cardSeen = '1'
+        observer.unobserve(el)
+        pendingBatch.push(el)
+        if (batchTimer) clearTimeout(batchTimer)
+        batchTimer = setTimeout(flushBatch, 16)
+      })
+    }, { root: viewport, rootMargin: '0px 0px -20px 0px', threshold: 0.05 })
+
+    cards.forEach(card => observer.observe(card))
+  }
+
+  function build() {
+    grid.innerHTML = ''
+    // 3 rows visible, 3 rows hidden below fold to demonstrate scroll
+    const allAssets = [...ASSETS, ...ASSETS, ...ASSETS].slice(0, 24)
+    allAssets.forEach(asset => {
+      grid.appendChild(makeCard(asset, { dataCard: true }))
+    })
+  }
+
+  function reset() {
+    viewport.scrollTop = 0
+    build()
+    // Double-rAF before attaching observer
+    requestAnimationFrame(() => requestAnimationFrame(attach))
+  }
+
+  reset()
+  resetBtn.addEventListener('click', reset)
+})()
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 4. PAGE LOAD
+// ══════════════════════════════════════════════════════════════════════════════
+;(() => {
+  const grid    = document.getElementById('pageload-grid')
+  const replayBtn = document.getElementById('btn-replay')
+
+  function runPageLoad() {
+    const cards = grid.querySelectorAll('[data-pagecard]')
+
+    // Reset
+    cards.forEach(card => {
+      card.style.transition = 'none'
+      card.style.opacity = '0'
+      card.style.transform = 'translateY(18px)'
+      card.classList.remove('visible')
+      delete card.dataset.cardSeen
+    })
+
+    // Double-rAF before triggering
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        cards.forEach((card, i) => {
+          card.style.transition = `opacity ${T.PAGE_LOAD}ms ${EASE.EXPO}, transform ${T.PAGE_LOAD}ms ${EASE.EXPO}`
+          setTimeout(() => {
+            card.style.opacity = '1'
+            card.style.transform = 'translateY(0)'
+            card.dataset.cardSeen = '1'
+          }, T.PAGE_DELAY + i * T.PAGE_STAGGER)
+        })
+
+        const totalDuration = T.PAGE_DELAY + cards.length * T.PAGE_STAGGER + T.PAGE_LOAD + 100
+        setTimeout(() => {
+          cards.forEach(card => {
+            card.style.willChange = ''
+            card.style.transition = ''
+          })
+        }, totalDuration)
+      })
+    })
+  }
+
+  function build() {
+    grid.innerHTML = ''
+    ASSETS.forEach(asset => {
+      grid.appendChild(makeCard(asset, { dataPageCard: true }))
+    })
+  }
+
+  build()
+  // Auto-run on section scroll-into-view
+  const section = document.getElementById('demo-pageload')
+  const sectionObs = new IntersectionObserver(entries => {
+    if (entries[0].isIntersecting) {
+      runPageLoad()
+      sectionObs.disconnect()
+    }
+  }, { threshold: 0.3 })
+  sectionObs.observe(section)
+
+  replayBtn.addEventListener('click', runPageLoad)
+})()
+</script>
+</body>
+</html>

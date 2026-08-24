@@ -1,0 +1,507 @@
+<!doctype html>
+
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>404 — Lost in the Void</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:ital,wght@0,300;1,300&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100%; height: 100%; background: #000; overflow: hidden; -webkit-user-select: none; user-select: none; }
+    canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; transition: opacity 1.2s ease; }
+
+```
+.void-wrap {
+  perspective: 1100px; perspective-origin: 50% 42%;
+  position: fixed; inset: 0; display: grid; place-items: center;
+  z-index: 10; pointer-events: none;
+}
+.void-stack {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  transform-style: preserve-3d; will-change: transform, opacity, filter;
+}
+.label-404 {
+  font-family: 'Bebas Neue', sans-serif;
+  font-size: clamp(120px, 25vw, 260px); line-height: .88; letter-spacing: -.02em;
+  color: transparent;
+  background: linear-gradient(160deg, rgba(255,255,255,.96) 0%, rgba(180,160,255,.85) 40%, rgba(100,80,200,.5) 100%);
+  -webkit-background-clip: text; background-clip: text;
+  mix-blend-mode: screen; animation: breathe 4.2s ease-in-out infinite;
+  will-change: transform, opacity, filter; transform-style: preserve-3d;
+}
+.tagline {
+  margin-top: 28px; font-family: 'DM Mono', monospace; font-style: italic; font-weight: 300;
+  font-size: clamp(11px,1.6vw,18px); letter-spacing: .28em; text-transform: uppercase;
+  color: rgba(160,140,255,.75); mix-blend-mode: screen;
+  animation: fadein 2.4s ease .6s both; will-change: transform, opacity, filter;
+}
+.back-btn {
+  pointer-events: all; margin-top: 52px;
+  font-family: 'DM Mono', monospace; font-weight: 300;
+  font-size: clamp(10px,1.2vw,14px); letter-spacing: .22em; text-transform: uppercase;
+  color: rgba(255,255,255,.35); background: transparent;
+  border: 1px solid rgba(255,255,255,.12); padding: 12px 32px; border-radius: 2px; cursor: pointer;
+  transition: color .3s, border-color .3s, background .3s;
+  animation: fadein 2.8s ease 1.2s both; will-change: transform, opacity, filter;
+}
+.back-btn:hover:not(:disabled) { color: rgba(200,180,255,.95); border-color: rgba(180,140,255,.4); background: rgba(120,80,255,.08); }
+.back-btn:disabled { cursor: default; }
+
+.arrival-wrap { position: fixed; inset: 0; z-index: 10; display: none; flex-direction: column; align-items: center; justify-content: center; pointer-events: none; }
+.arrival-wrap.show { display: flex; }
+.arrival-panel { display: flex; flex-direction: column; align-items: center; pointer-events: all; opacity: 0; transform: translateY(14px) scale(.97); transition: opacity .9s ease, transform .9s ease; }
+.arrival-panel.visible { opacity: 1; transform: none; }
+.arrival-eyebrow { font-family: 'DM Mono', monospace; font-style: italic; font-weight: 300; font-size: clamp(10px,1.4vw,14px); letter-spacing: .38em; text-transform: uppercase; color: rgba(255,180,80,.7); mix-blend-mode: screen; }
+.arrival-title { font-family: 'Bebas Neue', sans-serif; font-size: clamp(52px,10vw,108px); line-height: .9; letter-spacing: .04em; color: transparent; background: linear-gradient(150deg, rgba(255,210,80,.98) 0%, rgba(255,120,30,.85) 55%, rgba(180,60,10,.6) 100%); -webkit-background-clip: text; background-clip: text; mix-blend-mode: screen; margin-top: 12px; animation: breathe 3.5s ease-in-out infinite; }
+.arrival-sub { margin-top: 18px; font-family: 'DM Mono', monospace; font-style: italic; font-weight: 300; font-size: clamp(10px,1.3vw,15px); letter-spacing: .24em; text-transform: uppercase; color: rgba(255,160,60,.6); mix-blend-mode: screen; }
+.enter-btn { pointer-events: all; margin-top: 44px; font-family: 'DM Mono', monospace; font-weight: 300; font-size: clamp(10px,1.2vw,14px); letter-spacing: .22em; text-transform: uppercase; color: rgba(255,180,80,.55); background: transparent; border: 1px solid rgba(255,160,60,.22); padding: 12px 36px; border-radius: 2px; cursor: pointer; transition: color .3s, border-color .3s, background .3s; }
+.enter-btn:hover { color: rgba(255,205,80,.95); border-color: rgba(255,160,60,.55); background: rgba(200,80,10,.1); }
+
+.hud-l, .hud-r { position: fixed; bottom: 24px; font-family: 'DM Mono', monospace; font-style: italic; font-weight: 300; font-size: 10px; letter-spacing: .18em; line-height: 1.8; pointer-events: none; z-index: 10; transition: color 1.2s ease; }
+.hud-l { left: 28px; color: rgba(255,255,255,.18); }
+.hud-r { right: 28px; text-align: right; color: rgba(160,130,255,.3); }
+.hud-l.amber { color: rgba(255,160,60,.28); }
+.hud-r.amber { color: rgba(255,160,60,.3); }
+
+@keyframes breathe { 0%,100%{opacity:.88;filter:brightness(1)} 50%{opacity:1;filter:brightness(1.12)} }
+@keyframes fadein  { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+```
+
+  </style>
+</head>
+<body>
+
+<canvas id="gl"></canvas>
+
+<div class="void-wrap" id="voidWrap">
+  <div class="void-stack" id="voidStack">
+    <div class="label-404" id="label404">404</div>
+    <div class="tagline"   id="tagline">This page fell through the void</div>
+    <button class="back-btn" id="btnSurface">← Surface</button>
+  </div>
+</div>
+
+<div class="arrival-wrap" id="arrivalWrap">
+  <div class="arrival-panel" id="arrivalPanel">
+    <div class="arrival-eyebrow">Return Vector Locked</div>
+    <div class="arrival-title">SURFACE FOUND</div>
+    <div class="arrival-sub">Explorer is ready — reacquiring index</div>
+    <button class="enter-btn" id="btnEnter">Enter Explorer →</button>
+  </div>
+</div>
+
+<div class="hud-l" id="hudL"><div id="hx">X  —</div><div id="hy">Y  —</div><div id="hz">Z  —</div></div>
+<div class="hud-r" id="hudR"><div id="hdepth">DEPTH   —</div><div id="hsector">SECTOR  —</div></div>
+
+<script>
+(() => {
+  // ── GL ──────────────────────────────────────────────────────────────────────
+  const canvas = document.getElementById('gl');
+  const gl = canvas.getContext('webgl', { antialias: false, alpha: false });
+  if (!gl) { document.body.innerHTML = '<p style="color:#fff;padding:2rem">WebGL unavailable</p>'; return; }
+
+  const VERT = `
+    attribute vec2 a_pos; varying vec2 v_uv;
+    void main(){ v_uv=a_pos*.5+.5; gl_Position=vec4(a_pos,0.,1.); }
+  `;
+
+  const FRAG = `
+    precision highp float;
+    varying vec2 v_uv;
+    uniform vec2  u_res;
+    uniform float u_time;
+    uniform float u_envMix;
+    uniform float u_warp;
+
+    // ── Camera uniforms (replaces u_camZ) ─────────────────────────────────
+    uniform vec3  u_camPos;
+    uniform vec3  u_camTarget;
+    uniform float u_fov;
+    uniform float u_roll;
+
+    #define TAU 6.28318530717959
+
+    float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+
+    float panelSeam(vec2 uv,vec2 sz,float w){
+      vec2 t=fract(uv/sz);
+      vec2 s=smoothstep(0.,w,t)*(1.-smoothstep(1.-w,1.,t));
+      return pow(1.-min(s.x,s.y),3.);
+    }
+
+    vec3 tealGrade(vec3 col,float amt){
+      float l=dot(col,vec3(.2126,.7152,.0722));
+      return mix(col,vec3(l*.22,l*.78,l*1.18),amt);
+    }
+
+    vec3 sharedBlueField(vec2 uv,vec2 wuv,float em,float wp){
+      float r1=length(wuv), r2=length(uv-vec2(.24,.02));
+      // Use unwarped UV for center fog — warpedUV collapses to zero and would blow out
+      float cFog=exp(-length(uv)*2.2), vpFog=exp(-r2*2.4);
+      float bands=smoothstep(.35,1.,.5+.5*sin(r1*8.-u_time*1.8+sin(u_time*.4)*.8));
+      // Tail extends smoothly to em=1 — no abrupt cutoff
+      float cross=smoothstep(.08,.50,em)*(1.-smoothstep(.75,1.0,em));
+      vec3 f=mix(vec3(.005,.010,.020),vec3(.01,.28,.48),cFog*.5+vpFog*.5);
+      f=mix(f,vec3(.04,.70,.90),bands*.15+vpFog*.35);
+      return f*(.12+.55*cross);
+    }
+
+    // ── Camera basis — builds orthonormal view matrix ──────────────────────
+    mat3 cameraBasis(vec3 ro, vec3 ta, float roll){
+      vec3 fwd   = normalize(ta - ro);
+      vec3 right = normalize(cross(fwd, vec3(0.,1.,0.)));
+      vec3 up    = normalize(cross(right, fwd));
+      float cr=cos(roll), sr=sin(roll);
+      vec3 r2 = right*cr - up*sr;
+      vec3 u2 = right*sr + up*cr;
+      return mat3(r2, u2, fwd);
+    }
+
+    // ── ENV A: polar tunnel ────────────────────────────────────────────────
+    vec3 envA(vec2 uv){
+      vec2 p=uv-vec2(sin(u_time*.19)*.10,cos(u_time*.14)*.07);
+      float r=length(p), a=atan(p.y,p.x);
+      float d=1./max(r,.001)+u_time*.75;
+      float ta=a+d*.22+sin(d*.11)*.5;
+      float g1=pow(max(sin(fract(d*2.8)*TAU)*(.82+.18*sin(ta*5.+d*.3)),0.),18.);
+      float g2=pow(max(sin(fract(d*2.8+.5)*TAU)*(.88+.12*cos(ta*4.-d*.2)),0.),18.)*.6;
+      float h=d*.18+u_time*.12;
+      float t1=sin(h)*.5+.5, t2=sin(h*.61+1.9)*.5+.5;
+      vec3 col=mix(mix(vec3(.01,.08,.18),vec3(.02,.35,.55),t1*.8),vec3(.04,.82,1.),t2*.45)
+              *(0.7+.3*(sin(ta+u_time*.08)*.5+.5));
+      col*=(g1+g2)*r*1.6;
+      col+=col*exp(-r*3.5)*.25;
+      col+=vec3(.005,.010,.020);
+      return col;
+    }
+
+    // ── ENV B: world-anchored corridor ─────────────────────────────────────
+    // Wall at x=1.2, floor at y=-1.0, glow anchored at world z=28
+    // Camera is passed in as ro/rd — no baked-in position
+    vec3 envBWorld(vec3 ro, vec3 rd){
+      vec3 tH=vec3(.06,.90,1.),tD=vec3(.02,.40,.65),nB=vec3(.002,.012,.028);
+      vec3 aH=vec3(1.,.44,.03),vP=vec3(.04,.82,1.);
+      float p1=.68+.32*sin(u_time*.50), p2=.68+.32*sin(u_time*.36+1.3);
+      float wX=1.2, fY=-1.;
+
+      // World-space plane intersections
+      float tW=(rd.x>.0001)?(wX-ro.x)/rd.x:1e9;
+      float tF=(rd.y<-.0001)?(fY-ro.y)/rd.y:1e9;
+      if(tW<.01)tW=1e9; if(tF<.01)tF=1e9;
+
+      vec3 col=vec3(0.);
+
+      if(tW<tF && tW<1e8){
+        // Wall hit
+        vec3 h=ro+rd*tW; float fog=exp(-tW*.055);
+        float sm=panelSeam(vec2(h.z*.38,h.y*.55),vec2(1.),.044)*p1;
+        vec3 wc=nB+tH*sm*.65;
+        // Glow anchored at world position (28,0,0) — not camera-relative
+        wc+=vP*exp(-length(vec2(h.z-28.,h.y*1.2))*.07)*.85*fog;
+        wc+=tD*.35*fog;
+        wc+=aH*clamp(exp(-max(h.y-fY,0.)*10.)*exp(-max(h.z,0.)*.45),0.,.22)*.10;
+        col=wc*fog;
+      } else if(tF<1e8){
+        // Floor hit
+        vec3 h=ro+rd*tF; float fog=exp(-tF*.042);
+        float sm=panelSeam(vec2(h.x*.65,h.z*.38),vec2(1.),.036)*p2;
+        vec3 fc=vec3(.001,.004,.008)+tH*sm*.28;
+        fc+=vP*exp(-length(vec2(h.x*.5,h.z-28.))*.06)*.18*fog;
+        fc+=tH*exp(-abs(h.x-wX)*16.)*.45*fog;
+        col=fc;
+      }
+
+      // Sky / VP bloom
+      float vA=dot(normalize(rd),normalize(vec3(.30,.05,1.)));
+      col+=vP*pow(max(vA,0.),40.)*.8;
+      col+=tD*exp(-length(vec2(rd.x-.30,rd.y-.05))*3.)*.06;
+      col+=vec3(.005,.010,.020);
+      return col;
+    }
+
+    void main(){
+      vec2 uv=v_uv*2.-1.; uv.x*=u_res.x/u_res.y;
+      float wp=pow(u_warp,2.2);
+      vec2 wuv=uv*(1.-wp*.88);
+
+      // ── ENV A (tunnel) ─────────────────────────────────────────────────
+      vec3 cA=u_envMix<.999?envA(wuv):vec3(0.);
+
+      // ── ENV B (corridor) — camera-basis ray ────────────────────────────
+      mat3 cam=cameraBasis(u_camPos, u_camTarget, u_roll);
+      vec3 ro=u_camPos;
+      vec3 rd=normalize(cam*vec3(uv*u_fov,1.0));
+      vec3 cB=u_envMix>.001?envBWorld(ro,rd):vec3(0.);
+
+      // ── Blend ──────────────────────────────────────────────────────────
+      float cc=smoothstep(.10,.40,u_envMix)*(1.-smoothstep(.70,.96,u_envMix));
+      cA=tealGrade(cA,cc*.42); cB=tealGrade(cB,cc*.28);
+
+      float bL=smoothstep(.28,.82,u_envMix);
+      float sM=smoothstep(.18,.88,u_envMix);
+      vec3 col=mix(cA,cB,sM*bL+u_envMix*(1.-bL));
+
+      // Luminance cap at crossover center to prevent white bloom
+      float capAmt=smoothstep(.08,.55,u_envMix)*(1.-smoothstep(.75,1.,u_envMix));
+      float luma=dot(col,vec3(.2126,.7152,.0722));
+      float capLuma=min(luma,.18+length(uv)*.55);
+      col*=mix(1.,capLuma/max(luma,.001),capAmt*.7);
+
+      col+=sharedBlueField(uv,wuv,u_envMix,wp);
+
+      // Cool flash only — fades before corridor takes over
+      float flashStr=pow(u_warp,4.)*exp(-length(uv)*5.)*2.2;
+      float flashFade=1.-smoothstep(.35,.70,u_envMix);
+      col+=vec3(.34,.74,1.)*flashStr*flashFade;
+
+      // ── Post ───────────────────────────────────────────────────────────
+      col=col/(col+vec3(.45));
+      col=pow(max(col,0.),vec3(.88));
+
+      vec3 voidDark=vec3(.005,.010,.020);
+      float vS=mix(.5,.35,u_envMix), vO=mix(1.35,.95,u_envMix+wp*.3);
+      float vigAmt=smoothstep(vS,vO,length((v_uv*2.-1.)*vec2(.75,.95)));
+      col=mix(col,voidDark,vigAmt);
+
+      col+=(hash(v_uv*u_res+fract(u_time*.07))-.5)*.014;
+      gl_FragColor=vec4(clamp(col,0.,1.),1.);
+    }
+  `;
+
+  function mkSh(type,src){
+    const s=gl.createShader(type);
+    gl.shaderSource(s,src); gl.compileShader(s);
+    if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    return s;
+  }
+  const prog=gl.createProgram();
+  gl.attachShader(prog,mkSh(gl.VERTEX_SHADER,VERT));
+  gl.attachShader(prog,mkSh(gl.FRAGMENT_SHADER,FRAG));
+  gl.linkProgram(prog);
+  if(!gl.getProgramParameter(prog,gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+  gl.useProgram(prog);
+
+  const buf=gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]),gl.STATIC_DRAW);
+  const aPos=gl.getAttribLocation(prog,'a_pos');
+  gl.enableVertexAttribArray(aPos);
+  gl.vertexAttribPointer(aPos,2,gl.FLOAT,false,0,0);
+
+  // Uniform locations
+  const uRes    =gl.getUniformLocation(prog,'u_res');
+  const uTime   =gl.getUniformLocation(prog,'u_time');
+  const uEM     =gl.getUniformLocation(prog,'u_envMix');
+  const uWp     =gl.getUniformLocation(prog,'u_warp');
+  const uCamPos =gl.getUniformLocation(prog,'u_camPos');
+  const uCamTgt =gl.getUniformLocation(prog,'u_camTarget');
+  const uFov    =gl.getUniformLocation(prog,'u_fov');
+  const uRoll   =gl.getUniformLocation(prog,'u_roll');
+
+  const DPR=Math.min(window.devicePixelRatio||1,2);
+  let lw=0,lh=0;
+  function resize(){
+    const w=Math.floor(innerWidth*DPR),h=Math.floor(innerHeight*DPR);
+    if(w===lw&&h===lh)return; lw=w;lh=h;
+    canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h);
+  }
+  window.addEventListener('resize',resize,{passive:true});
+  resize();
+
+  // ── Phase state ──────────────────────────────────────────────────────────────
+  const PHASES={IDLE:'idle',WARP:'warp',ARRIVAL:'arrival',EXIT:'exit'};
+  const WARP_DUR=4.2, EXIT_DUR=2.4; // longer exit for dolly
+  let phase='idle', phaseStart=0;
+  let envMix=0, warp=0;
+
+  const c01=v=>Math.max(0,Math.min(1,v));
+  const eio=t=>t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2;
+  const sjs=(a,b,x)=>{const t=c01((x-a)/(b-a));return t*t*(3-2*t);};
+  const lerp=(a,b,t)=>a+(b-a)*t;
+
+  // ── Camera state function ────────────────────────────────────────────────────
+  // All camera positions live here — world is fixed, camera moves through it.
+  // The dolly: warp pushes camera forward+down into the world,
+  //            exit dollies down through the floor plane (y → -∞) into black.
+  function getCameraState(ph, elapsed, t){
+    const dX=Math.sin(t*.19)*.015;
+    const dY=Math.cos(t*.14)*.018;
+    const idleRoll=Math.sin(t*.10)*.018;
+
+    if(ph==='idle'){
+      return {
+        pos:    [-0.6+dX, -0.28+dY, 0.0],
+        target: [ 0.20,   -0.18,    1.0],
+        fov:    0.58,
+        roll:   idleRoll,
+      };
+    }
+
+    if(ph==='warp'){
+      const p=c01(elapsed/WARP_DUR);
+      const e=eio(p);
+      // Push forward and slightly down as warp accelerates
+      return {
+        pos: [
+          -0.6 + dX*(1-e*.4),
+          -0.28 - e*0.58 + dY*(1-e*.5),
+           e*18.0,
+        ],
+        target: [
+           0.18,
+          -0.42 - e*0.24,
+          24.0,
+        ],
+        fov:  0.58 - e*0.08,
+        roll: idleRoll*(1-e) + e*0.01,
+      };
+    }
+
+    if(ph==='arrival'){
+      return {
+        pos:    [-0.6, -0.86, 18.0],
+        target: [ 0.16, -0.66, 30.0],
+        fov:    0.50,
+        roll:   0.01,
+      };
+    }
+
+    // exit — camera dollies DOWN through the floor and into black
+    // y goes from -0.86 → -8.0 (well below floor at y=-1.0)
+    // This pushes the floor up out of frame as you descend
+    const p=c01(elapsed/EXIT_DUR);
+    const e=eio(p);
+    return {
+      pos: [
+        -0.6 + e*0.1,
+        -0.86 - e*7.2,   // dolly straight down — floor rises past camera
+         18.0 + e*4.0,
+      ],
+      target: [
+         0.14,
+        -1.20 - e*7.0,   // look stays just ahead of descent
+         28.0 + e*3.0,
+      ],
+      fov:  0.50 - e*0.04,
+      roll: 0.01*(1-e),
+    };
+  }
+
+  // ── DOM ──────────────────────────────────────────────────────────────────────
+  const voidWrap   =document.getElementById('voidWrap');
+  const voidStack  =document.getElementById('voidStack');
+  const label404   =document.getElementById('label404');
+  const tagline    =document.getElementById('tagline');
+  const btnSurface =document.getElementById('btnSurface');
+  const arrivalWrap=document.getElementById('arrivalWrap');
+  const arrivalPanel=document.getElementById('arrivalPanel');
+  const btnEnter   =document.getElementById('btnEnter');
+  const hudL=document.getElementById('hudL'), hudR=document.getElementById('hudR');
+  const hx=document.getElementById('hx'),hy=document.getElementById('hy'),hz=document.getElementById('hz');
+  const hd=document.getElementById('hdepth'),hs=document.getElementById('hsector');
+
+  // ── Phase transitions ────────────────────────────────────────────────────────
+  function enterArrival(){
+    phase='arrival'; phaseStart=performance.now(); warp=0;
+    voidWrap.style.display='none';
+    arrivalWrap.classList.add('show');
+    setTimeout(()=>arrivalPanel.classList.add('visible'),700);
+    hudL.classList.add('amber'); hudR.classList.add('amber');
+  }
+  function beginExit(){
+    if(phase!=='arrival')return;
+    phase='exit'; phaseStart=performance.now();
+    arrivalPanel.classList.remove('visible');
+  }
+  function beginWarp(){
+    if(phase!=='idle')return;
+    if(window.matchMedia('(prefers-reduced-motion:reduce)').matches){window.location.href='/';return;}
+    phase='warp'; phaseStart=performance.now();
+    btnSurface.disabled=true;
+  }
+  btnSurface.addEventListener('click',beginWarp);
+  btnEnter.addEventListener('click',beginExit);
+
+  // ── Render loop ──────────────────────────────────────────────────────────────
+  const t0=performance.now();
+  let lastRaf=t0;
+
+  function loop(now){
+    requestAnimationFrame(loop);
+    if(now-lastRaf<16.5)return;
+    lastRaf=now;
+    resize();
+
+    const t=  (now-t0)/1000;
+    const el= (now-phaseStart)/1000;
+
+    // Phase logic
+    if(phase==='warp'){
+      const p=c01(el/WARP_DUR);
+      warp   =eio(p);
+      envMix =sjs(.45,.92,p);
+
+      // Overhead UI exit
+      voidWrap.style.opacity=String(c01(1-p*2.6));
+      voidStack.style.transform=
+        `translate3d(${Math.sin(p*Math.PI)*8}px,${-p*32}vh,${p*320}px) rotateX(${p*72}deg) scale(${1+p*.22})`;
+      label404.style.transform=
+        `translate3d(0,${-p*4}vh,${p*180}px) rotateX(${p*16}deg) scaleX(${1+p*.05}) scaleY(${1+p*.36})`;
+      label404.style.opacity=String(c01(1-p*1.35));
+      label404.style.filter=`blur(${p*10}px)`;
+      tagline.style.transform=
+        `translate3d(0,${p*1.5}vh,${p*42}px) rotateX(${p*18}deg) scale(${1+p*.03})`;
+      tagline.style.opacity=String(c01(1-p*2.2));
+      tagline.style.filter=`blur(${p*4}px)`;
+      btnSurface.style.transform=
+        `translate3d(0,${p*2.2}vh,${p*24}px) rotateX(${p*18}deg) scale(${1+p*.02})`;
+      btnSurface.style.opacity=String(c01(1-p*2.4));
+      btnSurface.style.filter=`blur(${p*4}px)`;
+
+      if(p>=1) enterArrival();
+    }
+
+    if(phase==='arrival'){ envMix=1; warp=0; }
+
+    if(phase==='exit'){
+      const p=c01(el/EXIT_DUR);
+      // Fade canvas to black as camera passes below floor
+      // Starts fading at 40% through exit so black arrives before route change
+      const fade=c01((p-0.35)/0.65);
+      canvas.style.opacity=String(1-eio(fade));
+      if(p>=1) window.location.href='/';
+    }
+
+    // Camera state
+    const cam=getCameraState(phase,el,t);
+
+    // Upload uniforms
+    gl.uniform2f(uRes,canvas.width,canvas.height);
+    gl.uniform1f(uTime,t);
+    gl.uniform1f(uEM,envMix);
+    gl.uniform1f(uWp,warp);
+    gl.uniform3f(uCamPos,  cam.pos[0],    cam.pos[1],    cam.pos[2]);
+    gl.uniform3f(uCamTgt,  cam.target[0], cam.target[1], cam.target[2]);
+    gl.uniform1f(uFov,     cam.fov);
+    gl.uniform1f(uRoll,    cam.roll);
+    gl.drawArrays(gl.TRIANGLES,0,6);
+
+    // HUD
+    const fmt=(n,d=2)=>n.toFixed(d).padStart(7);
+    hx.textContent='X  '+fmt(cam.pos[0],4);
+    hy.textContent='Y  '+fmt(cam.pos[1],4);
+    hz.textContent='Z  '+fmt(cam.pos[2],2);
+    hd.textContent='DEPTH   '+fmt(Math.abs(cam.pos[1])*3.2,1)+'m';
+    hs.textContent='SECTOR  '+String(Math.floor(t/8)).padStart(4,'0');
+  }
+
+  requestAnimationFrame(loop);
+  canvas.addEventListener('webglcontextlost',e=>e.preventDefault());
+})();
+</script>
+
+</body>
+</html>

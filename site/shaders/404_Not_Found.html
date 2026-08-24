@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>404 — Lost in the Void</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:ital,wght@0,300;1,300&display=swap');
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      width: 100%; height: 100%;
+      background: #000;
+      overflow: hidden;
+      -webkit-user-select: none; user-select: none;
+    }
+
+    canvas {
+      position: fixed;
+      inset: 0;
+      width: 100vw; height: 100vh;
+      display: block;
+    }
+
+    /* ── UI LAYER ─────────────────────────────────── */
+    .ui {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+    }
+
+    .label-404 {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: clamp(120px, 25vw, 260px);
+      line-height: 0.88;
+      letter-spacing: -0.02em;
+      color: transparent;
+      background: linear-gradient(
+        160deg,
+        rgba(255,255,255,0.96) 0%,
+        rgba(180,160,255,0.85) 40%,
+        rgba(100,80,200,0.5) 100%
+      );
+      -webkit-background-clip: text;
+      background-clip: text;
+      text-shadow: none;
+      mix-blend-mode: screen;
+      /* subtle pulse */
+      animation: breathe 4.2s ease-in-out infinite;
+    }
+
+    .tagline {
+      margin-top: 28px;
+      font-family: 'DM Mono', monospace;
+      font-style: italic;
+      font-weight: 300;
+      font-size: clamp(11px, 1.6vw, 18px);
+      letter-spacing: 0.28em;
+      text-transform: uppercase;
+      color: rgba(160, 140, 255, 0.75);
+      mix-blend-mode: screen;
+      animation: fadein 2.4s ease 0.6s both;
+    }
+
+    .back-link {
+      pointer-events: all;
+      margin-top: 52px;
+      font-family: 'DM Mono', monospace;
+      font-weight: 300;
+      font-size: clamp(10px, 1.2vw, 14px);
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.35);
+      text-decoration: none;
+      border: 1px solid rgba(255,255,255,0.12);
+      padding: 12px 32px;
+      border-radius: 2px;
+      transition: color 0.3s, border-color 0.3s, background 0.3s;
+      animation: fadein 2.8s ease 1.2s both;
+      cursor: pointer;
+    }
+    .back-link:hover {
+      color: rgba(200, 180, 255, 0.95);
+      border-color: rgba(180, 140, 255, 0.4);
+      background: rgba(120, 80, 255, 0.08);
+    }
+
+    /* corner coords — editorial detail */
+    .coords {
+      position: fixed;
+      bottom: 24px;
+      left: 28px;
+      font-family: 'DM Mono', monospace;
+      font-weight: 300;
+      font-size: 10px;
+      letter-spacing: 0.18em;
+      color: rgba(255,255,255,0.18);
+      pointer-events: none;
+      z-index: 10;
+      animation: fadein 3.5s ease 2s both;
+    }
+    .coords span {
+      display: block;
+      line-height: 1.8;
+    }
+
+    .depth-badge {
+      position: fixed;
+      bottom: 24px;
+      right: 28px;
+      font-family: 'DM Mono', monospace;
+      font-weight: 300;
+      font-size: 10px;
+      letter-spacing: 0.18em;
+      color: rgba(160,130,255,0.3);
+      pointer-events: none;
+      z-index: 10;
+      animation: fadein 3.5s ease 2s both;
+      text-align: right;
+    }
+    .depth-badge span { display: block; line-height: 1.8; }
+
+    @keyframes breathe {
+      0%, 100% { opacity: 0.88; filter: brightness(1); }
+      50%       { opacity: 1.0;  filter: brightness(1.12); }
+    }
+    @keyframes fadein {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gl"></canvas>
+
+  <div class="ui">
+    <div class="label-404">404</div>
+    <div class="tagline">This page fell through the void</div>
+    <a class="back-link" href="/" onclick="history.back(); return false;">← Surface</a>
+  </div>
+
+  <div class="coords">
+    <span id="cx">X  —</span>
+    <span id="cy">Y  —</span>
+    <span id="cz">Z  —</span>
+  </div>
+  <div class="depth-badge">
+    <span id="dt">DEPTH  ——</span>
+    <span id="dp">SECTOR  ——</span>
+  </div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('gl');
+  let gl = canvas.getContext('webgl2', { antialias:false, alpha:false });
+  const IS2 = !!gl;
+  if (!gl) gl = canvas.getContext('webgl', { antialias:false, alpha:false });
+  if (!gl) { document.body.innerHTML='<p style="color:#fff;padding:2rem">WebGL unavailable</p>'; return; }
+
+  /* ── VERTEX ───────────────────────────────────── */
+  const VERT = `
+    attribute vec2 a_pos;
+    varying vec2 v_uv;
+    void main(){
+      v_uv = a_pos * 0.5 + 0.5;
+      gl_Position = vec4(a_pos, 0.0, 1.0);
+    }
+  `;
+
+  /* ── FRAGMENT — Void Crawler ──────────────────── */
+  // A fully original raymarcher. The SDF is a rounded-rectangle
+  // tunnel that spirals with time, lit by a rim bounce technique
+  // that creates the bioluminescent edge glow.
+  // Three additive light sources pulse at prime-ish offsets
+  // giving the amber→violet→ice color sweep.
+  const FRAG = `
+    precision highp float;
+    varying vec2 v_uv;
+    uniform vec2  u_res;
+    uniform float u_time;
+
+    // ── math helpers ──────────────────────────────
+    float hash(float n){ return fract(sin(n)*43758.5453123); }
+    float hash2(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+
+    // smooth min — organic merging
+    float smin(float a, float b, float k){
+      float h = max(k - abs(a-b), 0.0) / k;
+      return min(a,b) - h*h*k*0.25;
+    }
+
+    // rounded rectangle SDF (2D cross-section)
+    float sdRoundRect(vec2 p, vec2 b, float r){
+      vec2 q = abs(p) - b + r;
+      return length(max(q,0.0)) + min(max(q.x,q.y),0.0) - r;
+    }
+
+    // 2D rotation
+    mat2 rot(float a){ float c=cos(a),s=sin(a); return mat2(c,-s,s,c); }
+
+    // ── tunnel SDF ────────────────────────────────
+    // p.z is depth along the tunnel.
+    // We slice at each z to get a 2D cross-section, 
+    // then evaluate the rounded-rect.
+    float tunnelSDF(vec3 p){
+      // slow, multi-frequency spiral twist
+      float twist = p.z * 0.18 + sin(p.z * 0.07 + u_time * 0.2) * 0.55;
+      vec2 q = p.xy * rot(twist);
+
+      // aspect-warped bounding box — tall but not square
+      vec2 box = vec2(1.1, 1.55);
+      float r   = 0.38 + 0.10 * sin(p.z * 0.13 + u_time * 0.15);
+
+      float outer = sdRoundRect(q, box, r);
+
+      // concentric inner ring — creates the "nested corridor" look
+      float inner = sdRoundRect(q, box * 0.58, r * 0.62);
+      // the tunnel space is INSIDE the outer wall, so negate
+      // distance to the wall surface = |outer| approximated as -outer
+      float wall = -outer;         // we're inside; wall at outer=0
+      float rim  = abs(outer) - 0.035; // thin glowing rim
+
+      // nested inner frame (subtracted volume inside)
+      float innerWall = -inner;
+      float innerRim  = abs(inner) - 0.025;
+
+      // combine: minimum of all surfaces
+      float d = min(rim, innerRim);
+
+      // small detail: screw-like notches along the wall
+      float notch = 0.012 + 0.008 * sin(atan(q.y,q.x) * 8.0 + p.z * 2.2 - u_time * 0.4);
+      d = smin(d, abs(wall) - notch, 0.04);
+
+      return d;
+    }
+
+    // ── lighting ──────────────────────────────────
+    // Normal estimated by central differences
+    vec3 normal(vec3 p){
+      float e = 0.001;
+      return normalize(vec3(
+        tunnelSDF(p+vec3(e,0,0)) - tunnelSDF(p-vec3(e,0,0)),
+        tunnelSDF(p+vec3(0,e,0)) - tunnelSDF(p-vec3(0,e,0)),
+        tunnelSDF(p+vec3(0,0,e)) - tunnelSDF(p-vec3(0,0,e))
+      ));
+    }
+
+    // ── palette ───────────────────────────────────
+    // Three pulsing light hues that bleed into each other
+    vec3 lightColor(float t){
+      // amber core
+      vec3 c0 = vec3(1.0,  0.52, 0.08);
+      // violet mid
+      vec3 c1 = vec3(0.48, 0.18, 1.0);
+      // ice accent
+      vec3 c2 = vec3(0.18, 0.82, 1.0);
+      float a = sin(t * 0.31) * 0.5 + 0.5;
+      float b2= sin(t * 0.19 + 2.1) * 0.5 + 0.5;
+      return mix(mix(c0,c1,a), c2, b2 * 0.4);
+    }
+
+    // ── depth fog ─────────────────────────────────
+    vec3 fogColor(float depth){
+      // deep void: very dark indigo
+      vec3 near = vec3(0.04, 0.02, 0.08);
+      vec3 far  = vec3(0.005, 0.002, 0.012);
+      return mix(near, far, clamp(depth / 22.0, 0.0, 1.0));
+    }
+
+    void main(){
+      vec2 uv = (v_uv * 2.0 - 1.0);
+      uv.x *= u_res.x / u_res.y;
+
+      // ── camera ────────────────────────────────
+      // The camera flies forward (increasing z) and sways gently
+      float spd  = u_time * 1.8;
+      float sway = sin(u_time * 0.23) * 0.12;
+      float nod  = cos(u_time * 0.17) * 0.07;
+
+      vec3 ro = vec3(sway, nod, spd);        // ray origin
+      vec3 rd = normalize(vec3(uv * 0.82, 1.0)); // ray direction (FOV ~55°)
+
+      // gentle camera roll
+      float roll = sin(u_time * 0.11) * 0.08;
+      rd.xy *= rot(roll);
+
+      // ── raymarch ──────────────────────────────
+      float t   = 0.0;
+      float tMax= 28.0;
+      int   STEPS = 88;
+      float d   = 0.0;
+      bool  hit = false;
+      vec3  p   = ro;
+
+      for(int i = 0; i < 88; i++){
+        p = ro + rd * t;
+        d = tunnelSDF(p);
+        if(d < 0.0018){
+          hit = true;
+          break;
+        }
+        if(t > tMax) break;
+        // inside tunnel we can step more boldly
+        t += max(abs(d) * 0.72, 0.003);
+      }
+
+      vec3 col;
+
+      if(hit){
+        vec3 n = normal(p);
+
+        // ── rim + bounce light ─────────────────
+        vec3 lc = lightColor(u_time);
+
+        // "depth glow" — light seems to pool further in
+        float depthFac = exp(-t * 0.09);
+
+        // rim: dot of normal with view ray
+        float rim = pow(clamp(1.0 - abs(dot(n, -rd)), 0.0, 1.0), 2.8);
+
+        // diffuse from a virtual light ahead in the tunnel
+        vec3 lightPos = ro + vec3(sway*0.3, nod*0.3, t * 0.5 + 3.0);
+        vec3 ldir = normalize(lightPos - p);
+        float diff = clamp(dot(n, ldir), 0.0, 1.0);
+
+        // specular micro-highlight
+        vec3 h = normalize(ldir - rd);
+        float spec = pow(clamp(dot(n, h), 0.0, 1.0), 48.0);
+
+        // secondary warm bounce from behind camera (amber fill)
+        vec3 fillDir = normalize(vec3(-sway, -nod, -0.6));
+        float fill = clamp(dot(n, fillDir), 0.0, 1.0) * 0.22;
+
+        col  = lc * (rim * 0.9 + diff * 0.55 + spec * 0.7 + fill);
+        col += vec3(0.06, 0.03, 0.12) * (1.0 - depthFac); // ambient void tint
+
+        // ── tunnel depth fog ──────────────────
+        float fog = exp(-t * 0.13);
+        col = mix(fogColor(t), col, fog);
+
+        // ── inner glow bloom ──────────────────
+        // adds a subtle radial brightness around the corridor center
+        float centerDist = length(uv) * 0.6;
+        col += lc * 0.04 * exp(-centerDist * 2.2) * (1.0 + 0.5*sin(u_time*0.7));
+
+      } else {
+        // missed — deep void
+        col = fogColor(tMax);
+        // faint center light spill from infinity
+        float gl2 = exp(-length(uv) * 1.8);
+        col += lightColor(u_time) * gl2 * 0.12;
+      }
+
+      // ── post ──────────────────────────────────
+      // vignette
+      float vig = 1.0 - smoothstep(0.55, 1.3, length(uv * vec2(0.7, 1.0)));
+      col *= vig;
+
+      // grain
+      float g = hash2(v_uv * u_res + u_time * 0.1);
+      col += (g - 0.5) * 0.018;
+
+      // subtle scanline (very faint, premium feel)
+      float scan = 0.97 + 0.03 * sin(v_uv.y * u_res.y * 3.14159);
+      col *= scan;
+
+      // tone-map (simple filmic shoulder)
+      col = col / (col + 0.22);
+      col = pow(col, vec3(0.92)); // mild gamma lift
+
+      gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
+    }
+  `;
+
+  /* ── compile ──────────────────────────────────── */
+  const mk = (type, src) => {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    return s;
+  };
+  const prog = gl.createProgram();
+  gl.attachShader(prog, mk(gl.VERTEX_SHADER, VERT));
+  gl.attachShader(prog, mk(gl.FRAGMENT_SHADER, FRAG));
+  gl.linkProgram(prog);
+  if(!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+  gl.useProgram(prog);
+
+  /* ── geometry ─────────────────────────────────── */
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+    -1,-1,  1,-1, -1, 1,
+    -1, 1,  1,-1,  1, 1
+  ]), gl.STATIC_DRAW);
+  const aPos = gl.getAttribLocation(prog, 'a_pos');
+  gl.enableVertexAttribArray(aPos);
+  gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+  /* ── uniforms ─────────────────────────────────── */
+  const uRes  = gl.getUniformLocation(prog, 'u_res');
+  const uTime = gl.getUniformLocation(prog, 'u_time');
+
+  /* ── resize ───────────────────────────────────── */
+  const DPR = Math.min(window.devicePixelRatio || 1, 2);
+  const SCALE = 0.85; // slightly below native for perf
+  let lw=0, lh=0;
+  function resize(){
+    const w = Math.floor(innerWidth * DPR * SCALE);
+    const h = Math.floor(innerHeight * DPR * SCALE);
+    if(w===lw && h===lh) return;
+    lw=w; lh=h;
+    canvas.width=w; canvas.height=h;
+    gl.viewport(0,0,w,h);
+  }
+  window.addEventListener('resize', resize, {passive:true});
+  resize();
+
+  /* ── HUD ticker ───────────────────────────────── */
+  const cx = document.getElementById('cx');
+  const cy = document.getElementById('cy');
+  const cz = document.getElementById('cz');
+  const dt = document.getElementById('dt');
+  const dp = document.getElementById('dp');
+
+  const fmt = (n,d=2) => n.toFixed(d).padStart(7);
+  let sector = 0;
+
+  /* ── loop ─────────────────────────────────────── */
+  const t0 = performance.now();
+  let last = t0, lastRaf = t0;
+  const FRAME_MS = 1000/60;
+
+  function loop(now){
+    requestAnimationFrame(loop);
+    if(now - lastRaf < FRAME_MS * 0.9) return;
+    lastRaf = now;
+
+    resize();
+    const t = (now - t0) / 1000;
+
+    gl.uniform2f(uRes, canvas.width, canvas.height);
+    gl.uniform1f(uTime, t);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+    // update coord display
+    const spd   = t * 1.8;
+    const sway  = Math.sin(t * 0.23) * 0.12;
+    const nod   = Math.cos(t * 0.17) * 0.07;
+    if(Math.floor(t / 8) !== sector){
+      sector = Math.floor(t / 8);
+    }
+    cx.textContent = 'X  ' + fmt(sway,4);
+    cy.textContent = 'Y  ' + fmt(nod,4);
+    cz.textContent = 'Z  ' + fmt(spd,2);
+    dt.textContent = 'DEPTH   ' + fmt(spd * 3.2, 1) + 'm';
+    dp.textContent = 'SECTOR  ' + String(sector).padStart(4,'0');
+  }
+
+  requestAnimationFrame(loop);
+
+  canvas.addEventListener('webglcontextlost', e => e.preventDefault(), false);
+})();
+</script>
+</body>
+</html>

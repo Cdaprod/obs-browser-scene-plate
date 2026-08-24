@@ -1,0 +1,1199 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Immersive TopBar Opposite Direction</title>
+  <style>
+    :root{
+      --bg:#05070d;
+      --text:rgba(255,255,255,.94);
+      --muted:rgba(255,255,255,.62);
+      --accent-a:124,58,237;
+      --accent-b:34,197,94;
+      --accent-c:56,189,248;
+
+      /* viewport-reactive sizing */
+      --topbar-height: clamp(46px, 8dvh, 88px);
+      --topbar-pad-x: clamp(10px, 2.2vw, 22px);
+      --topbar-pad-y: clamp(6px, 1.1dvh, 14px);
+      --brand-size: clamp(12px, 1.7dvh, 18px);
+      --meta-size: clamp(10px, 1.2dvh, 13px);
+      --control-size: clamp(10px, 1.25dvh, 13px);
+      --icon-size: clamp(26px, 4.2dvh, 38px);
+      --chip-pad-y: clamp(6px, 0.8dvh, 9px);
+      --chip-pad-x: clamp(8px, 1.2vw, 12px);
+
+      /* immersive layer knobs */
+      --blur: 18px;
+      --blur-fade-opacity: .92;
+      --glow-opacity: .22;
+      --scrim-opacity: .18;
+      --hairline-opacity: .08;
+      --chip-bg: rgba(255,255,255,.07);
+      --chip-bg-strong: rgba(255,255,255,.11);
+      --chip-stroke: rgba(255,255,255,.08);
+      --shadow: 0 12px 40px rgba(0,0,0,.32);
+
+      --content-width: min(1520px, calc(100vw - 18px));
+    }
+
+    *{ box-sizing:border-box; }
+    html, body{ height:100%; }
+    body{
+      margin:0;
+      color:var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      background:
+        radial-gradient(1200px 560px at 10% -10%, rgba(var(--accent-a), .28), transparent 58%),
+        radial-gradient(980px 520px at 100% 6%, rgba(var(--accent-b), .14), transparent 54%),
+        radial-gradient(800px 420px at 50% 100%, rgba(var(--accent-c), .10), transparent 58%),
+        linear-gradient(180deg, #08101d 0%, #05070d 46%, #04050a 100%);
+      overflow:hidden;
+    }
+
+    .app{
+      height:100%;
+      position:relative;
+      overflow:hidden;
+    }
+
+    .viewport{
+      height:100%;
+      overflow:auto;
+      overflow-x:hidden;
+      scroll-behavior:smooth;
+      -webkit-overflow-scrolling:touch;
+    }
+
+    .viewport::-webkit-scrollbar{ width:10px; }
+    .viewport::-webkit-scrollbar-thumb{
+      background:rgba(255,255,255,.16);
+      border-radius:999px;
+      border:2px solid transparent;
+      background-clip:padding-box;
+    }
+
+    /* ---------------- IMMERSIVE TOPBAR ---------------- */
+
+    .topbar-anchor{
+      position:sticky;
+      top:0;
+      z-index:120;
+      height:0;
+      overflow:visible;
+      pointer-events:none;
+    }
+
+    .topbar{
+      position:relative;
+      width:100%;
+      pointer-events:auto;
+      transition:
+        transform 420ms cubic-bezier(.22,.84,.2,1),
+        opacity 220ms ease;
+      will-change:transform, opacity;
+    }
+
+    .topbar[data-hidden="true"]{
+      transform: translateY(calc(-100% - 12px));
+      opacity:.98;
+    }
+
+    /* not a box — an atmospheric field */
+    .topbar-atmosphere{
+      position:relative;
+      min-height:var(--topbar-height);
+      padding: var(--topbar-pad-y) var(--topbar-pad-x);
+      isolation:isolate;
+    }
+
+    /* blur field */
+    .topbar-atmosphere::before{
+      content:"";
+      position:absolute;
+      inset:0 0 auto 0;
+      height: calc(var(--topbar-height) + 52px);
+      background:
+        linear-gradient(
+          180deg,
+          rgba(8,12,22, calc(var(--blur-fade-opacity) * .72)) 0%,
+          rgba(8,12,22, calc(var(--blur-fade-opacity) * .36)) 42%,
+          rgba(8,12,22, calc(var(--blur-fade-opacity) * .12)) 70%,
+          rgba(8,12,22, 0) 100%
+        );
+      backdrop-filter: blur(var(--blur)) saturate(1.08);
+      -webkit-backdrop-filter: blur(var(--blur)) saturate(1.08);
+      mask-image: linear-gradient(180deg, rgba(0,0,0,.98), rgba(0,0,0,.84) 46%, rgba(0,0,0,.18) 78%, transparent 100%);
+      pointer-events:none;
+      z-index:0;
+    }
+
+    /* soft environmental color bleed */
+    .topbar-atmosphere::after{
+      content:"";
+      position:absolute;
+      inset:0 0 auto 0;
+      height: calc(var(--topbar-height) + 72px);
+      background:
+        radial-gradient(40% 90% at 12% 0%, rgba(var(--accent-a), var(--glow-opacity)), transparent 68%),
+        radial-gradient(38% 85% at 88% 0%, rgba(var(--accent-b), calc(var(--glow-opacity) * .72)), transparent 70%),
+        linear-gradient(180deg, rgba(255,255,255, calc(var(--scrim-opacity) * .20)), transparent 52%);
+      mask-image: linear-gradient(180deg, rgba(0,0,0,.95), rgba(0,0,0,.55) 60%, transparent 100%);
+      pointer-events:none;
+      z-index:0;
+      mix-blend-mode:screen;
+    }
+
+    .topbar-line{
+      position:absolute;
+      left:0;
+      right:0;
+      top:0;
+      height:1px;
+      opacity:var(--hairline-opacity);
+      background:
+        linear-gradient(90deg,
+          transparent 0%,
+          rgba(255,255,255,.22) 18%,
+          rgba(255,255,255,.12) 50%,
+          rgba(255,255,255,.22) 82%,
+          transparent 100%);
+      pointer-events:none;
+      z-index:1;
+    }
+
+    .topbar-inner{
+      position:relative;
+      z-index:2;
+      width:var(--content-width);
+      max-width:100%;
+      margin:0 auto;
+      min-height: calc(var(--topbar-height) - (var(--topbar-pad-y) * 2));
+      display:grid;
+      grid-template-columns: auto minmax(0,1fr) auto;
+      gap: clamp(8px, 1vw, 14px);
+      align-items:center;
+    }
+
+    .brand{
+      min-width:0;
+      display:flex;
+      align-items:center;
+      gap: clamp(8px, 1vw, 12px);
+    }
+
+    .brand-mark{
+      width:var(--icon-size);
+      height:var(--icon-size);
+      border-radius: 11px;
+      background:
+        linear-gradient(135deg, rgba(var(--accent-a), .98), rgba(var(--accent-b), .76));
+      box-shadow:
+        0 0 22px rgba(var(--accent-a), .26),
+        0 10px 22px rgba(0,0,0,.22);
+      flex:0 0 auto;
+    }
+
+    .brand-copy{
+      min-width:0;
+      display:grid;
+      gap:1px;
+    }
+
+    .brand-title{
+      font-size:var(--brand-size);
+      line-height:1.02;
+      letter-spacing:-.02em;
+      font-weight:760;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+
+    .brand-sub{
+      font-size:var(--meta-size);
+      line-height:1.1;
+      color:var(--muted);
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+
+    .topbar-center{
+      min-width:0;
+      display:flex;
+      align-items:center;
+      gap: clamp(6px, .8vw, 10px);
+      justify-content:center;
+    }
+
+    .search{
+      min-width:0;
+      flex: 1 1 auto;
+      display:flex;
+      align-items:center;
+      gap:8px;
+      padding: var(--chip-pad-y) var(--chip-pad-x);
+      border-radius:999px;
+      background: linear-gradient(180deg, rgba(255,255,255,.085), rgba(255,255,255,.045));
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.03);
+    }
+
+    .search svg{
+      width: clamp(12px, 1.5dvh, 15px);
+      height: clamp(12px, 1.5dvh, 15px);
+      opacity:.72;
+      flex:0 0 auto;
+    }
+
+    .search input{
+      min-width:0;
+      width:100%;
+      border:0;
+      outline:0;
+      background:transparent;
+      color:var(--text);
+      font-size:var(--control-size);
+      line-height:1;
+    }
+
+    .search input::placeholder{ color:rgba(255,255,255,.44); }
+
+    .topbar-actions{
+      min-width:0;
+      display:flex;
+      align-items:center;
+      gap: clamp(6px, .7vw, 10px);
+      justify-content:flex-end;
+      flex-wrap:nowrap;
+    }
+
+    .chip, .seg, .action{
+      flex:0 0 auto;
+      min-height: clamp(30px, 4.3dvh, 40px);
+      border:0;
+      outline:0;
+      color:var(--text);
+      font-size:var(--control-size);
+    }
+
+    .chip, .action{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      border-radius:999px;
+      padding: var(--chip-pad-y) var(--chip-pad-x);
+      background: var(--chip-bg);
+      cursor:pointer;
+      user-select:none;
+      transition:
+        transform 160ms ease,
+        background 160ms ease,
+        opacity 160ms ease;
+    }
+
+    .chip:hover, .action:hover{
+      transform: translateY(-1px);
+      background: var(--chip-bg-strong);
+    }
+
+    .seg{
+      display:inline-flex;
+      align-items:center;
+      overflow:hidden;
+      border-radius:999px;
+      background: rgba(255,255,255,.055);
+    }
+
+    .seg button{
+      appearance:none;
+      border:0;
+      background:transparent;
+      color:var(--muted);
+      font-size:var(--control-size);
+      line-height:1;
+      padding: calc(var(--chip-pad-y) + 1px) var(--chip-pad-x);
+      cursor:pointer;
+    }
+
+    .seg button.active{
+      color:var(--text);
+      background: rgba(255,255,255,.09);
+    }
+
+    .action.primary{
+      background:
+        linear-gradient(180deg, rgba(var(--accent-a), .22), rgba(var(--accent-a), .14));
+    }
+
+    .action.subtle{
+      background: rgba(255,255,255,.045);
+    }
+
+    /* optional modes */
+    body[data-style="no-line"]{
+      --hairline-opacity: 0;
+      --chip-stroke: rgba(255,255,255,0);
+    }
+
+    body[data-style="thin-line"]{
+      --hairline-opacity: .18;
+    }
+
+    body[data-style="soft-line"]{
+      --hairline-opacity: .09;
+    }
+
+    body[data-blur="dissipate"]{
+      --blur: 18px;
+      --blur-fade-opacity: .92;
+      --glow-opacity: .22;
+    }
+    body[data-blur="dissipate"] .topbar-atmosphere::before{
+      background:
+        linear-gradient(
+          180deg,
+          rgba(8,12,22,.62) 0%,
+          rgba(8,12,22,.28) 30%,
+          rgba(8,12,22,.08) 58%,
+          rgba(8,12,22,0) 100%
+        );
+      mask-image: linear-gradient(180deg, rgba(0,0,0,.98), rgba(0,0,0,.70) 48%, rgba(0,0,0,.10) 78%, transparent 100%);
+    }
+
+    body[data-blur="soft-plate"]{
+      --blur: 14px;
+      --blur-fade-opacity: .72;
+      --glow-opacity: .14;
+    }
+    body[data-blur="soft-plate"] .topbar-atmosphere::before{
+      height: calc(var(--topbar-height) + 30px);
+      background:
+        linear-gradient(
+          180deg,
+          rgba(8,12,22,.56) 0%,
+          rgba(8,12,22,.34) 55%,
+          rgba(8,12,22,0) 100%
+        );
+    }
+
+    body[data-blur="strong-fog"]{
+      --blur: 24px;
+      --blur-fade-opacity: 1;
+      --glow-opacity: .30;
+    }
+    body[data-blur="strong-fog"] .topbar-atmosphere::before{
+      backdrop-filter: blur(24px) saturate(1.1);
+      -webkit-backdrop-filter: blur(24px) saturate(1.1);
+      background:
+        linear-gradient(
+          180deg,
+          rgba(8,12,22,.70) 0%,
+          rgba(8,12,22,.42) 44%,
+          rgba(8,12,22,.14) 72%,
+          transparent 100%
+        );
+    }
+
+    /* condensed state */
+    .topbar[data-condensed="true"]{
+      opacity: .985;
+    }
+    .topbar[data-condensed="true"] .topbar-atmosphere{
+      padding-top: calc(var(--topbar-pad-y) * .64);
+      padding-bottom: calc(var(--topbar-pad-y) * .5);
+    }
+    .topbar[data-condensed="true"] .brand-sub{
+      opacity:.58;
+    }
+
+    body[data-blur="soft-plate"] .search,
+    body[data-blur="soft-plate"] .chip,
+    body[data-blur="soft-plate"] .action,
+    body[data-blur="soft-plate"] .seg{
+      background: rgba(255,255,255,.05);
+    }
+
+    body[data-blur="strong-fog"] .search,
+    body[data-blur="strong-fog"] .chip,
+    body[data-blur="strong-fog"] .action,
+    body[data-blur="strong-fog"] .seg{
+      background: rgba(255,255,255,.11);
+    }
+
+    body[data-style="thin-line"] .topbar-inner{
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.10);
+    }
+
+    body[data-style="soft-line"] .topbar-inner{
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.05);
+    }
+
+    body[data-style="no-line"] .topbar-inner{
+      box-shadow: none;
+    }
+
+    /* ---------------- CONTENT ---------------- */
+
+    .hero{
+      width:var(--content-width);
+      margin: 10px auto 0;
+      border-radius: 28px;
+      min-height: min(52dvh, 620px);
+      position:relative;
+      overflow:hidden;
+      background:
+        radial-gradient(1000px 400px at 10% 0%, rgba(var(--accent-a), .18), transparent 60%),
+        radial-gradient(760px 360px at 100% 8%, rgba(var(--accent-b), .13), transparent 62%),
+        linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.01)),
+        rgba(255,255,255,.03);
+      box-shadow: 0 24px 90px rgba(0,0,0,.36);
+    }
+
+    .hero::before{
+      content:"";
+      position:absolute;
+      inset:0;
+      background:
+        linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px),
+        linear-gradient(180deg, rgba(255,255,255,.035) 1px, transparent 1px);
+      background-size: 26px 26px;
+      mask-image: linear-gradient(180deg, rgba(0,0,0,.92), rgba(0,0,0,.18));
+      pointer-events:none;
+    }
+
+    .hero-inner{
+      position:relative;
+      z-index:1;
+      padding:
+        calc(var(--topbar-height) + clamp(28px, 7dvh, 76px))
+        clamp(16px, 2vw, 28px)
+        clamp(18px, 2vw, 28px);
+      display:grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(280px, .9fr);
+      gap: clamp(14px, 2vw, 24px);
+      align-items:end;
+      min-height: min(52dvh, 620px);
+    }
+
+    .eyebrow{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding:8px 12px;
+      border-radius:999px;
+      background:rgba(255,255,255,.075);
+      font-size:var(--control-size);
+      color:rgba(255,255,255,.84);
+      margin-bottom:14px;
+    }
+
+    .headline{
+      margin:0 0 14px;
+      font-size: clamp(28px, 5.8vw, 74px);
+      line-height:.92;
+      letter-spacing:-.055em;
+      max-width: 10ch;
+    }
+
+    .subcopy{
+      max-width: 64ch;
+      color:var(--muted);
+      font-size: clamp(13px, 1.6dvh, 16px);
+    }
+
+    .statgrid{
+      display:grid;
+      grid-template-columns: repeat(2, minmax(0,1fr));
+      gap:12px;
+    }
+
+    .stat{
+      min-height:110px;
+      border-radius: 22px;
+      background: rgba(255,255,255,.06);
+      padding:16px;
+      display:flex;
+      flex-direction:column;
+      justify-content:flex-end;
+    }
+
+    .stat b{
+      font-size: clamp(22px, 3.2dvh, 34px);
+      line-height:1;
+      margin-bottom:6px;
+    }
+
+    .stat span{
+      color:var(--muted);
+      font-size: var(--control-size);
+    }
+
+    .content{
+      width:var(--content-width);
+      margin: 16px auto 150px;
+      display:grid;
+      grid-template-columns: 280px minmax(0,1fr);
+      gap:14px;
+      align-items:start;
+    }
+
+    .sidebar{
+      position:sticky;
+      top: calc(var(--topbar-height) + 12px);
+      padding:14px;
+      border-radius:22px;
+      background: rgba(255,255,255,.045);
+    }
+
+    .panel-title{
+      font-size:12px;
+      letter-spacing:.08em;
+      text-transform:uppercase;
+      color:var(--muted);
+      margin:0 0 10px;
+    }
+
+    .chip-wrap{
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px;
+      margin-bottom:16px;
+    }
+
+    .mini-chip{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding:8px 11px;
+      border-radius:999px;
+      background: rgba(255,255,255,.06);
+      color:rgba(255,255,255,.9);
+      font-size:12px;
+      white-space:nowrap;
+    }
+
+    .dot{
+      width:8px;
+      height:8px;
+      border-radius:999px;
+      background: linear-gradient(135deg, rgba(var(--accent-a), 1), rgba(var(--accent-b), .84));
+      box-shadow: 0 0 12px rgba(var(--accent-a), .34);
+      flex:0 0 auto;
+    }
+
+    .stack{
+      display:grid;
+      gap:10px;
+    }
+
+    .row{
+      border-radius:18px;
+      background: rgba(255,255,255,.045);
+      padding:12px;
+      display:flex;
+      gap:10px;
+      align-items:center;
+    }
+
+    .row-ico{
+      width:40px;
+      height:40px;
+      border-radius:14px;
+      background: linear-gradient(135deg, rgba(var(--accent-a), .92), rgba(var(--accent-b), .68));
+      flex:0 0 auto;
+    }
+
+    .row-copy b{
+      display:block;
+      margin-bottom:3px;
+      font-size:13px;
+    }
+
+    .row-copy span{
+      color:var(--muted);
+      font-size:12px;
+    }
+
+    .feed{
+      display:grid;
+      grid-template-columns: repeat(3, minmax(0,1fr));
+      gap:12px;
+    }
+
+    .asset{
+      min-height: 220px;
+      border-radius: 22px;
+      overflow:hidden;
+      position:relative;
+      background:
+        radial-gradient(220px 110px at 15% 0%, rgba(255,255,255,.10), transparent 56%),
+        linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02)),
+        rgba(255,255,255,.04);
+      transform: translateZ(0);
+    }
+
+    .asset::before{
+      content:"";
+      position:absolute;
+      inset:0;
+      background:
+        linear-gradient(180deg, transparent 38%, rgba(0,0,0,.58)),
+        linear-gradient(120deg, rgba(var(--accent-a), .18), transparent 44%, rgba(var(--accent-b), .10) 78%);
+      pointer-events:none;
+    }
+
+    .asset-meta{
+      position:absolute;
+      left:0;
+      right:0;
+      bottom:0;
+      padding:14px;
+      z-index:1;
+    }
+
+    .asset-kind{
+      display:inline-flex;
+      align-items:center;
+      padding:5px 9px;
+      border-radius:999px;
+      background: rgba(0,0,0,.20);
+      font-size:11px;
+      margin-bottom:8px;
+      color:rgba(255,255,255,.84);
+    }
+
+    .asset-title{
+      font-size:15px;
+      font-weight:700;
+      margin-bottom:3px;
+    }
+
+    .asset-sub{
+      font-size:12px;
+      color:rgba(255,255,255,.68);
+    }
+
+    /* control surface */
+    .editor-launch{
+      position:fixed;
+      left:50%;
+      transform:translateX(-50%);
+      bottom:max(16px, calc(env(safe-area-inset-bottom) + 8px));
+      z-index:260;
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      min-height:42px;
+      padding:10px 14px;
+      border:0;
+      border-radius:999px;
+      background:rgba(10,14,26,.82);
+      color:var(--text);
+      backdrop-filter:blur(14px);
+      -webkit-backdrop-filter:blur(14px);
+      box-shadow:0 20px 60px rgba(0,0,0,.42);
+      cursor:pointer;
+      pointer-events:auto;
+      user-select:none;
+    }
+
+    .editor-launch .tiny-dot{
+      width:8px;
+      height:8px;
+      border-radius:999px;
+      background:linear-gradient(135deg, rgba(var(--accent-a),1), rgba(var(--accent-b),.84));
+      box-shadow:0 0 12px rgba(var(--accent-a), .34);
+      flex:0 0 auto;
+    }
+
+    .control-surface{
+      position:fixed;
+      left:50%;
+      transform:translateX(-50%) translateY(calc(100% + 30px));
+      bottom:0;
+      z-index:261;
+      display:grid;
+      gap:10px;
+      padding:10px 12px calc(max(16px, env(safe-area-inset-bottom)) + 8px);
+      border-radius:20px 20px 0 0;
+      background:rgba(10,14,26,.92);
+      backdrop-filter:blur(18px);
+      -webkit-backdrop-filter:blur(18px);
+      box-shadow:0 -10px 40px rgba(0,0,0,.32), 0 20px 60px rgba(0,0,0,.42);
+      width:min(960px, 100vw);
+      max-height:min(58dvh, 420px);
+      overflow:auto;
+      opacity:0;
+      pointer-events:none;
+      transition:opacity 180ms ease, transform 220ms cubic-bezier(.22,.84,.2,1);
+    }
+
+    .control-surface[data-open="true"]{
+      opacity:1;
+      pointer-events:auto;
+      transform:translateX(-50%) translateY(0);
+    }
+
+    .editor-sheet-handle{
+      width:56px;
+      height:5px;
+      border-radius:999px;
+      background:rgba(255,255,255,.20);
+      margin:2px auto 4px;
+      flex:0 0 auto;
+    }
+
+    .control-surface .group{
+      display:grid;
+      gap:6px;
+    }
+
+    .control-surface .group-title{
+      font-size:11px;
+      color:var(--muted);
+      letter-spacing:.04em;
+      text-transform:uppercase;
+    }
+
+    .control-surface .seg{
+      width:100%;
+      overflow:auto hidden;
+      scrollbar-width:none;
+    }
+
+    .control-surface .seg::-webkit-scrollbar{
+      display:none;
+    }
+
+    .control-surface .seg button{
+      white-space:nowrap;
+      min-height:38px;
+      pointer-events:auto;
+      position:relative;
+      z-index:1;
+    }
+
+    .editor-backdrop{
+      position:fixed;
+      inset:0;
+      z-index:259;
+      background:rgba(0,0,0,.28);
+      opacity:0;
+      pointer-events:none;
+      transition:opacity 180ms ease;
+    }
+
+    .editor-backdrop[data-open="true"]{
+      opacity:1;
+      pointer-events:auto;
+    }
+
+    .hint{
+      position:fixed;
+      left:14px;
+      bottom:14px;
+      z-index:180;
+      max-width:min(420px, calc(100vw - 330px));
+      padding:12px 14px;
+      border-radius:16px;
+      background:rgba(10,14,26,.68);
+      backdrop-filter:blur(14px);
+      -webkit-backdrop-filter:blur(14px);
+      color:var(--muted);
+      font-size:12px;
+      line-height:1.4;
+      pointer-events:none;
+    }
+
+    .hint b{ color:var(--text); }
+
+    @media (max-width: 1100px){
+      .hero-inner{
+        grid-template-columns: 1fr;
+      }
+      .content{
+        grid-template-columns: 1fr;
+      }
+      .sidebar{
+        position:relative;
+        top:auto;
+      }
+      .feed{
+        grid-template-columns: repeat(2, minmax(0,1fr));
+      }
+    }
+
+    @media (max-width: 760px){
+      :root{
+        --content-width: min(100vw - 12px, 1520px);
+        --topbar-pad-x: clamp(8px, 2.2vw, 14px);
+      }
+      .topbar-inner{
+        grid-template-columns: 1fr;
+        justify-items:stretch;
+        gap:8px;
+      }
+      .topbar-center{
+        order: 3;
+        width:100%;
+      }
+      .topbar-actions{
+        justify-content:space-between;
+        overflow-x:auto;
+        padding-bottom:2px;
+      }
+      .topbar-actions::-webkit-scrollbar{ display:none; }
+      .brand-sub{
+        display:none;
+      }
+      .hero{
+        border-radius:20px;
+      }
+      .hero-inner{
+        padding-top: calc(var(--topbar-height) + 38px);
+      }
+      .feed{
+        grid-template-columns: 1fr;
+      }
+      .editor-backdrop{
+      position:fixed;
+      inset:0;
+      z-index:259;
+      background:rgba(0,0,0,.28);
+      opacity:0;
+      pointer-events:none;
+      transition:opacity 180ms ease;
+    }
+
+    .editor-backdrop[data-open="true"]{
+      opacity:1;
+      pointer-events:auto;
+    }
+
+    .hint{
+        display:none;
+      }
+      .control-surface{
+        width:min(700px, calc(100vw - 16px));
+      }
+    }
+
+    @media (orientation: portrait) and (max-width: 860px){
+      :root{
+        --topbar-height: clamp(42px, 7.2dvh, 64px);
+        --brand-size: clamp(11px, 1.55dvh, 15px);
+        --meta-size: clamp(9px, 1.04dvh, 11px);
+        --control-size: clamp(9px, 1.05dvh, 12px);
+        --icon-size: clamp(24px, 3.4dvh, 30px);
+        --chip-pad-y: clamp(5px, .62dvh, 7px);
+        --chip-pad-x: clamp(7px, 1vw, 10px);
+      }
+
+      .editor-launch{
+        bottom:max(12px, calc(env(safe-area-inset-bottom) + 6px));
+        min-height:42px;
+        padding:10px 13px;
+      }
+
+      .control-surface{
+        width:100vw;
+        max-height:min(64dvh, 470px);
+        border-radius:18px 18px 0 0;
+      }
+
+      .editor-backdrop{
+      position:fixed;
+      inset:0;
+      z-index:259;
+      background:rgba(0,0,0,.28);
+      opacity:0;
+      pointer-events:none;
+      transition:opacity 180ms ease;
+    }
+
+    .editor-backdrop[data-open="true"]{
+      opacity:1;
+      pointer-events:auto;
+    }
+
+    .hint{
+        display:none;
+      }
+
+      .hero{
+        margin-top: 10px;
+      }
+    }
+  </style>
+</head>
+<body data-style="no-line" data-blur="dissipate">
+  <div class="app">
+    <div class="topbar-anchor">
+      <header class="topbar" id="topbar" data-hidden="false" data-condensed="false" aria-label="Immersive TopBar">
+        <div class="topbar-atmosphere">
+          <div class="topbar-line"></div>
+          <div class="topbar-inner">
+            <div class="brand">
+              <div class="brand-mark" aria-hidden="true"></div>
+              <div class="brand-copy">
+                <div class="brand-title" id="brandTitle">Cdaprod’s TopBar</div>
+                <div class="brand-sub">environmental layer • not a boxed navbar</div>
+              </div>
+            </div>
+
+            <div class="topbar-center">
+              <label class="search" aria-label="Search explorer">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="11" cy="11" r="7"></circle>
+                  <path d="M20 20l-3.5-3.5"></path>
+                </svg>
+                <input type="text" placeholder="Search filename, path, project, source…" />
+              </label>
+            </div>
+
+            <div class="topbar-actions" aria-label="TopBar actions">
+              <div class="seg">
+                <button class="active" type="button">Grid</button>
+                <button type="button">List</button>
+              </div>
+              <button class="chip" type="button">Density 5</button>
+              <button class="chip" type="button">Actions</button>
+              <button class="action primary" type="button">Resolve</button>
+            </div>
+          </div>
+        </div>
+      </header>
+    </div>
+
+    <main class="viewport" id="viewport">
+      <section class="hero">
+        <div class="hero-inner">
+          <div>
+            <div class="eyebrow">Opposite direction of the earlier demo</div>
+            <h1 class="headline">More immersive. Less component. Less box.</h1>
+            <div class="subcopy">
+              This version pushes the TopBar toward an atmospheric field at the top of the screen. No hard framing. No obvious glass card outline. Just blur, falloff, light bleed, and viewport-reactive sizing so portrait devices stop feeling oversized.
+            </div>
+          </div>
+
+          <div class="statgrid">
+            <div class="stat"><b>No box</b><span>top layer reads like fog / atmosphere</span></div>
+            <div class="stat"><b>Dissipating blur</b><span>top stronger, bottom fades into scene</span></div>
+            <div class="stat"><b>Portrait aware</b><span>sizes compress harder for vertical devices</span></div>
+            <div class="stat"><b>Optional line</b><span>none / soft / thin for comparison</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="content">
+        <aside class="sidebar">
+          <h3 class="panel-title">What this is testing</h3>
+          <div class="chip-wrap">
+            <div class="mini-chip"><span class="dot"></span>No fake glass border</div>
+            <div class="mini-chip"><span class="dot"></span>Top blur falloff</div>
+            <div class="mini-chip"><span class="dot"></span>Smaller portrait scaling</div>
+            <div class="mini-chip"><span class="dot"></span>Sticky hide / reveal</div>
+            <div class="mini-chip"><span class="dot"></span>TopBar not navbar</div>
+          </div>
+
+          <h3 class="panel-title">Critique targets</h3>
+          <div class="stack">
+            <div class="row">
+              <div class="row-ico"></div>
+              <div class="row-copy">
+                <b>Silhouette</b>
+                <span>Does it feel atmospheric enough, or still too UI-ish?</span>
+              </div>
+            </div>
+            <div class="row">
+              <div class="row-ico"></div>
+              <div class="row-copy">
+                <b>Sizing</b>
+                <span>Does portrait finally feel appropriately compressed?</span>
+              </div>
+            </div>
+            <div class="row">
+              <div class="row-ico"></div>
+              <div class="row-copy">
+                <b>Edge treatment</b>
+                <span>No line vs soft line vs thin line.</span>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        <div class="feed">
+          <article class="asset"><div class="asset-meta"><div class="asset-kind">Video</div><div class="asset-title">Rig orbit sequence</div><div class="asset-sub">Garage build • Nikon Z7</div></div></article>
+          <article class="asset"><div class="asset-meta"><div class="asset-kind">Image</div><div class="asset-title">Workbench hero frame</div><div class="asset-sub">Project P5 • cinematic still</div></div></article>
+          <article class="asset"><div class="asset-meta"><div class="asset-kind">Audio</div><div class="asset-title">Voiceover scratch</div><div class="asset-sub">USB condenser • noisy room pass</div></div></article>
+          <article class="asset"><div class="asset-meta"><div class="asset-kind">Video</div><div class="asset-title">Witness camera capture</div><div class="asset-sub">Source NAS • index ready</div></div></article>
+          <article class="asset"><div class="asset-meta"><div class="asset-kind">Overlay</div><div class="asset-title">Plate preview</div><div class="asset-sub">OBS / browser source</div></div></article>
+          <article class="asset"><div class="asset-meta"><div class="asset-kind">Video</div><div class="asset-title">Public accountability cut</div><div class="asset-sub">Compose pending • exports</div></div></article>
+          <article class="asset"><div class="asset-meta"><div class="asset-kind">Image</div><div class="asset-title">Shader moodboard</div><div class="asset-sub">AssetFX glow concept</div></div></article>
+          <article class="asset"><div class="asset-meta"><div class="asset-kind">Video</div><div class="asset-title">Vertical BTS clip</div><div class="asset-sub">Phone share candidate</div></div></article>
+          <article class="asset"><div class="asset-meta"><div class="asset-kind">Doc</div><div class="asset-title">Metadata notes</div><div class="asset-sub">XML export mapping</div></div></article>
+          <article class="asset"><div class="asset-meta"><div class="asset-kind">Video</div><div class="asset-title">NDI relay test</div><div class="asset-sub">Bedroom desktop scene</div></div></article>
+          <article class="asset"><div class="asset-meta"><div class="asset-kind">Image</div><div class="asset-title">Pan-tilt CAD</div><div class="asset-sub">Servo + extrusion assembly</div></div></article>
+          <article class="asset"><div class="asset-meta"><div class="asset-kind">Video</div><div class="asset-title">Shorts export candidate</div><div class="asset-sub">Vertical cut concept</div></div></article>
+        </div>
+      </section>
+    </main>
+
+    <button class="editor-launch" id="editorLaunch" type="button" aria-expanded="false">
+      <span class="tiny-dot"></span>
+      Tune TopBar
+    </button>
+
+    <div class="editor-backdrop" id="editorBackdrop" data-open="false"></div>
+
+    <div class="control-surface" id="controlSurface" data-open="false">
+      <div class="editor-sheet-handle" aria-hidden="true"></div>
+      <div class="group"><div class="group-title" style="font-size:12px;color:rgba(255,255,255,.86);text-transform:none;letter-spacing:0;margin-bottom:2px;">TopBar editor</div></div><div class="group">
+        <div class="group-title">Blur treatment</div>
+        <div class="seg" id="blurModeSeg">
+          <button type="button" data-blur-value="dissipate" class="active">Dissipating blur</button>
+          <button type="button" data-blur-value="soft-plate">Soft plate</button>
+          <button type="button" data-blur-value="strong-fog">Strong fog</button>
+        </div>
+      </div>
+
+      <div class="group">
+        <div class="group-title">Edge treatment</div>
+        <div class="seg" id="lineModeSeg">
+          <button type="button" data-line-value="no-line" class="active">No line</button>
+          <button type="button" data-line-value="soft-line">Soft line</button>
+          <button type="button" data-line-value="thin-line">Thin line</button>
+        </div>
+      </div>
+
+      <div class="group">
+        <div class="group-title">Brand label</div>
+        <div class="seg" id="brandModeSeg">
+          <button type="button" data-brand-value="topbar" class="active">TopBar</button>
+          <button type="button" data-brand-value="explorer">Explorer</button>
+          <button type="button" data-brand-value="projects">Projects</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="hint">
+      <b>Built for critique.</b> Scroll to watch the sticky hide/reveal, then compare <b>dissipating blur</b> against <b>soft plate</b> and <b>strong fog</b>. This pass is specifically aimed at the things you called out: less border, less box, smaller portrait scale, and a more immersive top layer.
+    </div>
+  </div>
+
+  <script>
+    const viewport = document.getElementById('viewport');
+    const topbar = document.getElementById('topbar');
+    const blurModeSeg = document.getElementById('blurModeSeg');
+    const lineModeSeg = document.getElementById('lineModeSeg');
+    const brandModeSeg = document.getElementById('brandModeSeg');
+    const brandTitle = document.getElementById('brandTitle');
+    const editorLaunch = document.getElementById('editorLaunch');
+    const controlSurface = document.getElementById('controlSurface');
+    const editorBackdrop = document.getElementById('editorBackdrop');
+
+    let lastY = 0;
+
+    function setActive(seg, selector, valueAttr, nextValue){
+      seg.querySelectorAll(selector).forEach((btn) => {
+        btn.classList.toggle('active', btn.getAttribute(valueAttr) === nextValue);
+      });
+    }
+
+    function setEditorOpen(nextOpen){
+      controlSurface.dataset.open = nextOpen ? 'true' : 'false';
+      editorBackdrop.dataset.open = nextOpen ? 'true' : 'false';
+      editorLaunch.setAttribute('aria-expanded', nextOpen ? 'true' : 'false');
+      if (nextOpen) {
+        window.setTimeout(() => {
+          controlSurface.scrollTop = 0;
+        }, 10);
+      }
+    }
+
+    function applyBlur(nextValue){
+      document.body.dataset.blur = nextValue;
+      setActive(blurModeSeg, 'button', 'data-blur-value', nextValue);
+    }
+
+    function applyLine(nextValue){
+      document.body.dataset.style = nextValue;
+      setActive(lineModeSeg, 'button', 'data-line-value', nextValue);
+    }
+
+    function applyBrand(nextValue){
+      const map = {
+        topbar: "Cdaprod’s TopBar",
+        explorer: "Cdaprod’s Explorer",
+        projects: "Cdaprod’s Projects"
+      };
+      brandTitle.textContent = map[nextValue] || map.topbar;
+      setActive(brandModeSeg, 'button', 'data-brand-value', nextValue);
+    }
+
+    editorLaunch.addEventListener('click', () => {
+      setEditorOpen(controlSurface.dataset.open !== 'true');
+    });
+
+    blurModeSeg.addEventListener('click', (event) => {
+      const button = event.target.closest('button[data-blur-value]');
+      if (!button) return;
+      applyBlur(button.getAttribute('data-blur-value'));
+      setEditorOpen(true);
+    });
+
+    lineModeSeg.addEventListener('click', (event) => {
+      const button = event.target.closest('button[data-line-value]');
+      if (!button) return;
+      applyLine(button.getAttribute('data-line-value'));
+      setEditorOpen(true);
+    });
+
+    brandModeSeg.addEventListener('click', (event) => {
+      const button = event.target.closest('button[data-brand-value]');
+      if (!button) return;
+      applyBrand(button.getAttribute('data-brand-value'));
+      setEditorOpen(true);
+    });
+
+    editorBackdrop.addEventListener('click', () => {
+      setEditorOpen(false);
+    });
+
+    document.addEventListener('pointerdown', (event) => {
+      const target = event.target;
+      if (controlSurface.contains(target) || editorLaunch.contains(target)) return;
+      setEditorOpen(false);
+    });
+
+    function updateTopbar(){
+      const y = viewport.scrollTop;
+      const goingDown = y > lastY + 4;
+      const goingUp = y < lastY - 4;
+      const condensed = y > 34;
+
+      topbar.dataset.condensed = condensed ? 'true' : 'false';
+
+      if (y < 18){
+        topbar.dataset.hidden = 'false';
+      } else if (goingDown && y > 180){
+        topbar.dataset.hidden = 'true';
+      } else if (goingUp){
+        topbar.dataset.hidden = 'false';
+      }
+
+      lastY = y;
+    }
+
+    applyBlur(document.body.dataset.blur || 'dissipate');
+    applyLine(document.body.dataset.style || 'no-line');
+    applyBrand('topbar');
+    setEditorOpen(false);
+
+    viewport.addEventListener('scroll', updateTopbar, { passive:true });
+    updateTopbar();
+  </script>
+</body>
+</html>

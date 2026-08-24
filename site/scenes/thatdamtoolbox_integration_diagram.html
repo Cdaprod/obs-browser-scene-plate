@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ThatDAMToolbox Integration Diagram</title>
+  <style>
+    :root{
+      --bg:#0b1020;
+      --panel:#121933;
+      --panel-2:#182244;
+      --line:#69a7ff;
+      --line-soft:#4269b8;
+      --text:#eef4ff;
+      --muted:#aebbd8;
+      --accent:#8bd3ff;
+      --green:#73e0a9;
+      --amber:#ffd37a;
+      --pink:#ff9fc7;
+      --shadow:0 14px 40px rgba(0,0,0,.35);
+      --radius:18px;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(87,130,255,.18), transparent 32%),
+        radial-gradient(circle at top right, rgba(62,212,177,.12), transparent 28%),
+        linear-gradient(180deg, #08101f 0%, #0b1020 100%);
+      color:var(--text);
+    }
+    .wrap{
+      max-width:1400px;
+      margin:0 auto;
+      padding:24px;
+    }
+    .header{
+      display:flex;
+      gap:18px;
+      align-items:flex-start;
+      justify-content:space-between;
+      margin-bottom:18px;
+      flex-wrap:wrap;
+    }
+    .title{
+      max-width:900px;
+    }
+    h1{
+      margin:0 0 8px;
+      font-size:clamp(28px, 4vw, 42px);
+      line-height:1.05;
+      letter-spacing:-0.02em;
+    }
+    .subtitle{
+      color:var(--muted);
+      font-size:15px;
+      line-height:1.5;
+      max-width:1000px;
+    }
+    .controls{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+    }
+    button{
+      border:1px solid rgba(255,255,255,.1);
+      background:rgba(255,255,255,.04);
+      color:var(--text);
+      padding:10px 14px;
+      border-radius:999px;
+      cursor:pointer;
+      font-weight:600;
+      transition:.18s ease;
+      box-shadow:var(--shadow);
+    }
+    button:hover{transform:translateY(-1px); background:rgba(255,255,255,.08)}
+    button.active{
+      background:linear-gradient(180deg, #1f5fe0, #194db6);
+      border-color:#6da6ff;
+    }
+    .panel{
+      background:linear-gradient(180deg, rgba(255,255,255,.04), rgba(255,255,255,.02));
+      border:1px solid rgba(255,255,255,.08);
+      border-radius:24px;
+      overflow:hidden;
+      box-shadow:var(--shadow);
+    }
+    .canvas{
+      width:100%;
+      height:min(980px, 78vh);
+      min-height:760px;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,.01)),
+        linear-gradient(90deg, rgba(255,255,255,.03) 1px, transparent 1px),
+        linear-gradient(0deg, rgba(255,255,255,.03) 1px, transparent 1px);
+      background-size:auto, 40px 40px, 40px 40px;
+      position:relative;
+      overflow:auto;
+    }
+    svg{display:block; width:100%; height:100%}
+    .node{
+      fill:url(#cardFill);
+      stroke:rgba(255,255,255,.13);
+      stroke-width:1.5;
+      filter:url(#shadow);
+    }
+    .node-core{ stroke:#8dc0ff; }
+    .node-service{ stroke:#78e1aa; }
+    .node-ui{ stroke:#f0c67a; }
+    .node-external{ stroke:#ff9fc7; }
+
+    .titleText{
+      font-size:22px;
+      font-weight:700;
+      fill:var(--text);
+    }
+    .small{
+      font-size:13px;
+      fill:var(--muted);
+    }
+    .feature{
+      font-size:14px;
+      fill:#dbe7ff;
+    }
+    .label{
+      font-size:14px;
+      font-weight:700;
+      letter-spacing:.02em;
+      fill:#091120;
+    }
+    .badge-blue{ fill:#8bd3ff; }
+    .badge-green{ fill:#73e0a9; }
+    .badge-amber{ fill:#ffd37a; }
+    .badge-pink{ fill:#ff9fc7; }
+
+    .arrow{
+      fill:none;
+      stroke:var(--line);
+      stroke-width:3;
+      stroke-linecap:round;
+      stroke-linejoin:round;
+      marker-end:url(#arrowHead);
+      opacity:.95;
+    }
+    .arrow-soft{
+      stroke:var(--line-soft);
+      stroke-width:2.5;
+      stroke-dasharray:10 10;
+      marker-end:url(#arrowHeadSoft);
+      opacity:.9;
+    }
+    .callout{
+      fill:rgba(10,18,38,.82);
+      stroke:rgba(255,255,255,.12);
+      stroke-width:1.25;
+    }
+    .callout-title{
+      fill:#fff;
+      font-size:16px;
+      font-weight:700;
+    }
+    .callout-text{
+      fill:#d4ddf5;
+      font-size:14px;
+    }
+    .legend{
+      display:grid;
+      grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+      gap:12px;
+      padding:16px;
+      border-top:1px solid rgba(255,255,255,.08);
+      background:rgba(255,255,255,.03);
+    }
+    .legend-item{
+      display:flex;
+      align-items:center;
+      gap:10px;
+      color:var(--muted);
+      font-size:14px;
+    }
+    .swatch{
+      width:14px;height:14px;border-radius:4px;display:inline-block;
+    }
+    .footer-note{
+      padding:14px 18px 20px;
+      color:var(--muted);
+      font-size:14px;
+      line-height:1.5;
+    }
+    @media (max-width: 900px){
+      .canvas{min-height:900px;height:78vh}
+      .titleText{font-size:19px}
+      .feature{font-size:13px}
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="header">
+      <div class="title">
+        <h1>ThatDAMToolbox Integration Diagram</h1>
+        <div class="subtitle">
+          A simple architecture view showing the current repo split, the target unified app, and the migration direction.
+          This is intentionally class-like and annotated for quick explanation rather than strict UML correctness.
+        </div>
+      </div>
+      <div class="controls">
+        <button class="active" data-view="current">Current repos</button>
+        <button data-view="target">Target unified app</button>
+        <button data-view="flow">Migration flow</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="canvas">
+        <svg viewBox="0 0 1400 900" aria-label="Architecture diagram">
+          <defs>
+            <linearGradient id="cardFill" x1="0" x2="0" y1="0" y2="1">
+              <stop offset="0%" stop-color="#182244"/>
+              <stop offset="100%" stop-color="#101833"/>
+            </linearGradient>
+            <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
+              <feDropShadow dx="0" dy="12" stdDeviation="20" flood-color="#000" flood-opacity=".35"/>
+            </filter>
+            <marker id="arrowHead" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+              <path d="M 0 0 L 12 6 L 0 12 z" fill="#69a7ff"/>
+            </marker>
+            <marker id="arrowHeadSoft" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+              <path d="M 0 0 L 12 6 L 0 12 z" fill="#4269b8"/>
+            </marker>
+          </defs>
+
+          <!-- CURRENT VIEW -->
+          <g id="view-current">
+            <rect x="70" y="90" rx="22" ry="22" width="340" height="300" class="node node-core"/>
+            <rect x="92" y="108" rx="10" ry="10" width="120" height="28" class="badge-blue"/>
+            <text x="108" y="128" class="label">MAIN APP</text>
+            <text x="100" y="170" class="titleText">ThatDAMToolbox</text>
+            <text x="100" y="205" class="feature">• Login / Auth</text>
+            <text x="100" y="232" class="feature">• Dashboard</text>
+            <text x="100" y="259" class="feature">• Camera</text>
+            <text x="100" y="286" class="feature">• Explorer (placeholder)</text>
+            <text x="100" y="313" class="feature">• Modules</text>
+            <text x="100" y="350" class="small">Acts like the intended frontend shell</text>
+
+            <rect x="530" y="70" rx="22" ry="22" width="360" height="340" class="node node-service"/>
+            <rect x="552" y="88" rx="10" ry="10" width="118" height="28" class="badge-green"/>
+            <text x="569" y="108" class="label">BACKEND/API</text>
+            <text x="560" y="150" class="titleText">media-sync-api</text>
+            <text x="560" y="185" class="feature">• Asset API</text>
+            <text x="560" y="212" class="feature">• Media metadata + indexing</text>
+            <text x="560" y="239" class="feature">• Project/file access</text>
+            <text x="560" y="266" class="feature">• Current Explorer backend</text>
+            <text x="560" y="293" class="feature">• Media operations / serving</text>
+            <text x="560" y="330" class="small">Own repo today, but meant to feed the unified app</text>
+
+            <rect x="980" y="120" rx="22" ry="22" width="340" height="300" class="node node-ui"/>
+            <rect x="1002" y="138" rx="10" ry="10" width="112" height="28" class="badge-amber"/>
+            <text x="1022" y="158" class="label">VISUAL/UI</text>
+            <text x="1010" y="200" class="titleText">obs-browser-scene-plate</text>
+            <text x="1010" y="235" class="feature">• HTML visual surfaces</text>
+            <text x="1010" y="262" class="feature">• Explorer / preview ideas</text>
+            <text x="1010" y="289" class="feature">• Program monitor</text>
+            <text x="1010" y="316" class="feature">• Timeline editor</text>
+            <text x="1010" y="353" class="small">Experimental visual repo with powerful UI concepts</text>
+
+            <rect x="390" y="540" rx="22" ry="22" width="620" height="220" class="callout"/>
+            <text x="420" y="585" class="callout-title">Current understanding</text>
+            <text x="420" y="620" class="callout-text">ThatDAMToolbox is the intended product shell.</text>
+            <text x="420" y="648" class="callout-text">media-sync-api is the operational media/asset backend.</text>
+            <text x="420" y="676" class="callout-text">obs-browser-scene-plate contains richer visual/editor ideas that should inform the final Explorer.</text>
+            <text x="420" y="714" class="callout-text">Right now the experience is split across multiple repos instead of being presented as one cohesive app.</text>
+
+            <path d="M 410 240 C 470 240, 490 240, 530 240" class="arrow"/>
+            <text x="436" y="228" class="small">frontend consumes backend</text>
+
+            <path d="M 890 240 C 940 240, 950 260, 980 260" class="arrow-soft"/>
+            <text x="905" y="220" class="small">visual ideas / UI patterns</text>
+          </g>
+
+          <!-- TARGET VIEW -->
+          <g id="view-target" style="display:none">
+            <rect x="310" y="70" rx="28" ry="28" width="780" height="700" class="node node-core"/>
+
+            <rect x="340" y="100" rx="12" ry="12" width="200" height="34" class="badge-blue"/>
+            <text x="367" y="123" class="label">UNIFIED PRODUCT</text>
+            <text x="360" y="175" class="titleText" style="font-size:34px">ThatDAMToolbox</text>
+            <text x="360" y="205" class="small">One app shell bringing UI, explorer, media services, and orchestration together</text>
+
+            <rect x="360" y="250" rx="18" ry="18" width="300" height="180" class="node node-ui"/>
+            <text x="390" y="290" class="titleText">Frontend Shell</text>
+            <text x="390" y="326" class="feature">• Login / Auth</text>
+            <text x="390" y="353" class="feature">• Dashboard</text>
+            <text x="390" y="380" class="feature">• Modules</text>
+
+            <rect x="740" y="250" rx="18" ry="18" width="300" height="180" class="node node-ui"/>
+            <text x="770" y="290" class="titleText">Integrated Explorer UI</text>
+            <text x="770" y="326" class="feature">• Asset explorer</text>
+            <text x="770" y="353" class="feature">• Preview / program monitor</text>
+            <text x="770" y="380" class="feature">• Timeline/editor concepts</text>
+
+            <rect x="360" y="490" rx="18" ry="18" width="300" height="200" class="node node-service"/>
+            <text x="390" y="530" class="titleText">Media Services</text>
+            <text x="390" y="566" class="feature">• Asset API</text>
+            <text x="390" y="593" class="feature">• Metadata + indexing</text>
+            <text x="390" y="620" class="feature">• File/project access</text>
+            <text x="390" y="647" class="feature">• Media operations</text>
+
+            <rect x="740" y="490" rx="18" ry="18" width="300" height="200" class="node node-service"/>
+            <text x="770" y="530" class="titleText">Supervisor + Camera Layer</text>
+            <text x="770" y="566" class="feature">• Golang supervisor</text>
+            <text x="770" y="593" class="feature">• Agentry</text>
+            <text x="770" y="620" class="feature">• Camera daemon</text>
+            <text x="770" y="647" class="feature">• Device orchestration</text>
+
+            <path d="M 660 340 C 700 340, 700 340, 740 340" class="arrow"/>
+            <path d="M 510 430 C 510 455, 510 465, 510 490" class="arrow"/>
+            <path d="M 890 430 C 890 455, 890 465, 890 490" class="arrow"/>
+            <path d="M 660 590 C 700 590, 700 590, 740 590" class="arrow"/>
+
+            <rect x="70" y="205" rx="22" ry="22" width="190" height="110" class="node node-external"/>
+            <text x="95" y="252" class="titleText" style="font-size:22px">Users</text>
+            <text x="95" y="282" class="small">Human entry point</text>
+            <path d="M 260 260 C 295 260, 315 290, 360 320" class="arrow"/>
+
+            <rect x="1140" y="315" rx="22" ry="22" width="180" height="110" class="node node-external"/>
+            <text x="1166" y="362" class="titleText" style="font-size:20px">Assets / Files</text>
+            <text x="1166" y="392" class="small">Media domain</text>
+            <path d="M 1040 340 C 1080 340, 1095 340, 1140 368" class="arrow-soft"/>
+
+            <rect x="1140" y="555" rx="22" ry="22" width="180" height="110" class="node node-external"/>
+            <text x="1166" y="602" class="titleText" style="font-size:20px">Devices / Cameras</text>
+            <text x="1166" y="632" class="small">Capture domain</text>
+            <path d="M 1040 590 C 1080 590, 1095 590, 1140 608" class="arrow-soft"/>
+
+            <rect x="60" y="735" rx="22" ry="22" width="260" height="100" class="callout"/>
+            <text x="86" y="775" class="callout-title">Key message</text>
+            <text x="86" y="805" class="callout-text">The final app is not a replacement of all logic.</text>
+            <text x="86" y="829" class="callout-text">It is a unification of shell, explorer, media services, and device orchestration.</text>
+          </g>
+
+          <!-- FLOW VIEW -->
+          <g id="view-flow" style="display:none">
+            <rect x="80" y="120" rx="22" ry="22" width="280" height="220" class="node node-core"/>
+            <text x="110" y="170" class="titleText">Repo 1</text>
+            <text x="110" y="205" class="feature">ThatDAMToolbox</text>
+            <text x="110" y="235" class="small">shell / auth / dashboard / camera / modules</text>
+
+            <rect x="80" y="430" rx="22" ry="22" width="280" height="220" class="node node-service"/>
+            <text x="110" y="480" class="titleText">Repo 2</text>
+            <text x="110" y="515" class="feature">media-sync-api</text>
+            <text x="110" y="545" class="small">asset API + current Explorer backend</text>
+
+            <rect x="80" y="740" rx="22" ry="22" width="280" height="220" class="node node-ui"/>
+            <text x="110" y="790" class="titleText">Repo 3</text>
+            <text x="110" y="825" class="feature">obs-browser-scene-plate</text>
+            <text x="110" y="855" class="small">visual/editor/program monitor concepts</text>
+
+            <rect x="530" y="260" rx="24" ry="24" width="330" height="200" class="node node-core"/>
+            <text x="565" y="315" class="titleText">Merge Strategy</text>
+            <text x="565" y="355" class="feature">1. Keep repos understandable</text>
+            <text x="565" y="382" class="feature">2. Pull Explorer UI into Toolbox</text>
+            <text x="565" y="409" class="feature">3. Keep media-sync-api as service layer</text>
+            <text x="565" y="436" class="feature">4. Fold in visual/editor patterns selectively</text>
+
+            <rect x="1020" y="260" rx="28" ry="28" width="300" height="240" class="node node-core"/>
+            <text x="1052" y="318" class="titleText">End State</text>
+            <text x="1052" y="358" class="feature">ThatDAMToolbox</text>
+            <text x="1052" y="385" class="feature">as one cohesive app</text>
+            <text x="1052" y="425" class="small">with integrated Explorer + backed by media services + camera orchestration</text>
+
+            <path d="M 360 220 C 430 220, 440 290, 530 320" class="arrow"/>
+            <path d="M 360 540 C 440 540, 455 390, 530 360" class="arrow"/>
+            <path d="M 360 850 C 460 850, 460 470, 530 400" class="arrow"/>
+            <path d="M 860 360 C 930 360, 955 360, 1020 360" class="arrow"/>
+
+            <rect x="500" y="560" rx="24" ry="24" width="420" height="180" class="callout"/>
+            <text x="530" y="605" class="callout-title">Brief explanation to say out loud</text>
+            <text x="530" y="640" class="callout-text">“I currently have multiple repos covering shell, media backend, and visual explorer/editor work.</text>
+            <text x="530" y="668" class="callout-text">The goal is to consolidate them into ThatDAMToolbox, where the Explorer moves in as a first-class feature,</text>
+            <text x="530" y="696" class="callout-text">media-sync-api remains the service foundation, and the obs-browser-scene-plate ideas become integrated UI capabilities.”</text>
+          </g>
+        </svg>
+      </div>
+
+      <div class="legend">
+        <div class="legend-item"><span class="swatch" style="background:#8bd3ff"></span> Core product / main app shell</div>
+        <div class="legend-item"><span class="swatch" style="background:#73e0a9"></span> Backend / API / service layer</div>
+        <div class="legend-item"><span class="swatch" style="background:#ffd37a"></span> Visual UI / Explorer / editor layer</div>
+        <div class="legend-item"><span class="swatch" style="background:#ff9fc7"></span> External users, assets, or devices</div>
+      </div>
+      <div class="footer-note">
+        This diagram is designed to be simple now and easy to evolve later. You can add more boxes for modules, auth provider,
+        daemon processes, renderers, or split the Explorer into Asset Browser / Preview / Program Monitor / Timeline when you are ready.
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const buttons = document.querySelectorAll('button[data-view]');
+    const views = {
+      current: document.getElementById('view-current'),
+      target: document.getElementById('view-target'),
+      flow: document.getElementById('view-flow'),
+    };
+
+    buttons.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const name = btn.dataset.view;
+        Object.entries(views).forEach(([key, el]) => {
+          el.style.display = key === name ? 'block' : 'none';
+        });
+        buttons.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+      });
+    });
+  </script>
+</body>
+</html>

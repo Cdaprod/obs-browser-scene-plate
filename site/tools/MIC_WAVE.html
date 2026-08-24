@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>MIC.WAVE</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&family=Syne:wght@700;800&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+–bg:     #08090e;
+–purple: #c084fc;
+–cyan:   #00e5ff;
+–text:   #e8eaf0;
+–muted:  rgba(232,234,240,0.42);
+–mono:   'IBM Plex Mono', monospace;
+–sans:   'Syne', sans-serif;
+}
+
+html, body {
+width: 100%; height: 100%;
+background: var(–bg);
+overflow: hidden;
+font-family: var(–mono);
+color: var(–text);
+}
+
+/* ── Main waveform canvas — absolute fill ── */
+#waveCanvas {
+position: fixed;
+top: 0; left: 0;
+/* size set via JS to exactly window.innerWidth/Height */
+display: block;
+}
+
+/* ── Header scrim ── */
+#header {
+position: fixed;
+top: 0; left: 0; right: 0;
+padding: 22px 24px 48px;
+display: flex;
+align-items: flex-start;
+justify-content: space-between;
+z-index: 100;
+pointer-events: none;
+background: linear-gradient(to bottom, rgba(8,9,14,0.92) 0%, transparent 100%);
+}
+
+.title-block { pointer-events: none; }
+.title-label {
+font-size: 8px; letter-spacing: 0.22em;
+color: var(–muted); text-transform: uppercase; margin-bottom: 4px;
+}
+.title-main {
+font-family: var(–sans); font-size: 22px; font-weight: 800;
+color: #fff; letter-spacing: 0.04em; line-height: 1;
+text-shadow: 0 0 40px rgba(192,132,252,0.35);
+}
+.title-main em { color: var(–purple); font-style: normal; }
+
+.live-pill {
+display: inline-flex; align-items: center; gap: 6px;
+font-size: 8px; letter-spacing: 0.18em; text-transform: uppercase;
+padding: 4px 10px; border-radius: 100px; margin-top: 8px;
+border: 1px solid rgba(192,132,252,0.22);
+background: rgba(192,132,252,0.08); color: var(–purple);
+}
+.live-dot {
+width: 5px; height: 5px; border-radius: 50%; background: var(–purple);
+animation: blink 1.2s ease-in-out infinite;
+}
+.live-dot.on {
+background: var(–cyan); box-shadow: 0 0 8px rgba(0,229,255,0.9);
+animation: blink-cyan 0.8s ease-in-out infinite;
+}
+@keyframes blink      { 0%,100%{opacity:1} 50%{opacity:.2} }
+@keyframes blink-cyan { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(1.5)} }
+
+/* meters */
+.meters { display:flex; flex-direction:column; gap:5px; pointer-events:none; min-width:130px; }
+.meter-row { display:flex; align-items:center; gap:8px; font-size:8px; letter-spacing:.08em; color:var(–muted); }
+.mk { width:28px; flex-shrink:0; }
+.mo { flex:1; height:2px; border-radius:1px; background:rgba(255,255,255,0.08); overflow:hidden; }
+.mi { height:100%; border-radius:1px; width:0%; transition:width .04s linear; }
+.mi.bass { background:var(–purple); box-shadow:0 0 6px rgba(192,132,252,.7); }
+.mi.mid  { background:#a78bfa; }
+.mi.treb { background:var(–cyan); box-shadow:0 0 6px rgba(0,229,255,.6); }
+.mv { width:26px; text-align:right; font-size:7px; color:rgba(255,255,255,.3); }
+
+/* ── Bottom strip ── */
+#controls {
+position: fixed;
+bottom: 0; left: 0; right: 0;
+z-index: 100;
+padding: 0 20px;
+padding-bottom: max(20px, env(safe-area-inset-bottom));
+padding-top: 56px;
+background: linear-gradient(to top, rgba(8,9,14,.98) 0%, rgba(8,9,14,.72) 60%, transparent 100%);
+display: flex; flex-direction: column; gap: 11px;
+}
+
+#freqCanvas {
+width: 100%; height: 28px; border-radius: 3px; opacity: 0.55; display: block;
+}
+
+.rms-wrap { width:100%; height:2px; border-radius:1px; background:rgba(255,255,255,.06); overflow:hidden; }
+.rms-inner { height:100%; background:linear-gradient(to right,var(–purple),var(–cyan)); width:0%; border-radius:1px; transition:width .04s linear; }
+
+.ctrl-row { display:flex; align-items:center; gap:7px; flex-wrap:wrap; }
+.ctrl-label { font-size:8px; letter-spacing:.2em; color:var(–muted); text-transform:uppercase; flex-shrink:0; margin-right:2px; }
+
+.pill {
+font-family:var(–mono); font-size:8px; letter-spacing:.1em; text-transform:uppercase;
+padding:5px 13px; border-radius:100px;
+border:1px solid rgba(255,255,255,.08); background:rgba(0,0,0,.45); color:var(–muted);
+cursor:pointer; transition:all .18s; backdrop-filter:blur(10px);
+display:flex; align-items:center; gap:5px; white-space:nowrap;
+-webkit-tap-highlight-color: transparent;
+}
+.pill:hover { color:var(–text); border-color:rgba(255,255,255,.18); background:rgba(255,255,255,.07); }
+.pill.active-cyan { color:var(–cyan); border-color:rgba(0,229,255,.3); background:rgba(0,229,255,.09); }
+.pill.active-purple { color:var(–purple); border-color:rgba(192,132,252,.3); background:rgba(192,132,252,.09); }
+
+.beat-dot { width:9px;height:9px;border-radius:50%;border:1px solid rgba(255,255,255,.12);flex-shrink:0;transition:all .05s; }
+.beat-dot.flash { background:var(–cyan);border-color:var(–cyan);box-shadow:0 0 12px rgba(0,229,255,.9); }
+#bpmLabel { font-size:8px;letter-spacing:.1em;color:rgba(255,255,255,.28); }
+
+/* ── Start overlay ── */
+#overlay {
+position:fixed; inset:0; z-index:200;
+display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px;
+background:rgba(8,9,14,.94); backdrop-filter:blur(20px);
+cursor:pointer; transition:opacity .4s;
+}
+#overlay.gone { opacity:0; pointer-events:none; }
+.prompt-ring {
+width:72px;height:72px;border-radius:50%;
+border:1.5px solid rgba(192,132,252,.35); background:rgba(192,132,252,.07);
+display:flex;align-items:center;justify-content:center;
+animation:breathe 2.5s ease-in-out infinite;
+}
+@keyframes breathe {
+0%,100%{transform:scale(1);box-shadow:0 0 0 0 rgba(192,132,252,.2)}
+50%{transform:scale(1.06);box-shadow:0 0 0 14px rgba(192,132,252,0)}
+}
+.prompt-title { font-family:var(–sans);font-size:13px;font-weight:700;color:rgba(255,255,255,.85);letter-spacing:.08em; }
+.prompt-sub   { font-size:9px;letter-spacing:.16em;color:var(–muted);text-transform:uppercase; }
+</style>
+
+</head>
+<body>
+
+<div id="overlay">
+  <div class="prompt-ring">
+    <svg width="28" height="28" viewBox="0 0 28 28" fill="none" stroke="#c084fc" stroke-width="1.5">
+      <rect x="10" y="3" width="8" height="16" rx="4"/>
+      <path d="M5 14c0 5 4.5 9 9 9s9-4 9-9" stroke-linecap="round"/>
+      <line x1="14" y1="23" x2="14" y2="26" stroke-linecap="round"/>
+      <line x1="10" y1="26" x2="18" y2="26" stroke-linecap="round"/>
+    </svg>
+  </div>
+  <div class="prompt-title">MIC.WAVE</div>
+  <div class="prompt-sub">Tap to enable microphone</div>
+</div>
+
+<canvas id="waveCanvas"></canvas>
+
+<div id="header">
+  <div class="title-block">
+    <div class="title-label">Cdaprod Explorer</div>
+    <div class="title-main">MIC<em>.</em>WAVE</div>
+    <div class="live-pill">
+      <div class="live-dot" id="liveDot"></div>
+      <span id="liveLabel">No source</span>
+    </div>
+  </div>
+  <div class="meters">
+    <div class="meter-row"><span class="mk">BASS</span><div class="mo"><div class="mi bass" id="mBass"></div></div><span class="mv" id="vBass">0.00</span></div>
+    <div class="meter-row"><span class="mk">MID</span><div class="mo"><div class="mi mid"  id="mMid" ></div></div><span class="mv" id="vMid" >0.00</span></div>
+    <div class="meter-row"><span class="mk">TREB</span><div class="mo"><div class="mi treb" id="mTreb"></div></div><span class="mv" id="vTreb">0.00</span></div>
+  </div>
+</div>
+
+<div id="controls">
+  <canvas id="freqCanvas"></canvas>
+  <div class="rms-wrap"><div class="rms-inner" id="rmsBar"></div></div>
+  <div class="ctrl-row">
+    <span class="ctrl-label">Source</span>
+    <button class="pill" id="btnMic">
+      <svg width="9" height="10" viewBox="0 0 9 10" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="3" y=".5" width="3" height="6" rx="1.5"/><path d="M1.5 5c0 1.7 1.3 3 3 3s3-1.3 3-3" stroke-linecap="round"/><line x1="4.5" y1="8" x2="4.5" y2="9.5" stroke-linecap="round"/></svg>
+      MIC
+    </button>
+    <button class="pill" id="btnTab">
+      <svg width="10" height="9" viewBox="0 0 10 9" fill="none" stroke="currentColor" stroke-width="1.2"><rect x=".5" y="1" width="9" height="6" rx="1"/><line x1="3" y1="8.5" x2="7" y2="8.5" stroke-linecap="round"/></svg>
+      TAB
+    </button>
+    <button class="pill" id="btnFile">FILE</button>
+    <input type="file" id="fileInput" accept="audio/*,video/*" style="display:none">
+    <div class="beat-dot" id="beatDot" style="margin-left:auto"></div>
+    <span id="bpmLabel"></span>
+  </div>
+  <div class="ctrl-row">
+    <span class="ctrl-label">Style</span>
+    <button class="pill active-purple" id="btnBars"   data-s="bars">BARS</button>
+    <button class="pill"               id="btnMirror" data-s="mirror">MIRROR</button>
+    <button class="pill"               id="btnWave"   data-s="wave">WAVE</button>
+    <button class="pill" id="btnSmooth" style="margin-left:auto">SMOOTH <span id="smlbl">ON</span></button>
+  </div>
+</div>
+
+<audio id="audioEl" crossorigin="anonymous" style="display:none"></audio>
+
+<script>
+'use strict';
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  CANVAS — sized in TRUE CSS pixels, scaled once via DPR
+//  Key rule: wc.width/height are the physical pixel counts.
+//            W/H in draw code are always CSS pixel dimensions.
+//            ctx.scale(dpr,dpr) is set ONCE after each resize so that
+//            drawing in CSS-pixel coordinates produces sharp results.
+// ─────────────────────────────────────────────────────────────────────────────
+const wc   = document.getElementById('waveCanvas');
+const ctx  = wc.getContext('2d');
+const fc   = document.getElementById('freqCanvas');
+const fctx = fc.getContext('2d');
+
+let W = 0, H = 0;   // CSS pixel dimensions — the only values used in draw math
+let FW = 0, FH = 0; // freq canvas CSS dims
+
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+
+  W = window.innerWidth;
+  H = window.innerHeight;
+  wc.style.width  = W + 'px';
+  wc.style.height = H + 'px';
+  wc.width  = Math.round(W * dpr);
+  wc.height = Math.round(H * dpr);
+  // Reset transform then apply scale once — no accumulation
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  // freq canvas: let CSS layout resolve first
+  requestAnimationFrame(() => {
+    FW = fc.offsetWidth;
+    FH = fc.offsetHeight || 28;
+    fc.width  = Math.round(FW * dpr);
+    fc.height = Math.round(FH * dpr);
+    fctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  });
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  WEB AUDIO
+// ─────────────────────────────────────────────────────────────────────────────
+let audioCtx = null, analyser = null, srcNode = null;
+const FFT_SIZE = 1024;          // gives 512 bins — good resolution
+let freqBuf = new Uint8Array(FFT_SIZE / 2);
+let smoothOn = true;
+
+let bass = 0, mid = 0, treb = 0, rmsVal = 0;
+let beat = 0, lastBeatMs = 0;
+let beatHist = new Array(43).fill(0), beatPtr = 0;
+let bpmBuf = [], displayBpm = '';
+
+function initCtx() {
+  if (audioCtx) return;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = FFT_SIZE;
+  analyser.smoothingTimeConstant = smoothOn ? 0.84 : 0.3;
+  freqBuf = new Uint8Array(analyser.frequencyBinCount);
+}
+
+function disconnectSrc() {
+  if (srcNode) { try { srcNode.disconnect(); } catch(e){} srcNode = null; }
+}
+
+async function startMic() {
+  initCtx();
+  disconnectSrc();
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    srcNode = audioCtx.createMediaStreamSource(stream);
+    srcNode.connect(analyser);
+    // NOT connected to destination — no echo
+    setLive('mic', 'MIC LIVE');
+  } catch(e) { alert('Mic denied: ' + e.message); }
+}
+
+async function startTab() {
+  initCtx();
+  disconnectSrc();
+  try {
+    const stream = await navigator.mediaDevices.getDisplayMedia({ audio: true, video: true });
+    srcNode = audioCtx.createMediaStreamSource(stream);
+    srcNode.connect(analyser);
+    setLive('tab', 'TAB AUDIO');
+  } catch(e) { alert('Tab capture failed: ' + e.message); }
+}
+
+function startFile(file) {
+  initCtx();
+  disconnectSrc();
+  const el = document.getElementById('audioEl');
+  el.src = URL.createObjectURL(file);
+  el.play().catch(()=>{});
+  srcNode = audioCtx.createMediaElementSource(el);
+  srcNode.connect(analyser);
+  analyser.connect(audioCtx.destination);
+  setLive('file', file.name.slice(0,20));
+}
+
+function setLive(src, label) {
+  ['btnMic','btnTab','btnFile'].forEach(id => {
+    document.getElementById(id).className = 'pill';
+  });
+  document.getElementById('btn' + src[0].toUpperCase() + src.slice(1)).classList.add('active-cyan');
+  document.getElementById('liveDot').classList.add('on');
+  document.getElementById('liveLabel').textContent = label.toUpperCase();
+  document.getElementById('overlay').classList.add('gone');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  ANALYSIS
+// ─────────────────────────────────────────────────────────────────────────────
+function analyze() {
+  if (!analyser) return;
+  analyser.getByteFrequencyData(freqBuf);
+
+  const N  = freqBuf.length;  // = FFT_SIZE / 2 = 512
+  const b2 = Math.floor(N * 0.04);
+  const m2 = Math.floor(N * 0.25);
+  const t2 = Math.floor(N * 0.65);
+
+  let bS=0, mS=0, tS=0, rS=0;
+  for (let i=0;  i<b2; i++) bS += freqBuf[i];
+  for (let i=b2; i<m2; i++) mS += freqBuf[i];
+  for (let i=m2; i<t2; i++) tS += freqBuf[i];
+  for (let i=0;  i<N;  i++) { const v=freqBuf[i]/255; rS+=v*v; }
+
+  const sp = 0.1;
+  bass   += sp*(Math.min(1, bS/(b2*255))       - bass);
+  mid    += sp*(Math.min(1, mS/((m2-b2)*255))  - mid);
+  treb   += sp*(Math.min(1, tS/((t2-m2)*255))  - treb);
+  rmsVal += sp*(Math.min(1, Math.sqrt(rS/N))   - rmsVal);
+
+  // Beat
+  const rawBass = bS / Math.max(1, b2*255);
+  beatHist[beatPtr++ % 43] = rawBass;
+  const avg = beatHist.reduce((a,b)=>a+b,0) / 43;
+  if (rawBass > avg*1.45 && rawBass > 0.1) {
+    const now = performance.now();
+    if (now - lastBeatMs > 180) {
+      beat = 1.0;
+      if (lastBeatMs > 0 && now-lastBeatMs < 2000) {
+        bpmBuf.push(60000/(now-lastBeatMs));
+        if (bpmBuf.length > 8) bpmBuf.shift();
+        displayBpm = Math.round(bpmBuf.reduce((a,b)=>a+b,0)/bpmBuf.length) + ' BPM';
+      }
+      lastBeatMs = now;
+    }
+  }
+  beat = Math.max(0, beat - 0.032);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  DRAW HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+// roundRect polyfill for Safari < 15.4
+function rr(c, x, y, w, h, r) {
+  r = Math.min(r, w/2, Math.abs(h)/2);
+  if (c.roundRect) { c.roundRect(x, y, w, h, r); return; }
+  c.moveTo(x+r, y);
+  c.lineTo(x+w-r,y); c.arcTo(x+w,y, x+w,y+r, r);
+  c.lineTo(x+w,y+h-r); c.arcTo(x+w,y+h, x+w-r,y+h, r);
+  c.lineTo(x+r,y+h); c.arcTo(x,y+h, x,y+h-r, r);
+  c.lineTo(x,y+r); c.arcTo(x,y, x+r,y, r);
+  c.closePath();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  WAVEFORM
+//
+//  Single source of truth for bar amplitudes: getAmp(i, BARS)
+//  Both idle (sine) and live (FFT) paths write into the same amp array.
+//  liveBlend lerps between the two so transitions are smooth.
+// ─────────────────────────────────────────────────────────────────────────────
+const BARS    = 70;
+let drawStyle = 'bars';
+let idleT     = 0;
+let liveBlend = 0;
+
+// Amplitude cache — filled each frame, reused by wave mode
+const amps = new Float32Array(BARS);
+
+function fillAmps() {
+  const hasSignal = !!(analyser && rmsVal > 0.004);
+  liveBlend += hasSignal ? 0.055 : -0.035;
+  liveBlend  = Math.max(0, Math.min(1, liveBlend));
+
+  idleT += 0.018;
+
+  const N       = freqBuf.length;
+  const usable  = Math.floor(N * 0.65); // lower 65% of bins = musical range
+
+  for (let i = 0; i < BARS; i++) {
+    const frac = i / (BARS - 1); // 0..1 inclusive
+
+    // ── Idle: the same smooth dual-sine used in asset-preview ──────────────
+    const idleAmp =
+      (Math.sin(frac * Math.PI * 2 * 2.1 + idleT) * 0.5 + 0.5) *
+      (Math.sin(frac * Math.PI * 2 * 0.7 + idleT * 0.55) * 0.4 + 0.6) *
+      0.72;
+
+    // ── Live: perceptual-warped FFT with multi-tap smoothing ───────────────
+    let liveAmp = 0;
+    if (N > 0) {
+      // pow warp: spreads high-freq content across more bars
+      const binFrac = Math.pow(frac, 1.75);
+      const bin     = Math.min(N-1, Math.floor(binFrac * usable));
+      const v0 = freqBuf[bin] / 255;
+      const v1 = (freqBuf[Math.max(0, bin-1)]   || 0) / 255;
+      const v2 = (freqBuf[Math.min(N-1, bin+1)] || 0) / 255;
+      const v3 = (freqBuf[Math.max(0, bin-2)]   || 0) / 255;
+      // weighted average + gamma expand + high-end gain + rms floor
+      liveAmp = (v0*0.55 + v1*0.2 + v2*0.15 + v3*0.1);
+      liveAmp = Math.pow(liveAmp, 0.65) * (1 + frac * 0.9);
+      liveAmp = Math.max(liveAmp, 0.025 * rmsVal);
+      liveAmp = Math.min(liveAmp, 1.0);
+    }
+
+    amps[i] = idleAmp * (1 - liveBlend) + liveAmp * liveBlend;
+  }
+}
+
+function barColor(i, alpha) {
+  // purple at rest -> purple-cyan gradient when live
+  const r = Math.round(192 - liveBlend * 118);
+  const g = Math.round(132 - liveBlend *  98);
+  return `rgba(${r},${g},252,${alpha})`;
+}
+
+function drawFrame() {
+  // ── clear with dark background so colors show on any host bg ─────────────
+  ctx.fillStyle = '#08090e';
+  ctx.fillRect(0, 0, W, H);
+
+  const bw = W / BARS;  // each bar's column width in CSS pixels
+
+  if (drawStyle === 'bars') {
+    for (let i = 0; i < BARS; i++) {
+      const amp  = amps[i];
+      const bh   = Math.max(2, amp * H * 0.80);
+      const x    = i * bw;
+      const y    = H - bh;
+      const al   = 0.18 + amp * 0.82;
+      // glow
+      ctx.fillStyle = barColor(i, al * 0.2);
+      ctx.beginPath(); rr(ctx, x+1, y-3, bw-2, bh+3, 3); ctx.fill();
+      // bar
+      ctx.fillStyle = barColor(i, al);
+      ctx.beginPath(); rr(ctx, x+2, y, bw-4, bh, 2); ctx.fill();
+    }
+
+  } else if (drawStyle === 'mirror') {
+    const cy = H / 2;
+    for (let i = 0; i < BARS; i++) {
+      const amp  = amps[i];
+      const half = Math.max(1, amp * cy * 0.85);
+      const x    = i * bw;
+      const al   = 0.18 + amp * 0.82;
+      // glow
+      ctx.fillStyle = barColor(i, al * 0.18);
+      ctx.beginPath(); rr(ctx, x+1, cy-half-3, bw-2, half*2+6, 3); ctx.fill();
+      // top arm
+      ctx.fillStyle = barColor(i, al);
+      ctx.beginPath(); rr(ctx, x+2, cy-half, bw-4, half, 2); ctx.fill();
+      // bottom arm
+      ctx.beginPath(); rr(ctx, x+2, cy,      bw-4, half, 2); ctx.fill();
+    }
+
+  } else { // wave
+    // Collect center-Y positions from amps
+    // The wave is drawn centered at H/2, amplitude maps to ±H*0.40
+    const pts = [];
+    for (let i = 0; i < BARS; i++) {
+      pts.push({
+        x: (i + 0.5) * bw,
+        y: H * 0.5 - (amps[i] * 2 - 1) * H * 0.38
+        // maps amp 0..1 → y from H*0.5+H*0.38 (bottom) to H*0.5-H*0.38 (top)
+        // idle sine hovers naturally around center; live peaks upward
+      });
+    }
+    // two passes: fat glow, then crisp line
+    for (let pass = 0; pass < 2; pass++) {
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 0; i < pts.length - 1; i++) {
+        const mx = (pts[i].x + pts[i+1].x) * 0.5;
+        const my = (pts[i].y + pts[i+1].y) * 0.5;
+        ctx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my);
+      }
+      ctx.lineTo(pts[pts.length-1].x, pts[pts.length-1].y);
+      const r = Math.round(192 - liveBlend * 118);
+      const g = Math.round(132 - liveBlend *  98);
+      ctx.strokeStyle = pass === 0
+        ? `rgba(${r},${g},252,0.14)`
+        : `rgba(${r},${g},252,0.90)`;
+      ctx.lineWidth  = pass === 0 ? 14 : 2;
+      ctx.lineCap    = 'round';
+      ctx.lineJoin   = 'round';
+      ctx.stroke();
+    }
+  }
+
+  // ── Beat pulse ────────────────────────────────────────────────────────────
+  if (beat > 0.06) {
+    const cx = W/2, cy = H/2;
+    const gr = ctx.createRadialGradient(cx, cy, 20, cx, cy, 80 + beat*120);
+    gr.addColorStop(0, `rgba(0,229,255,${beat*0.10})`);
+    gr.addColorStop(1, `rgba(0,229,255,0)`);
+    ctx.fillStyle = gr;
+    ctx.beginPath(); ctx.arc(cx, cy, 80+beat*120, 0, Math.PI*2); ctx.fill();
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  FREQ MINI-CANVAS
+// ─────────────────────────────────────────────────────────────────────────────
+function drawFreq() {
+  if (!FW || !FH) return;
+  fctx.clearRect(0, 0, FW, FH);
+  fctx.fillStyle = 'rgba(255,255,255,0.03)';
+  fctx.fillRect(0, 0, FW, FH);
+  if (!analyser) return;
+
+  const bins = Math.min(96, freqBuf.length);
+  const bw   = FW / bins;
+  for (let i = 0; i < bins; i++) {
+    const v  = freqBuf[Math.floor(i * freqBuf.length / bins)] / 255;
+    const bh = v * FH;
+    const hue = 270 - v * 110;
+    fctx.fillStyle = `hsla(${hue},75%,68%,${0.3 + v*0.7})`;
+    fctx.fillRect(i*bw, FH-bh, bw-1, bh);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  UI METERS
+// ─────────────────────────────────────────────────────────────────────────────
+function updateUI() {
+  document.getElementById('mBass').style.width = (bass  *100)+'%';
+  document.getElementById('mMid') .style.width = (mid   *100)+'%';
+  document.getElementById('mTreb').style.width = (treb  *100)+'%';
+  document.getElementById('vBass').textContent = bass .toFixed(2);
+  document.getElementById('vMid') .textContent = mid  .toFixed(2);
+  document.getElementById('vTreb').textContent = treb .toFixed(2);
+  document.getElementById('rmsBar').style.width = (rmsVal*100)+'%';
+  const bd = document.getElementById('beatDot');
+  beat > 0.28 ? bd.classList.add('flash') : bd.classList.remove('flash');
+  document.getElementById('bpmLabel').textContent = displayBpm;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  RENDER LOOP
+// ─────────────────────────────────────────────────────────────────────────────
+function frame() {
+  requestAnimationFrame(frame);
+  analyze();
+  fillAmps();
+  drawFrame();
+  drawFreq();
+  updateUI();
+}
+requestAnimationFrame(frame);
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  CONTROLS
+// ─────────────────────────────────────────────────────────────────────────────
+document.getElementById('btnMic') .addEventListener('click', startMic);
+document.getElementById('btnTab') .addEventListener('click', startTab);
+document.getElementById('btnFile').addEventListener('click', () => document.getElementById('fileInput').click());
+document.getElementById('fileInput').addEventListener('change', e => {
+  if (e.target.files?.[0]) startFile(e.target.files[0]);
+});
+document.getElementById('overlay').addEventListener('click', startMic);
+
+document.querySelectorAll('[data-s]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    drawStyle = btn.dataset.s;
+    document.querySelectorAll('[data-s]').forEach(b => b.classList.remove('active-purple'));
+    btn.classList.add('active-purple');
+  });
+});
+
+document.getElementById('btnSmooth').addEventListener('click', () => {
+  smoothOn = !smoothOn;
+  if (analyser) analyser.smoothingTimeConstant = smoothOn ? 0.84 : 0.3;
+  document.getElementById('smlbl').textContent = smoothOn ? 'ON' : 'OFF';
+});
+
+window.addEventListener('keydown', e => {
+  if (e.key==='m'||e.key==='M') startMic();
+  if (e.key==='t'||e.key==='T') startTab();
+  if (e.key==='1') document.getElementById('btnBars').click();
+  if (e.key==='2') document.getElementById('btnMirror').click();
+  if (e.key==='3') document.getElementById('btnWave').click();
+});
+</script>
+
+</body>
+</html>

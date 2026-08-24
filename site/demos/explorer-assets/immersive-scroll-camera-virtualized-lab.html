@@ -1,0 +1,1626 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Explorer — Immersive Scroll Camera + Virtualized Grid Lab</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Syne:wght@400;600;700;800&display=swap');
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --bg: #07070c;
+      --bg2: #0b0b12;
+      --surface: rgba(13, 13, 21, 0.78);
+      --card-bg: #111120;
+      --border: rgba(255,255,255,0.08);
+      --text: #e8e8f0;
+      --muted: rgba(255,255,255,0.44);
+      --accent: #5b7fff;
+      --accent2: #9d7bff;
+      --good: #7cffb2;
+      --warn: #ffd36a;
+      --danger: #ff8c8c;
+      --gap: 8px;
+      --radius: 12px;
+      --header-h: 52px;
+      --side-pad: 12px;
+      --shadow-soft: 0 24px 70px rgba(0,0,0,0.25);
+      --shadow-focus: 0 30px 110px rgba(0,0,0,0.36), 0 0 0 1px rgba(255,255,255,0.05);
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Syne', sans-serif;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+      touch-action: manipulation;
+    }
+
+    body {
+      background:
+        radial-gradient(circle at 50% -10%, rgba(91,127,255,0.12), transparent 30%),
+        linear-gradient(180deg, #090910 0%, #06060a 100%);
+    }
+
+    #app {
+      position: fixed;
+      inset: 0;
+      overflow: hidden;
+    }
+
+    /* ───────────────────────── HEADER / HUD ───────────────────────── */
+    #header {
+      position: fixed;
+      inset: 0 0 auto 0;
+      height: var(--header-h);
+      z-index: 80;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      justify-content: space-between;
+      padding: 0 12px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(8,8,14,0.72);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .brand-badge {
+      width: 24px;
+      height: 24px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      color: white;
+      font-weight: 800;
+      font-size: 11px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      box-shadow: 0 8px 24px rgba(91,127,255,0.36);
+      flex: 0 0 auto;
+    }
+
+    .brand-copy {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    .brand-title {
+      font-size: 12px;
+      line-height: 1;
+      font-weight: 800;
+      letter-spacing: 0.11em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .brand-sub {
+      margin-top: 3px;
+      font-family: 'DM Mono', monospace;
+      font-size: 9px;
+      line-height: 1;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .chip-row {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .chip {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.02);
+      color: var(--muted);
+      border-radius: 999px;
+      padding: 6px 10px;
+      line-height: 1;
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 0.04em;
+      cursor: pointer;
+      transition: 160ms ease;
+      white-space: nowrap;
+    }
+
+    .chip:hover,
+    .chip.active {
+      color: var(--accent);
+      border-color: rgba(91,127,255,0.5);
+      background: rgba(91,127,255,0.10);
+    }
+
+    #close-focus {
+      width: 34px;
+      height: 34px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      font-size: 16px;
+      padding: 0;
+      opacity: 0;
+      pointer-events: none;
+      transform: scale(0.9);
+    }
+
+    #close-focus.visible {
+      opacity: 1;
+      pointer-events: auto;
+      transform: scale(1);
+    }
+
+    #side-panels {
+      position: fixed;
+      inset: calc(var(--header-h) + 10px) 10px auto auto;
+      z-index: 85;
+      display: grid;
+      gap: 10px;
+      width: min(320px, calc(100vw - 20px));
+      pointer-events: none;
+    }
+
+    .hud-panel {
+      pointer-events: auto;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-radius: 16px;
+      padding: 12px;
+      box-shadow: var(--shadow-soft);
+    }
+
+    .hud-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+
+    .hud-title {
+      font-size: 11px;
+      line-height: 1;
+      font-weight: 800;
+      letter-spacing: 0.10em;
+      text-transform: uppercase;
+    }
+
+    .hud-sub {
+      font-family: 'DM Mono', monospace;
+      font-size: 9px;
+      color: var(--muted);
+      letter-spacing: 0.05em;
+    }
+
+    .debug-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .metric {
+      border: 1px solid rgba(255,255,255,0.05);
+      background: rgba(255,255,255,0.02);
+      border-radius: 10px;
+      padding: 9px 10px;
+    }
+
+    .metric-label {
+      font-family: 'DM Mono', monospace;
+      font-size: 9px;
+      color: var(--muted);
+      letter-spacing: 0.05em;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+    }
+
+    .metric-value {
+      font-family: 'DM Mono', monospace;
+      font-size: 12px;
+      color: var(--text);
+    }
+
+    .control-stack {
+      display: grid;
+      gap: 10px;
+    }
+
+    .control-row {
+      display: grid;
+      gap: 6px;
+    }
+
+    .control-label-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .control-label {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      color: var(--muted);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .control-value {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      color: var(--accent);
+    }
+
+    input[type="range"] {
+      width: 100%;
+      appearance: none;
+      -webkit-appearance: none;
+      height: 2px;
+      background: rgba(255,255,255,0.12);
+      border-radius: 999px;
+      outline: none;
+      cursor: pointer;
+    }
+
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 12px;
+      height: 12px;
+      border-radius: 999px;
+      background: var(--accent);
+      box-shadow: 0 0 0 3px rgba(91,127,255,0.18);
+    }
+
+    .button-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    /* ───────────────────────── SCROLL VIEWPORT ───────────────────────── */
+    #viewport {
+      position: fixed;
+      inset: var(--header-h) 0 0 0;
+      overflow-x: hidden;
+      overflow-y: auto;
+      z-index: 1;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior-y: contain;
+      perspective: 1200px;
+      perspective-origin: 50% 45%;
+      background: transparent;
+    }
+
+    #viewport.focus-locked {
+      overflow: hidden;
+      touch-action: none;
+    }
+
+    #scene {
+      position: relative;
+      min-height: 5600px;
+      transform-style: preserve-3d;
+    }
+
+    /* ───────────────────────── ENVIRONMENT LAYERS ───────────────────────── */
+    .env-layer {
+      position: absolute;
+      inset-inline: 0;
+      pointer-events: none;
+      will-change: transform, opacity, filter;
+      transform-style: preserve-3d;
+    }
+
+    #env-far {
+      inset: 0 0 auto 0;
+      height: 2200px;
+      z-index: 0;
+      background:
+        radial-gradient(circle at 50% 16%, rgba(113,145,255,0.16), transparent 22%),
+        radial-gradient(circle at 18% 30%, rgba(165,123,250,0.08), transparent 24%),
+        radial-gradient(circle at 80% 38%, rgba(0,225,255,0.07), transparent 20%),
+        linear-gradient(180deg, rgba(255,255,255,0.02), transparent 35%),
+        linear-gradient(180deg, #11111a 0%, #090910 30%, #06060a 100%);
+      overflow: hidden;
+    }
+
+    #env-far::before,
+    #env-far::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background-repeat: repeat;
+      opacity: 0.34;
+      mix-blend-mode: screen;
+    }
+
+    #env-far::before {
+      background-image:
+        radial-gradient(circle at 20% 20%, rgba(255,255,255,0.75) 0 1px, transparent 1.5px),
+        radial-gradient(circle at 70% 30%, rgba(255,255,255,0.6) 0 1px, transparent 1.5px),
+        radial-gradient(circle at 50% 80%, rgba(255,255,255,0.65) 0 1px, transparent 1.5px);
+      background-size: 280px 280px, 360px 360px, 420px 420px;
+      transform: translateZ(-200px) scale(1.2);
+    }
+
+    #env-far::after {
+      background-image:
+        linear-gradient(90deg, transparent, rgba(91,127,255,0.08), transparent),
+        linear-gradient(transparent, rgba(255,255,255,0.02), transparent);
+      background-size: 420px 100%, 100% 240px;
+      opacity: 0.28;
+    }
+
+    #env-b {
+      top: 460px;
+      height: 1900px;
+      z-index: 2;
+      overflow: hidden;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      filter: saturate(1.02);
+    }
+
+    #env-b .chamber {
+      position: relative;
+      width: min(1200px, 94vw);
+      height: 1400px;
+      border-radius: 36px;
+      border: 1px solid rgba(255,255,255,0.05);
+      background:
+        radial-gradient(circle at 50% 10%, rgba(140,165,255,0.14), transparent 18%),
+        linear-gradient(180deg, rgba(255,255,255,0.025), transparent 26%),
+        linear-gradient(180deg, rgba(20,20,32,0.95), rgba(9,9,16,0.9));
+      box-shadow:
+        inset 0 0 0 1px rgba(255,255,255,0.03),
+        0 120px 220px rgba(0,0,0,0.45);
+      overflow: hidden;
+      transform-style: preserve-3d;
+    }
+
+    #env-b .chamber::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(90deg, transparent 0, rgba(255,255,255,0.02) 20%, transparent 42%, rgba(255,255,255,0.02) 64%, transparent 100%),
+        linear-gradient(180deg, rgba(255,255,255,0.02), transparent 26%),
+        linear-gradient(180deg, transparent 68%, rgba(255,255,255,0.025) 100%);
+      opacity: 0.7;
+    }
+
+    #env-b .back-wall {
+      position: absolute;
+      inset: 90px 90px 380px;
+      border-radius: 24px;
+      border: 1px solid rgba(255,255,255,0.04);
+      background:
+        radial-gradient(circle at 50% 18%, rgba(91,127,255,0.18), transparent 16%),
+        linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.00) 34%),
+        linear-gradient(180deg, #161628 0%, #10101b 100%);
+      box-shadow:
+        inset 0 0 0 1px rgba(255,255,255,0.02),
+        0 50px 140px rgba(0,0,0,0.28);
+      overflow: hidden;
+    }
+
+    #env-b .back-wall::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(90deg, rgba(255,255,255,0.02) 0 1px, transparent 1px),
+        linear-gradient(180deg, rgba(255,255,255,0.015) 0 1px, transparent 1px);
+      background-size: 90px 100%, 100% 90px;
+      opacity: 0.5;
+    }
+
+    #env-b .portal {
+      position: absolute;
+      left: 50%;
+      top: 110px;
+      width: min(520px, 50vw);
+      height: 280px;
+      transform: translateX(-50%);
+      border-radius: 28px;
+      background:
+        radial-gradient(circle at 50% 40%, rgba(126,161,255,0.38), rgba(91,127,255,0.15) 22%, rgba(0,0,0,0) 60%),
+        linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0));
+      filter: blur(0.2px);
+      opacity: 0.92;
+    }
+
+    #env-b .side-light {
+      position: absolute;
+      top: 220px;
+      width: 12px;
+      height: 480px;
+      border-radius: 999px;
+      background: linear-gradient(180deg, rgba(255,255,255,0), rgba(91,127,255,0.44), rgba(255,255,255,0));
+      opacity: 0.55;
+      filter: blur(1.2px);
+    }
+
+    #env-b .side-light.left { left: 56px; }
+    #env-b .side-light.right { right: 56px; }
+
+    #floor-layer {
+      top: 1320px;
+      height: 1800px;
+      z-index: 4;
+      overflow: visible;
+      transform-origin: 50% 0%;
+    }
+
+    #floor-plane {
+      position: absolute;
+      left: 50%;
+      top: 0;
+      width: min(1400px, 110vw);
+      height: 1320px;
+      transform: translateX(-50%) perspective(1200px) rotateX(72deg);
+      transform-origin: 50% 0%;
+      border-radius: 26px;
+      background:
+        linear-gradient(90deg, rgba(255,255,255,0.015) 0 1px, transparent 1px),
+        linear-gradient(180deg, rgba(255,255,255,0.02) 0 1px, transparent 1px),
+        radial-gradient(circle at 50% 0%, rgba(126,161,255,0.18), transparent 28%),
+        linear-gradient(180deg, #1a1a28 0%, #0d0d14 35%, #08080d 100%);
+      background-size: 74px 100%, 100% 74px, 100% 100%, 100% 100%;
+      border: 1px solid rgba(255,255,255,0.04);
+      box-shadow:
+        0 80px 160px rgba(0,0,0,0.36),
+        inset 0 0 0 1px rgba(255,255,255,0.02);
+      overflow: hidden;
+    }
+
+    #floor-plane::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.04), transparent 18%),
+        radial-gradient(circle at 50% 10%, rgba(126,161,255,0.18), transparent 36%);
+      opacity: 0.8;
+      mix-blend-mode: screen;
+      pointer-events: none;
+    }
+
+    #floor-fog {
+      position: absolute;
+      left: 50%;
+      top: 220px;
+      width: min(1350px, 100vw);
+      height: 1200px;
+      transform: translateX(-50%);
+      background: radial-gradient(circle at 50% 0%, rgba(8,8,12,0.05), rgba(8,8,12,0.52) 55%, rgba(8,8,12,0.84) 100%);
+      filter: blur(20px);
+      opacity: 0.34;
+    }
+
+    #vignette {
+      position: fixed;
+      inset: var(--header-h) 0 0 0;
+      z-index: 12;
+      pointer-events: none;
+      background: radial-gradient(circle at 50% 42%, rgba(0,0,0,0) 0%, rgba(0,0,0,0.08) 48%, rgba(0,0,0,0.36) 100%);
+      opacity: 0.85;
+      will-change: opacity;
+    }
+
+    #atmosphere {
+      position: fixed;
+      inset: var(--header-h) 0 0 0;
+      z-index: 13;
+      pointer-events: none;
+      background:
+        linear-gradient(180deg, rgba(14,14,22,0.00) 0%, rgba(14,14,22,0.10) 40%, rgba(6,6,10,0.26) 100%),
+        radial-gradient(circle at 50% 22%, rgba(126,161,255,0.09), transparent 30%);
+      opacity: 0.55;
+      will-change: opacity;
+    }
+
+    /* ───────────────────────── GRID CONTENT ───────────────────────── */
+    #content-layer {
+      position: absolute;
+      inset: 1520px 0 auto 0;
+      z-index: 10;
+      display: flex;
+      justify-content: center;
+      pointer-events: none;
+    }
+
+    #content-shell {
+      width: min(1460px, 100%);
+      padding: 0 var(--side-pad) 120px;
+      pointer-events: none;
+    }
+
+    #hero-copy {
+      width: min(860px, 100%);
+      margin: 0 auto 26px;
+      text-align: center;
+      pointer-events: none;
+    }
+
+    #hero-kicker {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.46);
+      margin-bottom: 10px;
+    }
+
+    #hero-title {
+      font-size: clamp(28px, 4vw, 60px);
+      line-height: 0.92;
+      font-weight: 800;
+      letter-spacing: -0.04em;
+      margin-bottom: 12px;
+    }
+
+    #hero-text {
+      max-width: 720px;
+      margin: 0 auto;
+      color: rgba(255,255,255,0.58);
+      font-size: clamp(13px, 1.2vw, 17px);
+      line-height: 1.5;
+    }
+
+    #grid-window {
+      position: relative;
+      min-height: 2000px;
+      pointer-events: none;
+    }
+
+    #grid-inner {
+      position: relative;
+      columns: 4;
+      column-gap: var(--gap);
+      pointer-events: auto;
+      will-change: transform;
+      transform-origin: center center;
+      transition: none;
+    }
+
+    .asset-card {
+      break-inside: avoid;
+      position: absolute;
+      width: calc((100% - (3 * var(--gap))) / 4);
+      border-radius: var(--radius);
+      overflow: hidden;
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      cursor: pointer;
+      will-change: transform, opacity, box-shadow, filter;
+      transform-origin: center center;
+      box-shadow: 0 14px 40px rgba(0,0,0,0.18);
+      pointer-events: auto;
+      contain: layout paint;
+    }
+
+    .asset-card.hoverable:hover {
+      box-shadow: 0 22px 56px rgba(0,0,0,0.24);
+    }
+
+    .asset-card.focus-card {
+      z-index: 40;
+      box-shadow: var(--shadow-focus);
+    }
+
+    .asset-card.focus-card .asset-overlay-default {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+
+    .asset-card.focus-card .asset-overlay-preview {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .asset-card.dimmed {
+      opacity: 0.7;
+    }
+
+    .asset-media {
+      position: relative;
+      width: 100%;
+      overflow: hidden;
+      background: #08080f;
+      isolation: isolate;
+    }
+
+    .asset-media > img,
+    .asset-media > video {
+      width: 100%;
+      height: 100%;
+      display: block;
+      object-fit: cover;
+      transform: scale(1.001);
+      pointer-events: none;
+    }
+
+    .asset-media::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg, rgba(255,255,255,0.02), transparent 22%);
+      pointer-events: none;
+    }
+
+    .asset-overlay-default,
+    .asset-overlay-preview {
+      position: absolute;
+      inset: auto 0 0 0;
+      z-index: 4;
+      pointer-events: none;
+      transition: 220ms ease;
+    }
+
+    .asset-overlay-default {
+      padding: 10px;
+      background: linear-gradient(to top, rgba(8,8,12,0.78), rgba(8,8,12,0));
+    }
+
+    .asset-overlay-preview {
+      padding: 20px 18px 18px;
+      background: linear-gradient(to top, rgba(8,8,12,0.94), rgba(8,8,12,0.54) 28%, rgba(8,8,12,0));
+      opacity: 0;
+      transform: translateY(14px);
+    }
+
+    .asset-title {
+      font-size: 11px;
+      line-height: 1.05;
+      font-weight: 700;
+    }
+
+    .asset-meta {
+      margin-top: 4px;
+      font-family: 'DM Mono', monospace;
+      font-size: 8px;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+
+    .preview-kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+      font-family: 'DM Mono', monospace;
+      font-size: 9px;
+      color: rgba(255,255,255,0.5);
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .preview-title {
+      font-size: clamp(16px, 1.9vw, 24px);
+      line-height: 0.96;
+      font-weight: 800;
+      margin-bottom: 7px;
+      max-width: 88%;
+    }
+
+    .preview-meta {
+      font-family: 'DM Mono', monospace;
+      font-size: 10px;
+      line-height: 1.4;
+      color: rgba(255,255,255,0.64);
+      max-width: 92%;
+    }
+
+    .preview-controls {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      margin-top: 16px;
+      opacity: 0.94;
+    }
+
+    .control-pill {
+      width: 34px;
+      height: 34px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.08);
+      display: grid;
+      place-items: center;
+      font-size: 12px;
+      color: var(--text);
+      flex: 0 0 auto;
+    }
+
+    .control-track {
+      position: relative;
+      flex: 1 1 auto;
+      height: 4px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.18);
+      overflow: hidden;
+    }
+
+    .control-fill {
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 36%;
+      background: rgba(255,255,255,0.74);
+      border-radius: inherit;
+    }
+
+    .asset-frame {
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.05);
+      pointer-events: none;
+      z-index: 5;
+    }
+
+    #virtual-window-guide {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    .window-band {
+      position: absolute;
+      left: 0;
+      right: 0;
+      border-radius: 18px;
+      border: 1px dashed rgba(124,255,178,0.26);
+      background: rgba(124,255,178,0.04);
+      opacity: 0;
+      transition: 180ms ease;
+    }
+
+    #grid-inner.debug-window .window-band {
+      opacity: 1;
+    }
+
+    /* Focus mask around target area */
+    #focus-mask {
+      position: fixed;
+      inset: var(--header-h) 0 0 0;
+      z-index: 30;
+      pointer-events: none;
+      opacity: 0;
+      background: radial-gradient(circle at center, rgba(0,0,0,0) 0%, rgba(0,0,0,0.09) 30%, rgba(0,0,0,0.45) 72%, rgba(0,0,0,0.68) 100%);
+      will-change: opacity;
+    }
+
+    #target-matte-top,
+    #target-matte-bottom {
+      position: fixed;
+      z-index: 31;
+      pointer-events: none;
+      opacity: 0;
+      left: 0;
+      width: 0;
+    }
+
+    #target-matte-top {
+      background: linear-gradient(to bottom, rgba(0,0,0,0.76), rgba(0,0,0,0.22) 55%, rgba(0,0,0,0));
+    }
+
+    #target-matte-bottom {
+      background: linear-gradient(to top, rgba(0,0,0,0.76), rgba(0,0,0,0.22) 55%, rgba(0,0,0,0));
+    }
+
+    #bottom-spacer {
+      height: 120px;
+    }
+
+    /* ───────────────────────── MOBILE ───────────────────────── */
+    @media (max-width: 1180px) {
+      .asset-card {
+        width: calc((100% - (2 * var(--gap))) / 3);
+      }
+    }
+
+    @media (max-width: 860px) {
+      #side-panels {
+        position: fixed;
+        inset: auto 10px 10px 10px;
+        width: auto;
+        grid-template-columns: 1fr;
+      }
+
+      #debug-panel {
+        display: none;
+      }
+
+      .asset-card {
+        width: calc((100% - var(--gap)) / 2);
+      }
+
+      #hero-title {
+        font-size: clamp(24px, 7vw, 42px);
+      }
+    }
+
+    @media (max-width: 620px) {
+      #header {
+        padding: 0 10px;
+      }
+
+      .brand-sub,
+      #anchor-row {
+        display: none;
+      }
+
+      .chip {
+        padding: 6px 8px;
+        font-size: 9px;
+      }
+
+      #hero-copy {
+        margin-bottom: 18px;
+      }
+
+      .asset-card {
+        width: calc((100% - var(--gap)) / 2);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <header id="header">
+      <div class="brand">
+        <div class="brand-badge">C</div>
+        <div class="brand-copy">
+          <div class="brand-title">CDAPROD · IMMERSIVE EXPLORER</div>
+          <div class="brand-sub">REAL SCROLL · CAMERA DERIVATION · VIRTUALIZED WINDOW LAB</div>
+        </div>
+      </div>
+
+      <div class="header-right">
+        <div class="chip-row" id="anchor-row">
+          <button class="chip" data-anchor="0">Top</button>
+          <button class="chip" data-anchor="0.24">Env B</button>
+          <button class="chip" data-anchor="0.42">Floor</button>
+          <button class="chip" data-anchor="0.62">Grid</button>
+          <button class="chip" data-anchor="0.90">Deep</button>
+        </div>
+        <button class="chip" id="toggle-window">Window</button>
+        <button class="chip" id="close-focus">✕</button>
+      </div>
+    </header>
+
+    <div id="side-panels">
+      <section class="hud-panel" id="debug-panel">
+        <div class="hud-head">
+          <div>
+            <div class="hud-title">Scroll Camera</div>
+            <div class="hud-sub">real viewport metrics</div>
+          </div>
+          <div class="hud-sub" id="mount-count">mount 0</div>
+        </div>
+        <div class="debug-grid">
+          <div class="metric"><div class="metric-label">scrollTop</div><div class="metric-value" id="metric-scroll">0</div></div>
+          <div class="metric"><div class="metric-label">progress</div><div class="metric-value" id="metric-progress">0.000</div></div>
+          <div class="metric"><div class="metric-label">velocity</div><div class="metric-value" id="metric-velocity">0</div></div>
+          <div class="metric"><div class="metric-label">direction</div><div class="metric-value" id="metric-direction">0</div></div>
+          <div class="metric"><div class="metric-label">envB y</div><div class="metric-value" id="metric-envb">0</div></div>
+          <div class="metric"><div class="metric-label">floor y</div><div class="metric-value" id="metric-floor">0</div></div>
+          <div class="metric"><div class="metric-label">floor scale</div><div class="metric-value" id="metric-floor-scale">1.000</div></div>
+          <div class="metric"><div class="metric-label">window</div><div class="metric-value" id="metric-window">0-0</div></div>
+        </div>
+      </section>
+
+      <section class="hud-panel">
+        <div class="hud-head">
+          <div>
+            <div class="hud-title">Environment Controls</div>
+            <div class="hud-sub">separate the world planes</div>
+          </div>
+        </div>
+        <div class="control-stack">
+          <div class="control-row">
+            <div class="control-label-row"><div class="control-label">Env B Depth</div><div class="control-value" id="val-envb-depth">0.22</div></div>
+            <input id="envb-depth" type="range" min="0.05" max="0.60" step="0.01" value="0.22" />
+          </div>
+          <div class="control-row">
+            <div class="control-label-row"><div class="control-label">Floor Depth</div><div class="control-value" id="val-floor-depth">0.42</div></div>
+            <input id="floor-depth" type="range" min="0.10" max="0.90" step="0.01" value="0.42" />
+          </div>
+          <div class="control-row">
+            <div class="control-label-row"><div class="control-label">Far Env Depth</div><div class="control-value" id="val-far-depth">0.10</div></div>
+            <input id="far-depth" type="range" min="0.00" max="0.30" step="0.01" value="0.10" />
+          </div>
+          <div class="control-row">
+            <div class="control-label-row"><div class="control-label">Floor Scale</div><div class="control-value" id="val-floor-scale-range">0.040</div></div>
+            <input id="floor-scale-range" type="range" min="0.000" max="0.120" step="0.002" value="0.040" />
+          </div>
+          <div class="control-row">
+            <div class="control-label-row"><div class="control-label">Fog Strength</div><div class="control-value" id="val-fog">0.180</div></div>
+            <input id="fog-strength" type="range" min="0.000" max="0.500" step="0.005" value="0.180" />
+          </div>
+        </div>
+        <div class="button-grid">
+          <button class="chip" id="reset-controls">Reset</button>
+          <button class="chip" id="toggle-focus-mode">Focus Demo</button>
+        </div>
+      </section>
+    </div>
+
+    <div id="viewport">
+      <div id="scene">
+        <div id="env-far" class="env-layer"></div>
+
+        <div id="env-b" class="env-layer">
+          <div class="chamber">
+            <div class="portal"></div>
+            <div class="side-light left"></div>
+            <div class="side-light right"></div>
+            <div class="back-wall"></div>
+          </div>
+        </div>
+
+        <div id="floor-layer" class="env-layer">
+          <div id="floor-plane"></div>
+          <div id="floor-fog"></div>
+        </div>
+
+        <div id="content-layer">
+          <div id="content-shell">
+            <div id="hero-copy">
+              <div id="hero-kicker">immersive scroll viewport</div>
+              <h1 id="hero-title">Manual scroll drives camera depth while the virtualized grid stays real.</h1>
+              <p id="hero-text">
+                This lab uses a true scroll container. Env Far, Env B, Floor, and the mounted grid window each derive motion from scroll state independently,
+                so you can tune spatial separation now instead of faking it with button-only scene jumps.
+              </p>
+            </div>
+
+            <div id="grid-window">
+              <div id="virtual-window-guide">
+                <div class="window-band" id="mounted-band"></div>
+              </div>
+              <div id="grid-inner"></div>
+            </div>
+
+            <div id="bottom-spacer"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="vignette"></div>
+    <div id="atmosphere"></div>
+    <div id="focus-mask"></div>
+    <div id="target-matte-top"></div>
+    <div id="target-matte-bottom"></div>
+  </div>
+
+  <script>
+    const ASSET_COUNT = 220;
+    const GAP = 8;
+    const DEFAULT_COLUMNS = () => {
+      if (window.innerWidth <= 860) return 2;
+      if (window.innerWidth <= 1180) return 3;
+      return 4;
+    };
+
+    const STATE = {
+      envFarDepth: 0.10,
+      envBDepth: 0.22,
+      floorDepth: 0.42,
+      floorScaleRange: 0.040,
+      fogStrength: 0.180,
+      columns: DEFAULT_COLUMNS(),
+      virtualizationOverscan: 1.2,
+      focusOpen: false,
+      focusId: null,
+      focusTargetRect: null,
+      scrollTop: 0,
+      lastScrollTop: 0,
+      lastTime: performance.now(),
+      velocity: 0,
+      direction: 0,
+      contentHeight: 1,
+      viewportHeight: 1,
+      progress: 0,
+      mountedStart: 0,
+      mountedEnd: 0,
+      virtualDebug: false,
+      assets: []
+    };
+
+    const ELS = {
+      viewport: document.getElementById('viewport'),
+      scene: document.getElementById('scene'),
+      envFar: document.getElementById('env-far'),
+      envB: document.getElementById('env-b'),
+      floorLayer: document.getElementById('floor-layer'),
+      floorPlane: document.getElementById('floor-plane'),
+      floorFog: document.getElementById('floor-fog'),
+      vignette: document.getElementById('vignette'),
+      atmosphere: document.getElementById('atmosphere'),
+      gridInner: document.getElementById('grid-inner'),
+      gridWindow: document.getElementById('grid-window'),
+      mountedBand: document.getElementById('mounted-band'),
+      focusMask: document.getElementById('focus-mask'),
+      targetMatteTop: document.getElementById('target-matte-top'),
+      targetMatteBottom: document.getElementById('target-matte-bottom'),
+      closeFocus: document.getElementById('close-focus'),
+      mountCount: document.getElementById('mount-count'),
+      metricScroll: document.getElementById('metric-scroll'),
+      metricProgress: document.getElementById('metric-progress'),
+      metricVelocity: document.getElementById('metric-velocity'),
+      metricDirection: document.getElementById('metric-direction'),
+      metricEnvB: document.getElementById('metric-envb'),
+      metricFloor: document.getElementById('metric-floor'),
+      metricFloorScale: document.getElementById('metric-floor-scale'),
+      metricWindow: document.getElementById('metric-window'),
+      anchorButtons: [...document.querySelectorAll('[data-anchor]')],
+      toggleWindow: document.getElementById('toggle-window'),
+      toggleFocusMode: document.getElementById('toggle-focus-mode'),
+      resetControls: document.getElementById('reset-controls'),
+      sliders: {
+        envFarDepth: document.getElementById('far-depth'),
+        envBDepth: document.getElementById('envb-depth'),
+        floorDepth: document.getElementById('floor-depth'),
+        floorScaleRange: document.getElementById('floor-scale-range'),
+        fogStrength: document.getElementById('fog-strength')
+      },
+      sliderValues: {
+        envFarDepth: document.getElementById('val-far-depth'),
+        envBDepth: document.getElementById('val-envb-depth'),
+        floorDepth: document.getElementById('val-floor-depth'),
+        floorScaleRange: document.getElementById('val-floor-scale-range'),
+        fogStrength: document.getElementById('val-fog')
+      }
+    };
+
+    function lerp(a, b, t) {
+      return a + (b - a) * t;
+    }
+
+    function clamp(v, min, max) {
+      return Math.min(max, Math.max(min, v));
+    }
+
+    function format(num, digits = 3) {
+      return Number(num).toFixed(digits);
+    }
+
+    function kindFor(index) {
+      const n = index % 8;
+      if (n === 0 || n === 5) return 'VID';
+      if (n === 3) return 'AUD';
+      if (n === 6) return 'DOC';
+      return 'IMG';
+    }
+
+    function typeFor(index) {
+      const n = index % 7;
+      if (n === 0 || n === 4) return 'wide';
+      if (n === 1 || n === 5) return 'tall';
+      if (n === 3) return 'audio';
+      return 'sq';
+    }
+
+    function metaFor(index) {
+      const kind = kindFor(index);
+      const size = (1.1 + ((index * 13) % 90) / 10).toFixed(1);
+      return `${kind} · ${size}MB · 2026-03-${String((index % 28) + 1).padStart(2, '0')}`;
+    }
+
+    function titleFor(index) {
+      const words = [
+        'Workbench Study', 'Camera Rig', 'Floor Reflection', 'Garage Orbit', 'Preview Surface',
+        'System Frame', 'Night Console', 'Grid Passage', 'Signal Window', 'Studio Note',
+        'Mounted Sensor', 'Control Surface', 'Scene Anchor', 'Visual Cache', 'Index Object'
+      ];
+      return words[index % words.length] + ' ' + String(index + 1).padStart(3, '0');
+    }
+
+    function buildAssets() {
+      STATE.assets = Array.from({ length: ASSET_COUNT }, (_, index) => {
+        const type = typeFor(index);
+        const ratio = type === 'tall' ? 9 / 16 : type === 'sq' ? 1 : 16 / 9;
+        const kind = kindFor(index);
+        const title = titleFor(index);
+        const meta = metaFor(index);
+        const mediaSeed = `imm-${index + 1}`;
+        return {
+          id: `asset-${index + 1}`,
+          index,
+          type,
+          ratio,
+          kind,
+          title,
+          meta,
+          media: type === 'audio'
+            ? null
+            : `https://picsum.photos/seed/${mediaSeed}/${type === 'tall' ? '720/1280' : type === 'sq' ? '900/900' : '1280/720'}`
+        };
+      });
+    }
+
+    function getColumnCount() {
+      if (window.innerWidth <= 860) return 2;
+      if (window.innerWidth <= 1180) return 3;
+      return 4;
+    }
+
+    function layoutAssets() {
+      STATE.columns = getColumnCount();
+      const shellWidth = ELS.gridWindow.clientWidth || ELS.gridWindow.getBoundingClientRect().width;
+      const innerWidth = Math.max(0, shellWidth);
+      const cardWidth = (innerWidth - GAP * (STATE.columns - 1)) / STATE.columns;
+      const heights = Array(STATE.columns).fill(0);
+      const xPositions = Array.from({ length: STATE.columns }, (_, c) => c * (cardWidth + GAP));
+
+      for (const asset of STATE.assets) {
+        const col = heights.indexOf(Math.min(...heights));
+        const mediaHeight = asset.type === 'audio'
+          ? 96
+          : Math.round(cardWidth / asset.ratio);
+        const totalHeight = mediaHeight;
+
+        asset.layout = {
+          width: cardWidth,
+          mediaHeight,
+          totalHeight,
+          x: xPositions[col],
+          y: heights[col]
+        };
+
+        heights[col] += totalHeight + GAP;
+      }
+
+      const totalHeight = Math.max(...heights, 0);
+      ELS.gridInner.style.height = `${totalHeight}px`;
+      ELS.gridWindow.style.height = `${totalHeight}px`;
+      STATE.contentHeight = totalHeight;
+    }
+
+    function getVisibleWindow() {
+      const scrollTop = STATE.scrollTop;
+      const viewportHeight = STATE.viewportHeight;
+      const overscanPx = viewportHeight * STATE.virtualizationOverscan;
+      const minY = Math.max(0, scrollTop - overscanPx - getGridSceneOffset());
+      const maxY = scrollTop + viewportHeight + overscanPx - getGridSceneOffset();
+      return { minY, maxY };
+    }
+
+    function getGridSceneOffset() {
+      const contentLayer = document.getElementById('content-layer');
+      const top = parseFloat(getComputedStyle(contentLayer).top) || 0;
+      return top;
+    }
+
+    function mountVisibleAssets() {
+      const { minY, maxY } = getVisibleWindow();
+      const visible = STATE.assets.filter(asset => {
+        const top = asset.layout.y;
+        const bottom = top + asset.layout.totalHeight;
+        return bottom >= minY && top <= maxY;
+      });
+
+      if (!visible.length) {
+        ELS.gridInner.innerHTML = '';
+        STATE.mountedStart = 0;
+        STATE.mountedEnd = 0;
+        ELS.mountCount.textContent = 'mount 0';
+        return;
+      }
+
+      STATE.mountedStart = visible[0].index;
+      STATE.mountedEnd = visible[visible.length - 1].index;
+      ELS.mountCount.textContent = `mount ${visible.length}`;
+
+      const html = visible.map(asset => renderAssetCard(asset)).join('');
+      ELS.gridInner.innerHTML = html;
+
+      for (const node of ELS.gridInner.querySelectorAll('.asset-card')) {
+        const id = node.dataset.id;
+        node.addEventListener('click', () => openFocus(id));
+        if (!STATE.focusOpen) node.classList.add('hoverable');
+      }
+
+      if (STATE.focusOpen && STATE.focusId) {
+        syncFocusedCardState();
+      }
+
+      drawMountedBand(visible);
+    }
+
+    function renderAssetCard(asset) {
+      const { x, y, width, mediaHeight } = asset.layout;
+      const previewIcon = asset.kind === 'AUD' ? '♪' : '▶';
+      const muteIcon = asset.kind === 'AUD' ? '•' : '🔇';
+      const media = asset.type === 'audio'
+        ? `
+          <div class="asset-media" style="height:${mediaHeight}px; display:grid; place-items:center; background:
+            radial-gradient(circle at 50% 35%, rgba(91,127,255,0.14), transparent 35%),
+            linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0));">
+            <div style="display:flex; flex-direction:column; align-items:center; gap:8px;">
+              <div style="width:30px; height:30px; border-radius:999px; border:1px solid rgba(255,255,255,0.12); display:grid; place-items:center; color:rgba(255,255,255,0.58); font-size:13px;">♪</div>
+              <div style="font-family:'DM Mono', monospace; font-size:9px; color:rgba(255,255,255,0.42); letter-spacing:0.10em;">AUDIO</div>
+            </div>
+          </div>`
+        : `<div class="asset-media" style="height:${mediaHeight}px;"><img src="${asset.media}" alt="${escapeHtml(asset.title)}" draggable="false" /></div>`;
+
+      return `
+        <article
+          class="asset-card"
+          data-id="${asset.id}"
+          data-index="${asset.index}"
+          data-kind="${asset.kind}"
+          style="left:${x}px; top:${y}px; width:${width}px; height:${mediaHeight}px;"
+        >
+          ${media}
+          <div class="asset-overlay-default">
+            <div class="asset-title">${escapeHtml(asset.title)}</div>
+            <div class="asset-meta">${escapeHtml(asset.meta)}</div>
+          </div>
+          <div class="asset-overlay-preview">
+            <div class="preview-kicker"><span>Preview</span><span style="width:4px;height:4px;border-radius:999px;background:rgba(255,255,255,0.18);"></span><span>${asset.kind}</span></div>
+            <div class="preview-title">${escapeHtml(asset.title)}</div>
+            <div class="preview-meta">${escapeHtml(asset.meta)}</div>
+            <div class="preview-controls">
+              <div class="control-pill">${previewIcon}</div>
+              <div class="control-track"><div class="control-fill"></div></div>
+              <div class="control-pill" style="width:30px;height:30px;font-size:11px;">${muteIcon}</div>
+            </div>
+          </div>
+          <div class="asset-frame"></div>
+        </article>
+      `;
+    }
+
+    function escapeHtml(str) {
+      return String(str)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+    }
+
+    function deriveScrollState(now = performance.now()) {
+      const scrollTop = ELS.viewport.scrollTop;
+      const viewportHeight = ELS.viewport.clientHeight;
+      const scrollRange = Math.max(1, ELS.scene.scrollHeight - viewportHeight);
+      const dt = Math.max(1, now - STATE.lastTime);
+      const delta = scrollTop - STATE.lastScrollTop;
+      const velocity = delta / dt * 16.6667;
+
+      STATE.viewportHeight = viewportHeight;
+      STATE.scrollTop = scrollTop;
+      STATE.progress = clamp(scrollTop / scrollRange, 0, 1);
+      STATE.velocity = velocity;
+      STATE.direction = delta === 0 ? 0 : delta > 0 ? 1 : -1;
+      STATE.lastScrollTop = scrollTop;
+      STATE.lastTime = now;
+    }
+
+    function deriveEnvironmentState() {
+      const p = STATE.progress;
+      const st = STATE.scrollTop;
+      return {
+        envFarY: st * STATE.envFarDepth,
+        envBY: st * STATE.envBDepth,
+        floorY: st * STATE.floorDepth,
+        floorScale: 1 + p * STATE.floorScaleRange,
+        fogOpacity: 0.10 + p * STATE.fogStrength,
+        vignetteOpacity: 0.72 + p * 0.22,
+        atmosphereOpacity: 0.38 + p * 0.30,
+        chamberTilt: lerp(0, -4, p),
+        floorTiltComp: lerp(72, 76, p)
+      };
+    }
+
+    function applyEnvironmentState(env) {
+      ELS.envFar.style.transform = `translate3d(0, ${-env.envFarY}px, -200px)`;
+      ELS.envB.style.transform = `translate3d(0, ${-env.envBY}px, -80px)`;
+      ELS.floorLayer.style.transform = `translate3d(0, ${-env.floorY}px, 0)`;
+      ELS.floorPlane.style.transform = `translateX(-50%) perspective(1200px) rotateX(${env.floorTiltComp}deg) scale(${env.floorScale})`;
+      ELS.floorFog.style.opacity = format(env.fogOpacity, 3);
+      ELS.vignette.style.opacity = format(env.vignetteOpacity, 3);
+      ELS.atmosphere.style.opacity = format(env.atmosphereOpacity, 3);
+
+      const chamber = ELS.envB.querySelector('.chamber');
+      chamber.style.transform = `translateZ(-70px) rotateX(${env.chamberTilt}deg)`;
+    }
+
+    function updateMetrics(env) {
+      ELS.metricScroll.textContent = Math.round(STATE.scrollTop).toString();
+      ELS.metricProgress.textContent = format(STATE.progress, 3);
+      ELS.metricVelocity.textContent = format(STATE.velocity, 1);
+      ELS.metricDirection.textContent = String(STATE.direction);
+      ELS.metricEnvB.textContent = Math.round(env.envBY).toString();
+      ELS.metricFloor.textContent = Math.round(env.floorY).toString();
+      ELS.metricFloorScale.textContent = format(env.floorScale, 3);
+      ELS.metricWindow.textContent = `${STATE.mountedStart}-${STATE.mountedEnd}`;
+    }
+
+    function drawMountedBand(visibleAssets) {
+      if (!visibleAssets.length) {
+        ELS.mountedBand.style.opacity = '0';
+        return;
+      }
+      const top = visibleAssets[0].layout.y;
+      const bottom = visibleAssets[visibleAssets.length - 1].layout.y + visibleAssets[visibleAssets.length - 1].layout.totalHeight;
+      ELS.mountedBand.style.top = `${top}px`;
+      ELS.mountedBand.style.height = `${Math.max(40, bottom - top)}px`;
+      ELS.mountedBand.style.opacity = STATE.virtualDebug ? '1' : '0';
+    }
+
+    function syncSlidersToState() {
+      const map = {
+        envFarDepth: 2,
+        envBDepth: 2,
+        floorDepth: 2,
+        floorScaleRange: 3,
+        fogStrength: 3
+      };
+      for (const key of Object.keys(ELS.sliders)) {
+        ELS.sliders[key].value = STATE[key];
+        ELS.sliderValues[key].textContent = format(STATE[key], map[key]);
+      }
+    }
+
+    function wireControls() {
+      for (const [key, input] of Object.entries(ELS.sliders)) {
+        input.addEventListener('input', () => {
+          STATE[key] = Number(input.value);
+          syncSlidersToState();
+          tick();
+        });
+      }
+
+      ELS.resetControls.addEventListener('click', () => {
+        STATE.envFarDepth = 0.10;
+        STATE.envBDepth = 0.22;
+        STATE.floorDepth = 0.42;
+        STATE.floorScaleRange = 0.040;
+        STATE.fogStrength = 0.180;
+        syncSlidersToState();
+        tick();
+      });
+
+      ELS.toggleWindow.addEventListener('click', () => {
+        STATE.virtualDebug = !STATE.virtualDebug;
+        ELS.gridInner.classList.toggle('debug-window', STATE.virtualDebug);
+        ELS.toggleWindow.classList.toggle('active', STATE.virtualDebug);
+        drawMountedBand(STATE.assets.filter(asset => asset.index >= STATE.mountedStart && asset.index <= STATE.mountedEnd));
+      });
+
+      ELS.anchorButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+          const progress = Number(btn.dataset.anchor || 0);
+          const range = Math.max(1, ELS.scene.scrollHeight - ELS.viewport.clientHeight);
+          ELS.viewport.scrollTo({ top: range * progress, behavior: 'smooth' });
+        });
+      });
+
+      ELS.toggleFocusMode.addEventListener('click', () => {
+        if (STATE.focusOpen) {
+          closeFocus();
+          return;
+        }
+        const centerIndex = clamp(Math.floor((STATE.mountedStart + STATE.mountedEnd) / 2), 0, STATE.assets.length - 1);
+        const asset = STATE.assets[centerIndex];
+        if (!asset) return;
+        requestAnimationFrame(() => openFocus(asset.id));
+      });
+
+      ELS.closeFocus.addEventListener('click', closeFocus);
+      ELS.focusMask.addEventListener?.('click', closeFocus);
+    }
+
+    function computeFocusTargetRect(asset) {
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const ratio = asset.ratio;
+      const sidePad = Math.max(12, Math.round(vw * 0.02));
+      const topSafe = 12 + 36 + 14;
+      const bottomSafe = 16;
+      const availableW = vw - sidePad * 2;
+      const availableH = vh - topSafe - bottomSafe;
+      const uiReserve = Math.min(116, Math.max(94, vh * 0.15));
+
+      let mediaW = availableW;
+      let mediaH = mediaW / ratio;
+      if (mediaH + uiReserve > availableH) {
+        mediaH = availableH - uiReserve;
+        mediaW = mediaH * ratio;
+      }
+
+      const width = Math.round(mediaW);
+      const height = Math.round(mediaH);
+      const totalHeight = Math.round(mediaH + uiReserve);
+      const left = Math.round((vw - width) / 2);
+      const top = Math.round(topSafe + ((availableH - totalHeight) / 2));
+      return {
+        left,
+        top,
+        width,
+        height,
+        totalHeight,
+        uiReserve
+      };
+    }
+
+    function getMountedCardNode(id) {
+      return ELS.gridInner.querySelector(`.asset-card[data-id="${id}"]`);
+    }
+
+    function syncFocusedCardState() {
+      if (!STATE.focusOpen || !STATE.focusId) return;
+      const node = getMountedCardNode(STATE.focusId);
+      if (!node) {
+        closeFocus(true);
+        return;
+      }
+      const allNodes = [...ELS.gridInner.querySelectorAll('.asset-card')];
+      allNodes.forEach(card => {
+        const isTarget = card.dataset.id === STATE.focusId;
+        card.classList.toggle('focus-card', isTarget);
+        card.classList.toggle('dimmed', !isTarget);
+        card.classList.toggle('hoverable', !STATE.focusOpen);
+      });
+    }
+
+    function openFocus(id) {
+      if (STATE.focusOpen) return;
+      const node = getMountedCardNode(id);
+      if (!node) return;
+
+      const asset = STATE.assets.find(a => a.id === id);
+      if (!asset) return;
+
+      STATE.focusOpen = true;
+      STATE.focusId = id;
+      STATE.focusTargetRect = computeFocusTargetRect(asset);
+
+      ELS.closeFocus.classList.add('visible');
+      ELS.closeFocus.style.pointerEvents = 'auto';
+      ELS.toggleFocusMode.classList.add('active');
+      ELS.toggleFocusMode.textContent = 'Close Demo';
+      ELS.viewport.classList.add('focus-locked');
+      ELS.focusMask.style.opacity = '1';
+
+      syncFocusedCardState();
+      applyFocusTargetMattes(1);
+
+      const defaultOverlay = node.querySelector('.asset-overlay-default');
+      const previewOverlay = node.querySelector('.asset-overlay-preview');
+      defaultOverlay.style.opacity = '0';
+      defaultOverlay.style.transform = 'translateY(10px)';
+      previewOverlay.style.opacity = '1';
+      previewOverlay.style.transform = 'translateY(0)';
+    }
+
+    function closeFocus(silent = false) {
+      if (!STATE.focusOpen) return;
+      STATE.focusOpen = false;
+      STATE.focusId = null;
+      STATE.focusTargetRect = null;
+
+      ELS.closeFocus.classList.remove('visible');
+      ELS.closeFocus.style.pointerEvents = 'none';
+      ELS.toggleFocusMode.classList.remove('active');
+      ELS.toggleFocusMode.textContent = 'Focus Demo';
+      ELS.viewport.classList.remove('focus-locked');
+      ELS.focusMask.style.opacity = '0';
+      ELS.targetMatteTop.style.opacity = '0';
+      ELS.targetMatteBottom.style.opacity = '0';
+
+      [...ELS.gridInner.querySelectorAll('.asset-card')].forEach(node => {
+        node.classList.remove('focus-card', 'dimmed');
+        node.classList.add('hoverable');
+        const defaultOverlay = node.querySelector('.asset-overlay-default');
+        const previewOverlay = node.querySelector('.asset-overlay-preview');
+        defaultOverlay.style.opacity = '';
+        defaultOverlay.style.transform = '';
+        previewOverlay.style.opacity = '';
+        previewOverlay.style.transform = '';
+      });
+
+      if (!silent) tick();
+    }
+
+    function applyFocusTargetMattes(progress = 1) {
+      if (!STATE.focusOpen || !STATE.focusTargetRect) {
+        ELS.targetMatteTop.style.opacity = '0';
+        ELS.targetMatteBottom.style.opacity = '0';
+        return;
+      }
+      const target = STATE.focusTargetRect;
+      const unused = Math.max(0, target.totalHeight - target.height);
+      const split = unused / 2;
+      const opacity = 0.82 * progress;
+
+      ELS.targetMatteTop.style.left = `${target.left}px`;
+      ELS.targetMatteTop.style.top = `${target.top}px`;
+      ELS.targetMatteTop.style.width = `${target.width}px`;
+      ELS.targetMatteTop.style.height = `${split}px`;
+      ELS.targetMatteTop.style.opacity = `${opacity}`;
+
+      ELS.targetMatteBottom.style.left = `${target.left}px`;
+      ELS.targetMatteBottom.style.top = `${target.top + target.totalHeight - split}px`;
+      ELS.targetMatteBottom.style.width = `${target.width}px`;
+      ELS.targetMatteBottom.style.height = `${split}px`;
+      ELS.targetMatteBottom.style.opacity = `${opacity}`;
+    }
+
+    function tick(now = performance.now()) {
+      deriveScrollState(now);
+      const env = deriveEnvironmentState();
+      applyEnvironmentState(env);
+      mountVisibleAssets();
+      updateMetrics(env);
+      if (STATE.focusOpen) applyFocusTargetMattes(1);
+    }
+
+    function relayoutAndRefresh() {
+      layoutAssets();
+      closeFocus(true);
+      tick();
+    }
+
+    function init() {
+      buildAssets();
+      syncSlidersToState();
+      wireControls();
+      relayoutAndRefresh();
+
+      ELS.viewport.addEventListener('scroll', () => tick(), { passive: true });
+      window.addEventListener('resize', () => {
+        relayoutAndRefresh();
+      });
+
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeFocus();
+      });
+
+      requestAnimationFrame(function raf(now) {
+        tick(now);
+        requestAnimationFrame(raf);
+      });
+    }
+
+    init();
+  </script>
+</body>
+</html>

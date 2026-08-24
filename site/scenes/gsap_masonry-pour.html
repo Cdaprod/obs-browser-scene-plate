@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>POUR — Masonry Flow</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400&family=Syne:wght@400;700;800&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0a0a0b;
+    --surface: #111113;
+    --border: rgba(255,255,255,0.06);
+    --text: #e8e6e3;
+    --muted: rgba(232,230,227,0.35);
+    --accent: #c8ff5a;
+    --accent2: #5a8fff;
+    --gutter: 6px;
+  }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Mono', monospace;
+    overflow: hidden;
+  }
+
+  /* ── HUD ─────────────────────────────────── */
+  #hud {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    gap: 32px;
+    padding: 16px 28px;
+    background: linear-gradient(to bottom, rgba(10,10,11,0.98) 60%, transparent);
+    pointer-events: none;
+  }
+
+  #hud h1 {
+    font-family: 'Syne', sans-serif;
+    font-weight: 800;
+    font-size: 18px;
+    letter-spacing: 0.12em;
+    color: var(--accent);
+    white-space: nowrap;
+  }
+
+  .hud-spacer { flex: 1; }
+
+  .hud-meta {
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    line-height: 1.8;
+    text-align: right;
+  }
+
+  .hud-meta span { color: var(--text); }
+
+  /* ── SLIDER DOCK ─────────────────────────── */
+  #dock {
+    position: fixed;
+    bottom: 28px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 14px 28px;
+    background: rgba(17,17,19,0.92);
+    border: 1px solid var(--border);
+    border-radius: 100px;
+    backdrop-filter: blur(20px);
+    box-shadow: 0 8px 40px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.04);
+    pointer-events: all;
+  }
+
+  .dock-label {
+    font-size: 9px;
+    letter-spacing: 0.14em;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+
+  .dock-val {
+    font-size: 13px;
+    letter-spacing: 0.06em;
+    color: var(--accent);
+    min-width: 28px;
+    text-align: center;
+  }
+
+  #density-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 260px;
+    height: 2px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+    position: relative;
+  }
+
+  #density-slider::-webkit-slider-runnable-track {
+    height: 2px;
+    background: linear-gradient(
+      to right,
+      var(--accent) 0%,
+      var(--accent) var(--pct, 50%),
+      rgba(255,255,255,0.1) var(--pct, 50%)
+    );
+    border-radius: 2px;
+  }
+
+  #density-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--accent);
+    margin-top: -7px;
+    box-shadow: 0 0 12px rgba(200,255,90,0.5);
+    transition: box-shadow 0.15s;
+  }
+
+  #density-slider:active::-webkit-slider-thumb {
+    box-shadow: 0 0 24px rgba(200,255,90,0.8);
+  }
+
+  /* ── GALLERY CONTAINER ───────────────────── */
+  #gallery {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 72px var(--gutter) 100px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255,255,255,0.1) transparent;
+  }
+
+  #gallery::-webkit-scrollbar { width: 4px; }
+  #gallery::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+
+  /* ── MASONRY STAGE ───────────────────────── */
+  #stage {
+    position: relative;
+    width: 100%;
+    /* height set by JS */
+  }
+
+  /* ── CARDS ───────────────────────────────── */
+  .card {
+    position: absolute;
+    border-radius: 4px;
+    overflow: hidden;
+    will-change: transform;
+    /* transition set dynamically */
+  }
+
+  .card-inner {
+    width: 100%;
+    height: 100%;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .card canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+
+  .card-overlay {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      to bottom,
+      transparent 50%,
+      rgba(0,0,0,0.5) 100%
+    );
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+
+  .card:hover .card-overlay { opacity: 1; }
+
+  .card-label {
+    position: absolute;
+    bottom: 7px;
+    left: 9px;
+    font-size: 8px;
+    letter-spacing: 0.1em;
+    color: rgba(255,255,255,0.6);
+    opacity: 0;
+    transition: opacity 0.3s;
+    text-transform: uppercase;
+  }
+
+  .card:hover .card-label { opacity: 1; }
+
+  /* subtle shimmer border */
+  .card::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 4px;
+    border: 1px solid rgba(255,255,255,0.06);
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+
+<div id="hud">
+  <h1>POUR</h1>
+  <div class="hud-spacer"></div>
+  <div class="hud-meta">
+    COLUMNS <span id="meta-cols">—</span><br>
+    CARDS <span id="meta-cards">—</span>
+  </div>
+</div>
+
+<div id="gallery">
+  <div id="stage"></div>
+</div>
+
+<div id="dock">
+  <span class="dock-label">DENSE</span>
+  <input type="range" id="density-slider" min="1" max="100" value="40">
+  <span class="dock-label">OPEN</span>
+  <span class="dock-val" id="col-display">—</span>
+</div>
+
+<script>
+// ─── CONFIG ─────────────────────────────────────────────────────────────────
+const CARD_COUNT   = 60;
+const GUTTER       = 6;
+const MIN_COLS     = 2;
+const MAX_COLS     = 12;
+const SPRING_MS    = 540;   // transition duration
+const SPRING_EASE  = 'cubic-bezier(0.34, 1.22, 0.64, 1)'; // springy settle
+const FLOW_STAGGER = 12;    // ms per card stagger (pour effect)
+
+// ─── ASPECT RATIOS: the "DNA" of each card ──────────────────────────────────
+// A mix of portrait, landscape, square — fixed forever
+const RATIOS = [
+  1/1, 4/3, 3/4, 16/9, 9/16, 1/1, 4/3, 2/3, 3/2, 1/1,
+  16/9, 1/1, 3/4, 4/3, 9/16, 3/2, 1/1, 2/3, 4/3, 1/1,
+  16/9, 3/4, 1/1, 4/3, 9/16, 1/1, 3/2, 1/1, 4/3, 2/3,
+  1/1, 16/9, 3/4, 1/1, 4/3, 9/16, 3/2, 4/3, 1/1, 2/3,
+  16/9, 1/1, 3/4, 4/3, 1/1, 9/16, 3/2, 1/1, 4/3, 2/3,
+  1/1, 16/9, 3/4, 1/1, 4/3, 9/16, 3/2, 4/3, 1/1, 2/3,
+];
+
+// ─── PALETTE SEEDS: each card gets a unique procedural look ─────────────────
+const PALETTES = [
+  ['#1a1a2e','#16213e','#0f3460','#533483'],
+  ['#2d1b69','#11998e','#38ef7d','#1a1a2e'],
+  ['#0d0d0d','#1a1a1a','#2d2d2d','#3d3d3d'],
+  ['#1e3a5f','#0a2342','#2196f3','#0d47a1'],
+  ['#1a0533','#3d0066','#6600cc','#9933ff'],
+  ['#0a1628','#1b3a5c','#2e5f8a','#4a8db8'],
+  ['#1f1f1f','#2a2a2a','#353535','#c8ff5a'],
+  ['#0d1117','#161b22','#21262d','#5a8fff'],
+  ['#1a0a00','#3d1a00','#8b3a00','#e85d00'],
+  ['#001a0d','#003319','#006632','#00cc66'],
+];
+
+// ─── STATE ──────────────────────────────────────────────────────────────────
+let currentCols  = 5;
+let cardElements = [];
+let positions    = [];  // [{x, y, w, h}]
+let animating    = false;
+
+const stage   = document.getElementById('stage');
+const gallery = document.getElementById('gallery');
+const slider  = document.getElementById('density-slider');
+const colDisp = document.getElementById('col-display');
+const metaCols  = document.getElementById('meta-cols');
+const metaCards = document.getElementById('meta-cards');
+
+// ─── PROCEDURAL CARD TEXTURE (canvas-drawn) ─────────────────────────────────
+function drawCardTexture(canvas, seed, ratio) {
+  const W = canvas.width  = 400;
+  const H = canvas.height = Math.round(400 / ratio);
+  const ctx = canvas.getContext('2d');
+
+  const pal = PALETTES[seed % PALETTES.length];
+  const rng  = seededRng(seed * 1337 + 7);
+
+  // base gradient
+  const grd = ctx.createLinearGradient(0, 0, W * rng(), H);
+  grd.addColorStop(0, pal[0]);
+  grd.addColorStop(0.4 + rng() * 0.3, pal[1]);
+  grd.addColorStop(0.7 + rng() * 0.2, pal[2]);
+  grd.addColorStop(1, pal[3] || pal[0]);
+  ctx.fillStyle = grd;
+  ctx.fillRect(0, 0, W, H);
+
+  // noise grain
+  const img = ctx.createImageData(W, H);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const n = (rng() - 0.5) * 28;
+    img.data[i]     = clamp(parseInt(img.data[i]) + n);
+    img.data[i+1]   = clamp(parseInt(img.data[i+1]) + n);
+    img.data[i+2]   = clamp(parseInt(img.data[i+2]) + n);
+    img.data[i+3]   = 255;
+  }
+  // We skip the noise for perf — just add subtle radial shapes
+  
+  // soft radial blobs
+  const blobs = 2 + Math.floor(rng() * 3);
+  for (let b = 0; b < blobs; b++) {
+    const bx = rng() * W;
+    const by = rng() * H;
+    const br = W * (0.2 + rng() * 0.5);
+    const grd2 = ctx.createRadialGradient(bx, by, 0, bx, by, br);
+    const hue = Math.floor(rng() * 360);
+    grd2.addColorStop(0, `hsla(${hue},60%,60%,0.18)`);
+    grd2.addColorStop(1, 'transparent');
+    ctx.fillStyle = grd2;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  // thin horizontal scan-line lines (subtle)
+  ctx.strokeStyle = 'rgba(255,255,255,0.025)';
+  ctx.lineWidth   = 1;
+  for (let y = 0; y < H; y += 4) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(W, y);
+    ctx.stroke();
+  }
+
+  // label text
+  ctx.font = `bold ${Math.floor(W * 0.06)}px 'DM Mono', monospace`;
+  ctx.fillStyle = 'rgba(255,255,255,0.12)';
+  ctx.fillText(`ASSET ${String(seed+1).padStart(3,'0')}`, 12, H - 14);
+}
+
+function seededRng(seed) {
+  let s = seed;
+  return () => {
+    s = (s * 1664525 + 1013904223) & 0xffffffff;
+    return ((s >>> 0) / 0xffffffff);
+  };
+}
+
+function clamp(v) { return Math.max(0, Math.min(255, v)); }
+
+// ─── BUILD CARDS ────────────────────────────────────────────────────────────
+function buildCards() {
+  for (let i = 0; i < CARD_COUNT; i++) {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.dataset.index = i;
+
+    const inner = document.createElement('div');
+    inner.className = 'card-inner';
+
+    const canvas = document.createElement('canvas');
+    drawCardTexture(canvas, i, RATIOS[i % RATIOS.length]);
+
+    const overlay = document.createElement('div');
+    overlay.className = 'card-overlay';
+
+    const label = document.createElement('div');
+    label.className = 'card-label';
+    label.textContent = `${String(i+1).padStart(3,'0')} · ${ratioLabel(RATIOS[i % RATIOS.length])}`;
+
+    inner.appendChild(canvas);
+    inner.appendChild(overlay);
+    inner.appendChild(label);
+    card.appendChild(inner);
+    stage.appendChild(card);
+    cardElements.push(card);
+  }
+  metaCards.textContent = CARD_COUNT;
+}
+
+function ratioLabel(r) {
+  if (Math.abs(r - 1)       < 0.05) return '1:1';
+  if (Math.abs(r - 4/3)     < 0.05) return '4:3';
+  if (Math.abs(r - 3/4)     < 0.05) return '3:4';
+  if (Math.abs(r - 16/9)    < 0.05) return '16:9';
+  if (Math.abs(r - 9/16)    < 0.05) return '9:16';
+  if (Math.abs(r - 3/2)     < 0.05) return '3:2';
+  if (Math.abs(r - 2/3)     < 0.05) return '2:3';
+  return '?:?';
+}
+
+// ─── MASONRY LAYOUT ─────────────────────────────────────────────────────────
+// Returns array of {x, y, w, h} for each card
+function computeLayout(cols) {
+  const stageW     = stage.offsetWidth;
+  const colW       = (stageW - GUTTER * (cols + 1)) / cols;
+  const colHeights = new Array(cols).fill(GUTTER);  // running height per column
+
+  return cardElements.map((_, i) => {
+    const ratio = RATIOS[i % RATIOS.length];
+    const w     = colW;
+    const h     = Math.round(w / ratio);
+
+    // pick shortest column
+    let minCol = 0;
+    for (let c = 1; c < cols; c++) {
+      if (colHeights[c] < colHeights[minCol]) minCol = c;
+    }
+
+    const x = GUTTER + minCol * (colW + GUTTER);
+    const y = colHeights[minCol];
+    colHeights[minCol] += h + GUTTER;
+
+    return { x, y, w, h };
+  });
+}
+
+function totalHeight(layout) {
+  return Math.max(...layout.map(p => p.y + p.h)) + GUTTER;
+}
+
+// ─── APPLY LAYOUT WITH FLIP ANIMATION ────────────────────────────────────────
+function applyLayout(newPositions, animate = true) {
+  const prevPositions = positions.slice();
+  positions = newPositions;
+
+  // Update stage height immediately
+  stage.style.height = totalHeight(newPositions) + 'px';
+
+  cardElements.forEach((card, i) => {
+    const np = newPositions[i];
+    const pp = prevPositions[i];
+
+    if (!animate || !pp) {
+      // First paint — place instantly
+      card.style.transition = 'none';
+      card.style.left   = np.x + 'px';
+      card.style.top    = np.y + 'px';
+      card.style.width  = np.w + 'px';
+      card.style.height = np.h + 'px';
+      card.style.transform = 'none';
+      return;
+    }
+
+    // FLIP technique:
+    // 1. Set new geometry instantly (no transition)
+    card.style.transition = 'none';
+    card.style.left   = np.x + 'px';
+    card.style.top    = np.y + 'px';
+    card.style.width  = np.w + 'px';
+    card.style.height = np.h + 'px';
+
+    // 2. Compute delta from old → new center
+    const dx = pp.x - np.x;
+    const dy = pp.y - np.y;
+    const scaleX = pp.w / np.w;
+    const scaleY = pp.h / np.h;
+
+    // Snap back visually to old position/size via transform
+    card.style.transform = `translate(${dx}px, ${dy}px) scale(${scaleX}, ${scaleY})`;
+    card.style.transformOrigin = 'top left';
+
+    // Stagger based on vertical travel — cards that pour down stagger later
+    const travel = np.y - pp.y;  // positive = moving down, negative = moving up
+    const stagger = Math.max(0, travel > 0 ? travel * 0.12 : -travel * 0.06);
+    const delay   = Math.min(stagger, 180);
+
+    // 3. Force reflow
+    void card.offsetHeight;
+
+    // 4. Animate to identity transform (real position)
+    card.style.transition = `transform ${SPRING_MS}ms ${SPRING_EASE} ${delay}ms, width ${SPRING_MS}ms ${SPRING_EASE} ${delay}ms, height ${SPRING_MS}ms ${SPRING_EASE} ${delay}ms`;
+    card.style.transform = 'translate(0,0) scale(1,1)';
+  });
+}
+
+// ─── COLUMNS FROM SLIDER ─────────────────────────────────────────────────────
+// slider: 1 (left=open) → 100 (right=dense)
+// We invert: left = many columns (open), right = few columns (dense)
+// Actually: right = open (large cards, fewer cols), left = dense (small cards, many cols)
+function sliderToCols(val) {
+  // val 1 = rightmost (open, few cols) → 2 cols
+  // val 100 = leftmost (dense, many cols) → MAX_COLS
+  // slider goes 1→100 left→right, so we use (101 - val)
+  const t = (val - 1) / 99;  // 0 at left (dense), 1 at right (open)
+  // t=0 → MAX_COLS, t=1 → MIN_COLS
+  return Math.round(MAX_COLS - t * (MAX_COLS - MIN_COLS));
+}
+
+// ─── SLIDER LOGIC WITH DEBOUNCE ──────────────────────────────────────────────
+let sliderRaf = null;
+let lastCols  = -1;
+
+function onSliderInput() {
+  const val   = parseInt(slider.value);
+  const pct   = ((val - 1) / 99 * 100).toFixed(1);
+  slider.style.setProperty('--pct', pct + '%');
+
+  const cols = sliderToCols(val);
+  colDisp.textContent = cols;
+
+  if (cols !== lastCols) {
+    lastCols = cols;
+    if (sliderRaf) cancelAnimationFrame(sliderRaf);
+    sliderRaf = requestAnimationFrame(() => {
+      metaCols.textContent = cols;
+      const newLayout = computeLayout(cols);
+      applyLayout(newLayout, true);
+    });
+  }
+}
+
+slider.addEventListener('input', onSliderInput);
+
+// ─── RESIZE HANDLER ──────────────────────────────────────────────────────────
+let resizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    const cols = sliderToCols(parseInt(slider.value));
+    const newLayout = computeLayout(cols);
+    applyLayout(newLayout, false);
+  }, 60);
+});
+
+// ─── INIT ────────────────────────────────────────────────────────────────────
+function init() {
+  buildCards();
+
+  // Set initial slider visuals
+  const initVal = parseInt(slider.value);
+  const initPct = ((initVal - 1) / 99 * 100).toFixed(1);
+  slider.style.setProperty('--pct', initPct + '%');
+
+  const initCols = sliderToCols(initVal);
+  lastCols = initCols;
+  colDisp.textContent = initCols;
+  metaCols.textContent = initCols;
+
+  // First layout (instant)
+  const layout = computeLayout(initCols);
+  positions = new Array(CARD_COUNT).fill(null);
+  applyLayout(layout, false);
+}
+
+// Wait for fonts + layout
+requestAnimationFrame(() => requestAnimationFrame(init));
+</script>
+</body>
+</html>

@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Asset Wave Loader</title>
+
+<style>
+html,body{
+  margin:0;
+  width:100%;
+  height:100%;
+  overflow:hidden;
+  background:#000;
+}
+canvas{
+  position:fixed;
+  inset:0;
+  width:100%;
+  height:100%;
+  display:block;
+  background:#000;
+}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<script>
+(() => {
+  const canvas = document.getElementById("c");
+  const gl = canvas.getContext("webgl", {
+    antialias: false,
+    alpha: false,
+    premultipliedAlpha: false,
+    preserveDrawingBuffer: false,
+    powerPreference: "high-performance"
+  });
+
+  if (!gl) {
+    document.body.innerHTML =
+      '<pre style="color:#fff;background:#000;padding:16px;font:14px monospace;white-space:pre-wrap;">WebGL not supported</pre>';
+    return;
+  }
+
+  const DPR_CAP = 1.0;
+
+  function resize() {
+    const dpr = Math.min(window.devicePixelRatio || 1, DPR_CAP);
+    const w = Math.max(1, Math.round(window.innerWidth * dpr));
+    const h = Math.max(1, Math.round(window.innerHeight * dpr));
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+    }
+    gl.viewport(0, 0, w, h);
+  }
+
+  window.addEventListener("resize", resize, { passive: true });
+  resize();
+
+  const vert = `
+attribute vec2 a;
+varying vec2 uv;
+
+void main() {
+  uv = a * .5 + .5;
+  gl_Position = vec4(a, 0.0, 1.0);
+}
+`;
+
+  const frag = `
+precision mediump float;
+
+varying vec2 uv;
+uniform vec2 res;
+uniform float time;
+
+#define STEPS 26
+#define LAYERS 12
+
+float hash(vec2 p){
+  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+}
+
+float noise(vec2 p){
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+
+  float a = hash(i);
+  float b = hash(i + vec2(1.0, 0.0));
+  float c = hash(i + vec2(0.0, 1.0));
+  float d = hash(i + vec2(1.0, 1.0));
+
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+float fbm(vec2 p){
+  float v = 0.0;
+  float a = 0.5;
+  for(int i = 0; i < 4; i++){
+    v += a * noise(p);
+    p = p * 2.0 + vec2(1.7, 9.2);
+    a *= 0.5;
+  }
+  return v;
+}
+
+float waveHeight(vec2 p, float layer){
+  float t = time;
+  p *= mix(0.78, 1.34, layer);
+
+  float h = 0.0;
+  h += sin(p.x * 1.25 + t * 0.52 + layer * 4.2) * 0.18;
+  h += sin(p.y * 1.05 - t * 0.46 + layer * 5.4) * 0.12;
+  h += sin((p.x + p.y) * 0.78 + t * 0.30 + layer * 8.0) * 0.08;
+  h += (fbm(p * 0.72 + vec2(t * 0.045, -t * 0.03)) - 0.5) * 0.18;
+  return h;
+}
+
+vec3 cameraOrigin(){
+  float t = time;
+  return vec3(
+    sin(t * 0.10) * 0.08,
+    0.72 + sin(t * 0.13) * 0.02,
+    2.45
+  );
+}
+
+vec3 camRay(vec2 p){
+  vec3 ro = cameraOrigin();
+  vec3 ta = vec3(0.0, 0.04, -1.0);
+
+  vec3 ww = normalize(ta - ro);
+  vec3 uu = normalize(cross(ww, vec3(0.0, 1.0, 0.0)));
+  vec3 vv = cross(uu, ww);
+
+  return normalize(uu * p.x + vv * p.y + ww * 1.95);
+}
+
+float dotField(vec2 p, float density, float size){
+  vec2 cell = fract(p * density) - 0.5;
+  float d = length(cell);
+  return 1.0 - smoothstep(size, size + 0.12, d);
+}
+
+void main(){
+  vec2 p = uv * 2.0 - 1.0;
+  float aspect = res.x / max(1.0, res.y);
+  p.x *= aspect;
+
+  vec3 ro = cameraOrigin();
+  vec3 rd = camRay(p);
+
+  vec3 col = vec3(0.0);
+  float redEnergy = 0.0;
+  float whiteEnergy = 0.0;
+  float emberEnergy = 0.0;
+
+  for(int i = 0; i < STEPS; i++){
+    float fi = float(i) / float(STEPS - 1);
+    float z = mix(0.15, -3.4, fi);
+
+    float s = (z - ro.z) / rd.z;
+    if(s <= 0.0) continue;
+
+    vec3 pos = ro + rd * s;
+
+    for(int l = 0; l < LAYERS; l++){
+      float lf = float(l) / float(LAYERS - 1);
+
+      float h = waveHeight(pos.xz + vec2(0.0, lf * 0.38), lf) * mix(0.22, 0.92, lf);
+      float d = abs(pos.y - h);
+
+      float ridge = exp(-d * mix(95.0, 34.0, lf));
+
+      float dotsA = dotField(vec2(pos.x * 0.95, z * 0.86 + lf * 2.1), mix(26.0, 54.0, lf), mix(0.12, 0.22, lf));
+      float dotsB = dotField(vec2(pos.x * 1.25 + lf * 3.7, z * 0.70), mix(18.0, 34.0, lf), mix(0.13, 0.24, lf));
+      float dots = mix(dotsA, dotsB, 0.45);
+
+      float band = ridge * dots;
+      float depthFade = mix(1.05, 0.16, fi);
+
+      redEnergy += band * depthFade;
+
+      float crest = exp(-d * mix(180.0, 56.0, lf));
+      float crestSweep = 0.5 + 0.5 * sin(pos.x * 1.25 - z * 0.95 + time * 0.82 + lf * 5.6);
+      float hot = crest * crestSweep * smoothstep(0.22, 0.95, lf);
+      whiteEnergy += hot * depthFade;
+
+      float ember = ridge * (1.0 - dots) * 0.35;
+      emberEnergy += ember * depthFade * smoothstep(0.0, 0.75, 1.0 - fi);
+    }
+  }
+
+  vec3 base = mix(
+    vec3(0.08, 0.00, 0.015),
+    vec3(3.2, 0.16, 0.22),
+    clamp(redEnergy * 0.115, 0.0, 1.0)
+  );
+
+  vec3 glow = vec3(2.4, 1.45, 1.20) * redEnergy * 0.060;
+  vec3 hot  = vec3(1.65, 1.40, 1.32) * whiteEnergy * 0.070;
+  vec3 emberCol = vec3(0.90, 0.08, 0.10) * emberEnergy * 0.030;
+
+  float energy = clamp(redEnergy + whiteEnergy, 0.0, 1.0);
+  col = (base + glow + hot + emberCol) * energy;
+
+  float horizonBloom = smoothstep(0.68, 0.08, abs((uv.y - 0.50) * 1.35));
+  col += vec3(0.95, 0.10, 0.12) * horizonBloom * redEnergy * 0.020;
+  col += vec3(1.0, 0.96, 0.96) * horizonBloom * whiteEnergy * 0.018;
+
+  //float foregroundFog = smoothstep(0.82, -0.20, uv.y);
+  //col += vec3(0.09, 0.00, 0.012) * foregroundFog * 0.11;
+
+  float vign = 1.0 - dot(uv - 0.5, uv - 0.5) * 1.18;
+  col *= max(vign, 0.0);
+  
+  col *= smoothstep(0.02, 1.0, redEnergy);
+
+  col = 1.0 - exp(-col * 1.9);
+  col = pow(col, vec3(0.85));
+  col = max(col, vec3(0.0));
+
+  gl_FragColor = vec4(col, 1.0);
+}
+`;
+
+  function shader(type, src) {
+    const s = gl.createShader(type);
+    if (!s) throw new Error("createShader failed");
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+      const log = gl.getShaderInfoLog(s);
+      console.error(log);
+      gl.deleteShader(s);
+      throw new Error("shader compile fail: " + log);
+    }
+    return s;
+  }
+
+  function programFromSources(vsSrc, fsSrc) {
+    const p = gl.createProgram();
+    if (!p) throw new Error("createProgram failed");
+
+    const vs = shader(gl.VERTEX_SHADER, vsSrc);
+    const fs = shader(gl.FRAGMENT_SHADER, fsSrc);
+
+    gl.attachShader(p, vs);
+    gl.attachShader(p, fs);
+    gl.linkProgram(p);
+
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+      const log = gl.getProgramInfoLog(p);
+      console.error(log);
+      throw new Error("program link fail: " + log);
+    }
+
+    return p;
+  }
+
+  let program;
+  try {
+    program = programFromSources(vert, frag);
+  } catch (err) {
+    document.body.innerHTML =
+      '<pre style="color:#fff;background:#000;padding:16px;white-space:pre-wrap;font:14px monospace;">' +
+      String(err && err.stack ? err.stack : err) +
+      '</pre>';
+    throw err;
+  }
+
+  gl.useProgram(program);
+
+  const quad = new Float32Array([
+    -1, -1,
+     1, -1,
+    -1,  1,
+     1,  1
+  ]);
+
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
+
+  const a = gl.getAttribLocation(program, "a");
+  gl.enableVertexAttribArray(a);
+  gl.vertexAttribPointer(a, 2, gl.FLOAT, false, 0, 0);
+
+  const uRes = gl.getUniformLocation(program, "res");
+  const uTime = gl.getUniformLocation(program, "time");
+
+  let start = performance.now();
+
+  function frame(now) {
+    const t = (now - start) * 0.001;
+
+    gl.clearColor(0, 0, 0, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    gl.uniform2f(uRes, canvas.width, canvas.height);
+    gl.uniform1f(uTime, t);
+
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+    requestAnimationFrame(frame);
+  }
+
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

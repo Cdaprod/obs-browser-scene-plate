@@ -1,0 +1,383 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>404 — Lost in the Void</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:ital,wght@0,300;1,300&display=swap');
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      width: 100%; height: 100%;
+      background: #000;
+      overflow: hidden;
+      -webkit-user-select: none; user-select: none;
+    }
+
+    canvas {
+      position: fixed;
+      inset: 0;
+      width: 100vw; height: 100vh;
+      display: block;
+    }
+
+    /* ── UI LAYER ─────────────────────────────────── */
+    .ui {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+    }
+
+    .label-404 {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: clamp(120px, 25vw, 260px);
+      line-height: 0.88;
+      letter-spacing: -0.02em;
+      color: transparent;
+      background: linear-gradient(
+        160deg,
+        rgba(255,255,255,0.96) 0%,
+        rgba(180,160,255,0.85) 40%,
+        rgba(100,80,200,0.5) 100%
+      );
+      -webkit-background-clip: text;
+      background-clip: text;
+      text-shadow: none;
+      mix-blend-mode: screen;
+      /* subtle pulse */
+      animation: breathe 4.2s ease-in-out infinite;
+    }
+
+    .tagline {
+      margin-top: 28px;
+      font-family: 'DM Mono', monospace;
+      font-style: italic;
+      font-weight: 300;
+      font-size: clamp(11px, 1.6vw, 18px);
+      letter-spacing: 0.28em;
+      text-transform: uppercase;
+      color: rgba(160, 140, 255, 0.75);
+      mix-blend-mode: screen;
+      animation: fadein 2.4s ease 0.6s both;
+    }
+
+    .back-link {
+      pointer-events: all;
+      margin-top: 52px;
+      font-family: 'DM Mono', monospace;
+      font-weight: 300;
+      font-size: clamp(10px, 1.2vw, 14px);
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.35);
+      text-decoration: none;
+      border: 1px solid rgba(255,255,255,0.12);
+      padding: 12px 32px;
+      border-radius: 2px;
+      transition: color 0.3s, border-color 0.3s, background 0.3s;
+      animation: fadein 2.8s ease 1.2s both;
+      cursor: pointer;
+    }
+    .back-link:hover {
+      color: rgba(200, 180, 255, 0.95);
+      border-color: rgba(180, 140, 255, 0.4);
+      background: rgba(120, 80, 255, 0.08);
+    }
+
+    /* corner coords — editorial detail */
+    .coords {
+      position: fixed;
+      bottom: 24px;
+      left: 28px;
+      font-family: 'DM Mono', monospace;
+      font-weight: 300;
+      font-size: 10px;
+      letter-spacing: 0.18em;
+      color: rgba(255,255,255,0.18);
+      pointer-events: none;
+      z-index: 10;
+      animation: fadein 3.5s ease 2s both;
+    }
+    .coords span {
+      display: block;
+      line-height: 1.8;
+    }
+
+    .depth-badge {
+      position: fixed;
+      bottom: 24px;
+      right: 28px;
+      font-family: 'DM Mono', monospace;
+      font-weight: 300;
+      font-size: 10px;
+      letter-spacing: 0.18em;
+      color: rgba(160,130,255,0.3);
+      pointer-events: none;
+      z-index: 10;
+      animation: fadein 3.5s ease 2s both;
+      text-align: right;
+    }
+    .depth-badge span { display: block; line-height: 1.8; }
+
+    @keyframes breathe {
+      0%, 100% { opacity: 0.88; filter: brightness(1); }
+      50%       { opacity: 1.0;  filter: brightness(1.12); }
+    }
+    @keyframes fadein {
+      from { opacity: 0; transform: translateY(8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gl"></canvas>
+
+  <div class="ui">
+    <div class="label-404">404</div>
+    <div class="tagline">This page fell through the void</div>
+    <a class="back-link" href="/" onclick="history.back(); return false;">← Surface</a>
+  </div>
+
+  <div class="coords">
+    <span id="cx">X  —</span>
+    <span id="cy">Y  —</span>
+    <span id="cz">Z  —</span>
+  </div>
+  <div class="depth-badge">
+    <span id="dt">DEPTH  ——</span>
+    <span id="dp">SECTOR  ——</span>
+  </div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('gl');
+  let gl = canvas.getContext('webgl2', { antialias:false, alpha:false });
+  const IS2 = !!gl;
+  if (!gl) gl = canvas.getContext('webgl', { antialias:false, alpha:false });
+  if (!gl) { document.body.innerHTML='<p style="color:#fff;padding:2rem">WebGL unavailable</p>'; return; }
+
+  /* ── VERTEX ───────────────────────────────────── */
+  const VERT = `
+    attribute vec2 a_pos;
+    varying vec2 v_uv;
+    void main(){
+      v_uv = a_pos * 0.5 + 0.5;
+      gl_Position = vec4(a_pos, 0.0, 1.0);
+    }
+  `;
+
+  /* ── FRAGMENT — polar tunnel ──────────────────────
+     Technique: convert each pixel to polar (angle, radius).
+     Map 1/radius → a "depth" coordinate that increases toward
+     the center (far away). Add time to depth → continuous
+     forward motion with ZERO resets or jumps.
+     Twist angle with depth → spiral corridor feel.
+     Two ring frequencies layered → architectural depth.
+     This is the correct technique — pure math, no loops needed
+     for the motion itself.
+  ────────────────────────────────────────────────── */
+  const FRAG = `
+    precision highp float;
+    varying vec2 v_uv;
+    uniform vec2  u_res;
+    uniform float u_time;
+
+    #define PI  3.14159265358979
+    #define TAU 6.28318530717959
+
+    float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+
+    // Palette: dark-void base, violet walls, amber/ice accent light
+    vec3 palette(float depth, float angle){
+      // base hue cycles slowly with depth and time
+      float h = depth * 0.18 + u_time * 0.12;
+      vec3 amber  = vec3(1.00, 0.50, 0.06);
+      vec3 violet = vec3(0.30, 0.06, 0.85);
+      vec3 ice    = vec3(0.06, 0.65, 1.00);
+      float ta = sin(h) * 0.5 + 0.5;
+      float tb = sin(h * 0.61 + 1.9) * 0.5 + 0.5;
+      // angle-based warmth: top of tunnel warmer, bottom cooler
+      float angWarm = sin(angle + u_time * 0.08) * 0.5 + 0.5;
+      vec3 base = mix(mix(violet, amber, ta * 0.7), ice, tb * 0.3);
+      return base * (0.7 + 0.3 * angWarm);
+    }
+
+    void main(){
+      // aspect-correct NDC
+      vec2 uv = v_uv * 2.0 - 1.0;
+      uv.x *= u_res.x / u_res.y;
+
+      // camera drift — off-axis parallax
+      float sway = sin(u_time * 0.19) * 0.10;
+      float nod  = cos(u_time * 0.14) * 0.07;
+      uv -= vec2(sway, nod); // shift origin = camera drifts in tunnel
+
+      // ── polar coords ────────────────────────────
+      float radius = length(uv);
+      float angle  = atan(uv.y, uv.x); // -PI..PI
+
+      // depth: 1/radius means center = infinity (far end of tunnel)
+      // multiply by speed+time for continuous forward motion — NO fract, NO reset
+      float speed = 1.4;
+      float depth = 1.0 / max(radius, 0.001) + u_time * speed;
+
+      // twist: angle rotates as you go deeper — spiral corridor
+      // two frequencies so it doesn't feel mechanical
+      float twist = depth * 0.22 + sin(depth * 0.11) * 0.5;
+      float tAngle = angle + twist;
+
+      // ── tunnel walls ────────────────────────────
+      // In polar space, a tunnel ring is just a repeating band in radius.
+      // fract(depth * freq) gives bands that stream toward camera as depth grows.
+      // sin() of that gives smooth glowing bands instead of hard edges.
+
+      // primary ring frequency — main tunnel walls
+      float ringFreq1 = 2.8;
+      float ring1 = sin(fract(depth * ringFreq1) * TAU);
+
+      // secondary ring — inner concentric arch, offset in phase
+      float ringFreq2 = 2.8;
+      float ring2 = sin(fract(depth * ringFreq2 + 0.5) * TAU);
+
+      // angular modulation — makes walls look like they have geometry
+      // (panels, ribs) rather than being a perfect circle
+      float angMod = 0.82 + 0.18 * sin(tAngle * 5.0 + depth * 0.3);
+      float angMod2= 0.88 + 0.12 * cos(tAngle * 3.0 - depth * 0.2);
+
+      // glow from each ring: sharper = thinner bright lines
+      float sharpness = 18.0;
+      float g1 = pow(max(ring1 * angMod,  0.0), sharpness);
+      float g2 = pow(max(ring2 * angMod2, 0.0), sharpness) * 0.6;
+
+      // depth attenuation — far rings (large 1/r = large depth contribution)
+      // are attenuated by radius so the center isn't infinitely bright
+      float att = radius * 1.6; // 0 at center, ~1 at edge
+      float glow = (g1 + g2) * att;
+
+      // colour
+      vec3 col = palette(depth, tAngle) * glow;
+
+      // ── center void glow ────────────────────────
+      // light spilling from the vanishing point
+      float centerGlow = exp(-radius * 3.5);
+      col += palette(depth + 40.0, angle) * centerGlow * 0.25;
+
+      // ── void background ─────────────────────────
+      col += vec3(0.008, 0.003, 0.018);
+
+      // ── post ────────────────────────────────────
+      // filmic tone-map
+      col = col / (col + vec3(0.45));
+      col = pow(max(col,0.0), vec3(0.88));
+
+      // vignette
+      float vig = 1.0 - smoothstep(0.5, 1.35, length((v_uv*2.0-1.0) * vec2(0.75, 0.95)));
+      col *= vig;
+
+      // grain
+      col += (hash(v_uv * u_res + fract(u_time * 0.07)) - 0.5) * 0.014;
+
+      gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
+    }
+  `;
+
+  /* ── compile ──────────────────────────────────── */
+  const mk = (type, src) => {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    return s;
+  };
+  const prog = gl.createProgram();
+  gl.attachShader(prog, mk(gl.VERTEX_SHADER, VERT));
+  gl.attachShader(prog, mk(gl.FRAGMENT_SHADER, FRAG));
+  gl.linkProgram(prog);
+  if(!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+  gl.useProgram(prog);
+
+  /* ── geometry ─────────────────────────────────── */
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+    -1,-1,  1,-1, -1, 1,
+    -1, 1,  1,-1,  1, 1
+  ]), gl.STATIC_DRAW);
+  const aPos = gl.getAttribLocation(prog, 'a_pos');
+  gl.enableVertexAttribArray(aPos);
+  gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+  /* ── uniforms ─────────────────────────────────── */
+  const uRes  = gl.getUniformLocation(prog, 'u_res');
+  const uTime = gl.getUniformLocation(prog, 'u_time');
+
+  /* ── resize ───────────────────────────────────── */
+  const DPR = Math.min(window.devicePixelRatio || 1, 2);
+  const SCALE = 0.85; // slightly below native for perf
+  let lw=0, lh=0;
+  function resize(){
+    const w = Math.floor(innerWidth * DPR * SCALE);
+    const h = Math.floor(innerHeight * DPR * SCALE);
+    if(w===lw && h===lh) return;
+    lw=w; lh=h;
+    canvas.width=w; canvas.height=h;
+    gl.viewport(0,0,w,h);
+  }
+  window.addEventListener('resize', resize, {passive:true});
+  resize();
+
+  /* ── HUD ticker ───────────────────────────────── */
+  const cx = document.getElementById('cx');
+  const cy = document.getElementById('cy');
+  const cz = document.getElementById('cz');
+  const dt = document.getElementById('dt');
+  const dp = document.getElementById('dp');
+
+  const fmt = (n,d=2) => n.toFixed(d).padStart(7);
+  let sector = 0;
+
+  /* ── loop ─────────────────────────────────────── */
+  const t0 = performance.now();
+  let last = t0, lastRaf = t0;
+  const FRAME_MS = 1000/60;
+
+  function loop(now){
+    requestAnimationFrame(loop);
+    if(now - lastRaf < FRAME_MS * 0.9) return;
+    lastRaf = now;
+
+    resize();
+    const t = (now - t0) / 1000;
+
+    gl.uniform2f(uRes, canvas.width, canvas.height);
+    gl.uniform1f(uTime, t);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+    // update coord display
+    const spd   = t * 1.8;
+    const sway  = Math.sin(t * 0.23) * 0.12;
+    const nod   = Math.cos(t * 0.17) * 0.07;
+    if(Math.floor(t / 8) !== sector){
+      sector = Math.floor(t / 8);
+    }
+    cx.textContent = 'X  ' + fmt(sway,4);
+    cy.textContent = 'Y  ' + fmt(nod,4);
+    cz.textContent = 'Z  ' + fmt(spd,2);
+    dt.textContent = 'DEPTH   ' + fmt(spd * 3.2, 1) + 'm';
+    dp.textContent = 'SECTOR  ' + String(sector).padStart(4,'0');
+  }
+
+  requestAnimationFrame(loop);
+
+  canvas.addEventListener('webglcontextlost', e => e.preventDefault(), false);
+})();
+</script>
+</body>
+</html>

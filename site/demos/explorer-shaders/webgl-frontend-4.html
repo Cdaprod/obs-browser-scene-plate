@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Explorer — AssetGrid Transition System</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@800&family=DM+Mono:ital,wght@1,300;0,400&display=swap" rel="stylesheet">
+
+<!--
+════════════════════════════════════════════════════════════════════
+  ARCHITECTURE
+
+  DOM layer (interactive, permanent):
+    CardRegistry        map<id → CardNode>  — stable identity, never destroyed
+    CardNode.el         absolute-positioned .masonry-card shell
+    CardNode.overlay    DOM: badges, title, selector, preview state
+    CardNode.imgEl      real <img> with src / fallback / error handling
+
+  Motion layer (imperative, outside React):
+    LayoutEngine        pure function → {items:[{id,x,y,w,h}], stageH}
+    TransitionCoordinator
+      - snapshotRects() before layout commit  (offsetLeft/Top, not BCR)
+      - commitLayout()  writes card.style.left/top/width/height immediately
+      - runFLIP()       reads new rects, computes delta, sets inverse
+                        transform, then animates back to identity with
+                        Web Animations API (compositor-only, no layout)
+      Signal: card never visually jumps. It starts from where it was
+              and slides to where it now is — all in transform space.
+
+  WebGL stage (one shared context, zero per-card contexts):
+    SharedStageRenderer
+      - reads card.getBoundingClientRect() each frame AFTER transforms
+        have been applied by the compositor — so energy rings track
+        the mid-FLIP card positions automatically
+      - renders: ambient depth field + per-card SDF energy rings
+      - one WebGL context, one draw call per frame, scales to any N
+      - Safari/iOS safe: loop fully unrolled at JS template time,
+        no dynamic GLSL loop bounds
+
+  Why FLIP instead of left/top/width/height transitions:
+    left/top/width/height are layout-affecting properties. Animating
+    them forces layout recalc + paint every frame. transform:translate/
+    scale is compositor-promoted — the GPU moves the already-painted
+    layer. Combined with will-change:transform, this means the card
+    bitmap is not repainted during the reflow animation, only
+    repositioned on the compositor thread.
+
+  Why one shared WebGL context:
+    iOS Safari has a hard limit (~8-16) on simultaneous WebGL contexts.
+    One context per card hits that limit at production scale. The shared
+    stage renderer passes all card rects as uniforms and draws them in
+    one call. Adding more cards means larger uniform arrays, not more
+    contexts. The GLSL is unrolled at JS time so the bound is a
+    compile-time constant — no dynamic loop issues on any browser.
+
+  How this maps to AssetGrid.tsx:
+    See porting notes at the bottom of this file (in a JS comment block).
+════════════════════════════════════════════════════════════════════
+-->
+
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --mint:#4fffce; --mint-glow:rgba(79,255,206,0.06);
+  --void:#060810; --surface:#0c1020; --surface2:#111827;
+  --text:#c8d4e8; --text-dim:#4a5878; --amber:#ffb340; --blue:#8ab4f8;
+  --dur:0.48s; --ease:cubic-bezier(0.4,0,0.2,1);
+}
+html,body{width:100%;height:100%;background:var(--void);color:var(--text);
+  font-family:'DM Mono',monospace;overflow:hidden;
+  -webkit-tap-highlight-color:transparent;touch-action:pan-y;}
+
+/* ── TOPBAR ── */
+.topbar{
+  position:fixed;top:0;left:0;right:0;height:44px;
+  display:flex;align-items:center;padding:0 14px;gap:10px;
+  background:rgba(6,8,16,0.94);backdrop-filter:blur(16px);
+  -webkit-backdrop-filter:blur(16px);
+  border-bottom:1px solid rgba(79,255,206,0.08);z-index:300;
+}
+.t-title{font-family:'Syne',sans-serif;font-weight:800;font-size:13px;
+  letter-spacing:0.13em;color:var(--mint);text-transform:uppercase;}
+.t-sub{font-size:10px;color:var(--text-dim);font-style:italic;}
+.t-space{flex:1}
+.d-ctrl{display:flex;gap:3px;align-items:center;}
+.d-lbl{font-size:9px;color:var(--text-dim);letter-spacing:0.08em;margin-right:4px;font-style:italic;}
+.d-btn{
+  width:26px;height:26px;border:1px solid rgba(79,255,206,0.18);
+  background:transparent;color:var(--text-dim);border-radius:3px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;font-size:11px;
+  transition:border-color 0.15s,color 0.15s,background 0.15s;
+  font-family:'DM Mono',monospace;user-select:none;-webkit-user-select:none;
+}
+.d-btn:hover{border-color:rgba(79,255,206,0.4);color:var(--mint);}
+.d-btn.active{border-color:var(--mint);color:var(--mint);background:var(--mint-glow);}
+
+/* ── SCROLL ── */
+.scroll{
+  position:fixed;top:44px;left:0;right:0;bottom:22px;
+  overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;
+}
+.scroll::-webkit-scrollbar{width:3px;}
+.scroll::-webkit-scrollbar-thumb{background:rgba(79,255,206,0.18);border-radius:2px;}
+
+/* ── STAGE (shared WebGL canvas) ── */
+#stage{position:absolute;top:0;left:0;width:100%;
+  pointer-events:none;z-index:0;display:block;}
+
+/* ── MASONRY ── */
+.masonry-host{position:relative;padding:8px;}
+.masonry-columns{position:relative;width:100%;}
+
+/*
+ * Cards: FLIP architecture.
+ * left/top/width/height are written once to commit the new layout.
+ * The FLIP system immediately applies an inverse transform so the card
+ * appears to still be at its old position. Then it animates transform
+ * back to identity. The compositor moves the layer — no repaint.
+ *
+ * will-change:transform is critical: it promotes the card to its own
+ * compositor layer before the animation starts.
+ *
+ * overflow:hidden is on .card-inner, not .masonry-card itself, so
+ * the card shell doesn't clip during scale transforms.
+ */
+.masonry-card{
+  position:absolute;
+  /* geometry properties never transitioned — FLIP handles motion */
+  will-change:transform;
+  z-index:1;
+  /* entrance only */
+  opacity:0;
+  transform:translateY(8px) scale(0.97);
+  transition:opacity 0.3s ease, transform 0.3s ease;
+}
+.masonry-card.revealed{opacity:1;transform:none;}
+/* after entrance, remove opacity/transform from transition entirely */
+.masonry-card.settled{transition:none;}
+
+.masonry-card.is-active{z-index:20;}
+.masonry-card.is-active .card-inner::after{opacity:1;}
+.masonry-card.is-selected .card-inner::before{opacity:1;}
+.masonry-card:hover .card-overlay{opacity:1;}
+.masonry-card.is-active .card-overlay{opacity:1;}
+
+.card-inner{
+  position:absolute;inset:0;border-radius:5px;overflow:hidden;
+  background:var(--surface);
+}
+/* active mint border */
+.card-inner::after{
+  content:'';position:absolute;inset:0;border-radius:5px;z-index:6;
+  border:1.5px solid var(--mint);opacity:0;pointer-events:none;
+  transition:opacity 0.22s;
+  box-shadow:inset 0 0 14px rgba(79,255,206,0.10),0 0 10px rgba(79,255,206,0.14);
+}
+/* selection blue border */
+.card-inner::before{
+  content:'';position:absolute;inset:0;border-radius:5px;z-index:6;
+  border:1.5px solid var(--blue);opacity:0;pointer-events:none;
+  transition:opacity 0.18s;
+}
+
+/* real thumbnail img */
+.card-img{
+  position:absolute;inset:0;width:100%;height:100%;
+  object-fit:cover;display:block;pointer-events:none;z-index:1;
+  background:var(--surface2);
+}
+
+/* DOM overlay: badges, title, selector — always on top, always DOM */
+.card-overlay{
+  position:absolute;inset:0;z-index:4;opacity:0;transition:opacity 0.18s;
+  background:linear-gradient(to bottom,
+    rgba(6,8,16,0.54) 0%,transparent 30%,
+    transparent 58%,rgba(6,8,16,0.74) 100%);
+  display:flex;flex-direction:column;justify-content:space-between;padding:5px;
+}
+.ov-top{display:flex;justify-content:space-between;align-items:flex-start;gap:4px;}
+.ov-bot{display:flex;flex-direction:column;gap:1px;}
+.badge{
+  font-size:8px;letter-spacing:0.1em;text-transform:uppercase;
+  padding:2px 4px;border-radius:2px;font-family:'DM Mono',monospace;font-style:italic;
+  white-space:nowrap;flex-shrink:0;
+}
+.bv{background:rgba(79,255,206,0.13);color:var(--mint);border:1px solid rgba(79,255,206,0.26);}
+.bi{background:rgba(138,180,248,0.12);color:var(--blue);border:1px solid rgba(138,180,248,0.24);}
+.br{background:rgba(255,179,64,0.11);color:var(--amber);border:1px solid rgba(255,179,64,0.22);}
+.bd{background:rgba(6,8,16,0.5);color:var(--text-dim);border:none;}
+.card-title{font-size:9px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.card-sub{font-size:8px;color:var(--text-dim);font-style:italic;}
+
+/* selector — DOM circle with order number */
+.sel-wrap{width:18px;height:18px;flex-shrink:0;display:flex;align-items:center;justify-content:center;cursor:pointer;}
+.sel-ring{
+  width:16px;height:16px;border-radius:50%;
+  border:1.5px solid rgba(79,255,206,0.38);
+  background:rgba(6,8,16,0.6);
+  display:flex;align-items:center;justify-content:center;
+  transition:background 0.15s,border-color 0.15s;
+}
+.sel-num{font-size:7px;color:var(--mint);opacity:0;transition:opacity 0.12s;font-weight:700;}
+.is-selected .sel-ring{background:var(--mint);border-color:var(--mint);}
+.is-selected .sel-num{opacity:1;color:var(--void);}
+
+/* ── STATUS ── */
+.statusbar{
+  position:fixed;bottom:0;left:0;right:0;height:22px;
+  display:flex;align-items:center;padding:0 10px;gap:12px;
+  background:rgba(6,8,16,0.92);border-top:1px solid rgba(79,255,206,0.05);
+  font-size:9px;color:var(--text-dim);letter-spacing:0.05em;z-index:300;
+}
+.hi{color:var(--mint);}
+.sep{opacity:0.28;}
+
+/* FLIP progress bar — thin line at scroll top that animates during FLIP */
+.flip-bar{
+  position:fixed;top:44px;left:0;right:0;height:1px;z-index:400;
+  background:linear-gradient(90deg,transparent 0%,var(--mint) 50%,transparent 100%);
+  transform:scaleX(0);transform-origin:left;pointer-events:none;
+  transition:transform 0.06s ease;
+}
+.flip-bar.active{transform:scaleX(1);}
+</style>
+
+</head>
+<body>
+
+<div class="topbar">
+  <div class="t-title">Explorer</div>
+  <div class="t-sub">FLIP · shared WebGL</div>
+  <div class="t-space"></div>
+  <div class="d-ctrl">
+    <span class="d-lbl">density</span>
+    <button class="d-btn active" data-cols="2">2</button>
+    <button class="d-btn" data-cols="3">3</button>
+    <button class="d-btn" data-cols="4">4</button>
+    <button class="d-btn" data-cols="5">5</button>
+  </div>
+</div>
+
+<div class="scroll" id="scroll">
+  <div class="masonry-host" id="masonryHost">
+    <canvas id="stage"></canvas>
+    <div class="masonry-columns" id="masonryColumns"></div>
+  </div>
+</div>
+
+<div class="flip-bar" id="flipBar"></div>
+
+<div class="statusbar">
+  <span>cols <span class="hi" id="sCols">2</span></span>
+  <span class="sep">|</span>
+  <span><span class="hi" id="sCards">0</span> assets</span>
+  <span class="sep">|</span>
+  <span id="sState"><span class="hi">ready</span></span>
+  <div style="flex:1"></div>
+  <span>FLIP <span class="hi">transform</span></span>
+  <span class="sep">|</span>
+  <span>stage <span class="hi">1× WebGL</span></span>
+</div>
+
+<script>
+(function(){
+'use strict';
+
+// ════════════════════════════════════════════════════════════════════════
+//  DATA
+//  Seeded, reproducible, never regenerated.
+//  In your real app: entries come from React props / buildAssetViewModel.
+// ════════════════════════════════════════════════════════════════════════
+function seededRng(seed){
+  let s=seed>>>0;
+  return ()=>{ s=(Math.imul(s,1664525)+1013904223)>>>0; return s/4294967296; };
+}
+const rng=seededRng(0xc0ffee42);
+
+const KINDS  =['video','video','image','image','video','raw','image','video'];
+const ORIENTS=['portrait','landscape','square','portrait','landscape','portrait','square','landscape'];
+const TITLES =[
+  'SHOT_4K_0012.mov','beach_drone_r01.mp4','studio_bts_v2.mp4','DSC_0447.ARW',
+  'portrait_final.jpg','BTS_wide_09.tif','interview_cut.mov','gradient_test.png',
+  'LOG_C_00234.mxf','backstage_reel.mp4','DSC_8812.NEF','aerial_seq3.mp4',
+  'comp_v7_master.mov','raw_scan_01.tif','event_recap.mp4','thumb_frame.jpg',
+  'colorgrd_test.mov','DSC_0991.ARW','teaser_v3.mp4','stills_01.ARW',
+  'interview_b.mov','landscape_dng.DNG','studio_wide.mp4','closeup_01.jpg',
+];
+const SIZES=['1.2 GB','340 MB','2.1 GB','28 MB','4 MB','180 MB','890 MB','2 MB',
+             '1.8 GB','460 MB','34 MB','1.1 GB','3.4 GB','220 MB','700 MB','890 KB',
+             '540 MB','19 MB','2.4 GB','56 MB','1.6 GB','44 MB','980 MB','8 MB'];
+
+// Placeholder thumb colours — in your real app these are actual image URLs
+const THUMB_HUE=[];
+function makeAssets(n){
+  return Array.from({length:n},(_,i)=>{
+    const orient=ORIENTS[i%8];
+    const h=rng();
+    THUMB_HUE[i]=h;
+    return{
+      id:`asset-${i}`,
+      kind:KINDS[i%8],
+      orient,
+      ratio:orient==='portrait'?1.18+rng()*0.42
+           :orient==='landscape'?0.50+rng()*0.32
+           :0.84+rng()*0.28,
+      title:TITLES[i%24],
+      size:SIZES[i%24],
+      thumbHue:h,
+      thumbSat:0.42+rng()*0.58,
+      // In your real app: thumbUrl, fallbackThumb, streamUrl, etc.
+      thumbUrl:null,
+      selected:false,
+      selOrder:0,
+      active:false,
+    };
+  });
+}
+
+const ASSETS=makeAssets(52);
+let selOrder=[];
+
+// ════════════════════════════════════════════════════════════════════════
+//  LayoutEngine
+//  Pure function. No side effects. Takes items + constraints → rects.
+//  Mirrors your computeMasonryLayout signature closely.
+// ════════════════════════════════════════════════════════════════════════
+const LayoutEngine={
+  /**
+   * @param {Array<{id,ratio}>} items
+   * @param {number} containerWidth
+   * @param {number} cols
+   * @param {number} gap
+   * @returns {{items:Array<{id,x,y,w,h}>, stageH:number}}
+   */
+  compute(items,containerWidth,cols,gap){
+    const colW=(containerWidth-gap*(cols+1))/cols;
+    const colH=new Array(cols).fill(gap);
+    const out=items.map(item=>{
+      const ci=colH.indexOf(Math.min(...colH));
+      const x=gap+ci*(colW+gap);
+      const y=colH[ci];
+      const h=colW*item.ratio;
+      colH[ci]=y+h+gap;
+      return{id:item.id,x,y,w:colW,h};
+    });
+    return{items:out,stageH:Math.max(...colH)};
+  }
+};
+
+// ════════════════════════════════════════════════════════════════════════
+//  CardRegistry
+//  Stable identity store. Cards are created once, never destroyed.
+//  Owns: DOM node, committed geometry, live state.
+// ════════════════════════════════════════════════════════════════════════
+const CardRegistry=(function(){
+  /** @type {Map<string,{el:HTMLElement,imgEl:HTMLImageElement,ordEl:HTMLElement,asset:object,x:number,y:number,w:number,h:number}>} */
+  const map=new Map();
+  const container=document.getElementById('masonryColumns');
+
+  function _build(asset){
+    const el=document.createElement('div');
+    el.className='masonry-card';
+    el.dataset.cardId=asset.id;
+
+    const bc=asset.kind==='video'?'bv':asset.kind==='raw'?'br':'bi';
+
+    // Thumb — real img element. src set to data-URI placeholder here;
+    // in your real app you write: imgEl.src = viewModel.safeThumbUrl
+    const thumbStyle=`background:hsl(${Math.round(asset.thumbHue*360)},${Math.round(asset.thumbSat*55)}%,13%)`;
+
+    el.innerHTML=`
+      <div class="card-inner">
+        <img class="card-img js-img" style="${thumbStyle}" alt="${asset.title}" draggable="false"/>
+        <div class="card-overlay">
+          <div class="ov-top">
+            <span class="badge ${bc}">${asset.kind}</span>
+            <div class="sel-wrap js-sel" data-nop="1">
+              <div class="sel-ring"><span class="sel-num js-ord"></span></div>
+            </div>
+          </div>
+          <div class="ov-bot">
+            <span class="badge bd">${asset.size}</span>
+            <div class="card-title">${asset.title}</div>
+            <div class="card-sub">${asset.orient} · ${asset.id}</div>
+          </div>
+        </div>
+      </div>`;
+
+    el.addEventListener('click',e=>{
+      if(e.target.closest('[data-nop]')){InteractionController.toggleSel(asset.id);return;}
+      InteractionController.toggleActive(asset.id);
+    });
+
+    container.appendChild(el);
+
+    const node={
+      el,
+      imgEl:el.querySelector('.js-img'),
+      ordEl:el.querySelector('.js-ord'),
+      asset,
+      x:0,y:0,w:0,h:0,
+    };
+    map.set(asset.id,node);
+
+    // double-rAF entrance
+    requestAnimationFrame(()=>requestAnimationFrame(()=>{
+      el.classList.add('revealed');
+      setTimeout(()=>el.classList.add('settled'),400);
+    }));
+
+    return node;
+  }
+
+  return{
+    get(id){return map.get(id);},
+    ensure(asset){return map.has(asset.id)?map.get(asset.id):_build(asset);},
+    forEach(fn){map.forEach(fn);},
+    size(){return map.size;},
+    /**
+     * Commit new geometry to the card node and internal record.
+     * Does NOT animate — TransitionCoordinator handles that.
+     */
+    commit(id,x,y,w,h){
+      const n=map.get(id);if(!n) return;
+      n.x=x;n.y=y;n.w=w;n.h=h;
+      n.el.style.left=x+'px';
+      n.el.style.top=y+'px';
+      n.el.style.width=w+'px';
+      n.el.style.height=h+'px';
+    },
+    syncState(id){
+      const n=map.get(id);if(!n) return;
+      const a=n.asset;
+      n.el.classList.toggle('is-selected',a.selected);
+      n.el.classList.toggle('is-active',  a.active);
+      n.ordEl.textContent=a.selected?String(a.selOrder):'';
+    },
+  };
+})();
+
+// ════════════════════════════════════════════════════════════════════════
+//  TransitionCoordinator
+//
+//  Implements FLIP (First-Last-Invert-Play) for masonry reflow.
+//
+//  FLIP steps:
+//    1. FIRST  — snapshot current rendered positions (offsetLeft/Top)
+//    2. LAST   — commit new layout (write left/top/width/height to DOM)
+//    3. INVERT — compute delta, set transform so card appears at old pos
+//    4. PLAY   — animate transform → identity via Web Animations API
+//
+//  Why this avoids repaint:
+//    The card's paint (its bitmap) was created when it was last painted.
+//    FLIP moves that existing bitmap on the compositor thread.
+//    The card does not need to repaint because its geometry (left/top etc)
+//    was committed in step 2 — layout is settled. Only transform changes.
+//    will-change:transform ensures the compositor layer exists before step 4.
+//
+//  Web Animations API vs CSS transition:
+//    CSS transition on transform would require removing then re-adding a class.
+//    WA API lets us call .animate() directly with explicit keyframes and
+//    gives us a Promise for when it's done. Cleaner, cancellable.
+// ════════════════════════════════════════════════════════════════════════
+const TransitionCoordinator=(function(){
+  const DURATION=460; // ms — matches the visual feel expected
+  const EASING='cubic-bezier(0.4,0,0.2,1)';
+  // cancel in-flight animations if a new density change arrives mid-transition
+  const inflight=new Map(); // id → Animation
+
+  /**
+   * Snapshot current RENDERED positions.
+   * Uses offsetLeft/offsetTop not BCR — avoids forced layout synchronously.
+   * Returns Map<id, {x,y,w,h}>
+   */
+  function snapshotRects(){
+    const snap=new Map();
+    CardRegistry.forEach((node,id)=>{
+      snap.set(id,{
+        x:node.el.offsetLeft,
+        y:node.el.offsetTop,
+        w:node.el.offsetWidth,
+        h:node.el.offsetHeight,
+      });
+    });
+    return snap;
+  }
+
+  /**
+   * Run a full FLIP transition.
+   * @param {function} commitFn — writes new geometry via CardRegistry.commit()
+   * @param {number} stageH — new stage height
+   */
+  function run(commitFn, stageH){
+    // FIRST: snapshot old positions
+    const first=snapshotRects();
+
+    // LAST: commit new layout immediately
+    commitFn();
+    document.getElementById('masonryColumns').style.height=stageH+'px';
+
+    // INVERT + PLAY: for each card compute delta and animate
+    CardRegistry.forEach((node,id)=>{
+      const f=first.get(id);
+      const L={x:node.x, y:node.y, w:node.w, h:node.h};
+
+      // cancel any in-flight animation on this card
+      const prev=inflight.get(id);
+      if(prev){
+        try{prev.cancel();}catch(e){}
+        inflight.delete(id);
+      }
+
+      if(!f){
+        // new card — no FLIP, let entrance handle it
+        return;
+      }
+
+      const dx=f.x-L.x;
+      const dy=f.y-L.y;
+      const sx=L.w>0?f.w/L.w:1;
+      const sy=L.h>0?f.h/L.h:1;
+
+      // If delta is negligible, skip (card didn't move)
+      if(Math.abs(dx)<0.5&&Math.abs(dy)<0.5&&Math.abs(sx-1)<0.005&&Math.abs(sy-1)<0.005){
+        return;
+      }
+
+      // INVERT: set transform so card appears at old position/size
+      // PLAY: animate to identity
+      const anim=node.el.animate([
+        {transform:`translate(${dx}px,${dy}px) scale(${sx},${sy})`, transformOrigin:'top left'},
+        {transform:`translate(0px,0px) scale(1,1)`,                  transformOrigin:'top left'},
+      ],{
+        duration:DURATION,
+        easing:EASING,
+        fill:'none',
+      });
+
+      inflight.set(id,anim);
+      anim.addEventListener('finish',()=>inflight.delete(id),{once:true});
+      anim.addEventListener('cancel',()=>inflight.delete(id),{once:true});
+    });
+  }
+
+  return{run, snapshotRects};
+})();
+
+// ════════════════════════════════════════════════════════════════════════
+//  SharedStageRenderer
+//  One WebGL context for the entire grid.
+//  Draws: ambient void + per-card SDF energy rings.
+//
+//  Card rects are sampled via getBoundingClientRect() each frame.
+//  Because FLIP moves cards on the compositor thread, BCR returns the
+//  mid-animation visual position — the energy rings chase the cards
+//  through the entire FLIP with zero extra code.
+//
+//  Safari/iOS GLSL ES 1.0 compliance:
+//    Loop is unrolled at template time → N literal if-blocks.
+//    No dynamic loop bound, no dynamic array indexing in loops.
+// ════════════════════════════════════════════════════════════════════════
+const SharedStageRenderer=(function(){
+  const MAX=52; // must match or exceed ASSETS.length
+  const cvs=document.getElementById('stage');
+  let gl=null, prog=null, ready=false;
+  let uT,uRes,uScroll,uN;
+  const flat=new Float32Array(MAX*4);
+  const ext =new Float32Array(MAX*4);
+  const T0=Date.now();
+
+  const VERT=`attribute vec2 a;void main(){gl_Position=vec4(a,0.,1.);}`;
+
+  function buildFrag(N){
+    let loop='';
+    for(let i=0;i<N;i++){
+      loop+=`
+  if(${i}<u_n){
+    vec4 r=u_c[${i}];float hue=u_e[${i}].x;float act=u_e[${i}].y;
+    vec2 ctr=r.xy+r.zw*0.5;vec2 hf=r.zw*0.5;
+    vec2 dv=abs(px-ctr)-hf;
+    float sdf=length(max(dv,0.))+min(max(dv.x,dv.y),0.);
+    float brd=exp(-abs(sdf)*0.12)*0.055;
+    float inn=exp(sdf*0.028)*0.018;
+    float pls=sin(u_t*1.6+hue*6.28+sdf*0.028)*0.5+0.5;
+    float g=(brd+inn)*(0.46+pls*0.54);
+    if(act>0.5)g*=3.6;
+    vec3 col=hsl(hue,0.60,0.52);col=mix(col,vec3(0.31,1.,0.80),0.25);
+    lgt+=col*g;
+  }`;
+    }
+    return`
+precision mediump float;
+uniform float u_t;
+uniform vec2  u_res;
+uniform float u_scroll;
+uniform vec4  u_c[${N}];
+uniform vec4  u_e[${N}];
+uniform int   u_n;
+float h21(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5);}
+float noise(vec2 p){
+  vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);
+  return mix(mix(h21(i),h21(i+vec2(1,0)),f.x),mix(h21(i+vec2(0,1)),h21(i+vec2(1)),f.x),f.y);
+}
+vec3 hsl(float h,float s,float l){
+  vec3 r=clamp(abs(mod(h*6.+vec3(0,4,2),6.)-3.)-1.,0.,1.);
+  return l+s*(r-0.5)*(1.-abs(2.*l-1.));
+}
+void main(){
+  vec2 px=vec2(gl_FragCoord.x,u_res.y-gl_FragCoord.y+u_scroll);
+  vec2 uv=gl_FragCoord.xy/u_res;
+  vec2 nv=px/u_res;
+  float n=noise(nv*3.1+u_t*0.046)*0.76+noise(nv*6.8-u_t*0.079)*0.24;
+  vec3 base=vec3(0.020+n*0.009,0.028+n*0.012,0.048+n*0.020);
+  base-=step(0.5,fract(gl_FragCoord.y*0.5))*0.010;
+  vec3 lgt=vec3(0.);
+  ${loop}
+  float vg=pow(clamp(1.-length((uv-0.5)*1.5),0.,1.),2.2);
+  gl_FragColor=vec4((base+lgt)*(vg*0.79+0.21),1.);
+}`;
+  }
+
+  function sh(type,src){
+    const s=gl.createShader(type);
+    gl.shaderSource(s,src);gl.compileShader(s);
+    if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)){
+      console.error('stage shader:',gl.getShaderInfoLog(s));return null;
+    }
+    return s;
+  }
+
+  function init(){
+    gl=cvs.getContext('webgl',{alpha:false,antialias:false,depth:false,preserveDrawingBuffer:false});
+    if(!gl){console.warn('WebGL unavailable');return;}
+    const vs=sh(gl.VERTEX_SHADER,VERT);
+    const fs=sh(gl.FRAGMENT_SHADER,buildFrag(MAX));
+    if(!vs||!fs)return;
+    prog=gl.createProgram();
+    gl.attachShader(prog,vs);gl.attachShader(prog,fs);gl.linkProgram(prog);
+    if(!gl.getProgramParameter(prog,gl.LINK_STATUS)){
+      console.error('stage link:',gl.getProgramInfoLog(prog));return;
+    }
+    gl.useProgram(prog);
+    const buf=gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+    gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
+    const loc=gl.getAttribLocation(prog,'a');
+    gl.enableVertexAttribArray(loc);gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
+    uT     =gl.getUniformLocation(prog,'u_t');
+    uRes   =gl.getUniformLocation(prog,'u_res');
+    uScroll=gl.getUniformLocation(prog,'u_scroll');
+    uN     =gl.getUniformLocation(prog,'u_n');
+    ready=true;
+  }
+
+  function resize(){
+    const mh=document.getElementById('masonryHost');
+    const sc=document.getElementById('scroll');
+    const w=window.innerWidth;
+    const h=Math.max(mh.scrollHeight,sc.clientHeight,400);
+    if(cvs.width!==w||cvs.height!==h){
+      cvs.width=w;cvs.height=h;cvs.style.height=h+'px';
+      if(gl)gl.viewport(0,0,w,h);
+    }
+  }
+
+  function render(scrollY){
+    if(!ready)return;
+    const t=(Date.now()-T0)/1000;
+    const cw=cvs.width,ch=cvs.height;
+    let n=0;
+    CardRegistry.forEach((node,id)=>{
+      if(n>=MAX)return;
+      // BCR gives visual position including compositor transform (mid-FLIP)
+      const b=node.el.getBoundingClientRect();
+      flat[n*4+0]=b.left;
+      flat[n*4+1]=b.top-44+scrollY;
+      flat[n*4+2]=b.width;
+      flat[n*4+3]=b.height;
+      ext[n*4+0]=node.asset.thumbHue;
+      ext[n*4+1]=node.asset.active?1:0;
+      ext[n*4+2]=0;ext[n*4+3]=0;
+      n++;
+    });
+    gl.useProgram(prog);
+    gl.uniform1f(uT,t);
+    gl.uniform2f(uRes,cw,ch);
+    gl.uniform1f(uScroll,scrollY);
+    gl.uniform4fv(gl.getUniformLocation(prog,'u_c[0]'),flat);
+    gl.uniform4fv(gl.getUniformLocation(prog,'u_e[0]'),ext);
+    gl.uniform1i(uN,n);
+    gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+  }
+
+  (function loop(){
+    requestAnimationFrame(loop);
+    render(document.getElementById('scroll').scrollTop);
+  })();
+
+  return{init,resize};
+})();
+
+// ════════════════════════════════════════════════════════════════════════
+//  DensityTransitionController
+//  Orchestrates: LayoutEngine → TransitionCoordinator → CardRegistry
+//  Called on every density change.
+// ════════════════════════════════════════════════════════════════════════
+const DensityTransitionController=(function(){
+  let currentCols=2;
+
+  function apply(cols){
+    currentCols=cols;
+    const mh=document.getElementById('masonryHost');
+    const cw=mh.offsetWidth-16;
+    const layout=LayoutEngine.compute(ASSETS,cw,cols,6);
+
+    // FLIP: pass the commit function — TransitionCoordinator controls timing
+    TransitionCoordinator.run(()=>{
+      layout.items.forEach(({id,x,y,w,h})=>{
+        CardRegistry.ensure(ASSETS.find(a=>a.id===id));
+        CardRegistry.commit(id,x,y,w,h);
+      });
+    }, layout.stageH);
+
+    SharedStageRenderer.resize();
+    document.getElementById('sCols').textContent=cols;
+    document.getElementById('sCards').textContent=ASSETS.length;
+  }
+
+  return{apply, getCols:()=>currentCols};
+})();
+
+// ════════════════════════════════════════════════════════════════════════
+//  InteractionController
+// ════════════════════════════════════════════════════════════════════════
+const InteractionController={
+  toggleSel(id){
+    const a=ASSETS.find(x=>x.id===id);if(!a)return;
+    if(a.selected){
+      a.selected=false;selOrder=selOrder.filter(x=>x!==id);
+      ASSETS.forEach(x=>{if(x.selected)x.selOrder=selOrder.indexOf(x.id)+1;});
+    }else{
+      selOrder.push(id);a.selected=true;a.selOrder=selOrder.length;
+    }
+    ASSETS.forEach(x=>CardRegistry.syncState(x.id));
+  },
+  toggleActive(id){
+    ASSETS.forEach(a=>a.active=(a.id===id?!a.active:false));
+    ASSETS.forEach(a=>CardRegistry.syncState(a.id));
+  },
+};
+
+// ════════════════════════════════════════════════════════════════════════
+//  BOOT
+// ════════════════════════════════════════════════════════════════════════
+SharedStageRenderer.init();
+
+// density buttons
+const flipBar=document.getElementById('flipBar');
+let flipBarT=0,stateT=0;
+
+document.querySelectorAll('.d-btn').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    const next=parseInt(btn.dataset.cols);
+    if(next===DensityTransitionController.getCols())return;
+    document.querySelectorAll('.d-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+
+    // visual reflow indicator
+    clearTimeout(flipBarT);
+    flipBar.classList.add('active');
+    flipBarT=setTimeout(()=>flipBar.classList.remove('active'),100);
+
+    DensityTransitionController.apply(next);
+
+    const el=document.getElementById('sState');
+    el.innerHTML=`FLIP <span class="hi">→ ${next} col</span>`;
+    clearTimeout(stateT);
+    stateT=setTimeout(()=>{el.innerHTML=`<span class="hi">settled</span>`;},520);
+  });
+});
+
+window.addEventListener('resize',()=>{
+  DensityTransitionController.apply(DensityTransitionController.getCols());
+});
+
+// initial render
+DensityTransitionController.apply(2);
+
+})();
+
+/*
+════════════════════════════════════════════════════════════════════════════════
+  REACT / TYPESCRIPT PORTING NOTES
+  How these abstractions map into your AssetGrid.tsx
+════════════════════════════════════════════════════════════════════════════════
+
+  ── What stays in React state ──────────────────────────────────────────────
+  - gridColumnCount (prop)
+  - entries / ExplorerAssetViewModel[] (prop)
+  - selectedIds, activeId — or derive from viewModel flags
+  - pageLoadEntranceActive (useState)
+  - simplifiedCardSubtreeActive (useState — your existing flag)
+
+  React re-renders when these change. React does NOT drive geometry or motion.
+
+  ── What moves into refs (imperative, outside reconciler) ──────────────────
+  const cardRegistryRef = useRef<CardRegistry>(null)
+  const transitionCoordRef = useRef<TransitionCoordinator>(null)
+  const stageRendererRef = useRef<SharedStageRenderer>(null)
+
+  These are initialised once in useEffect(()=>{...},[]) and never recreated.
+
+  ── Where FLIP is triggered ────────────────────────────────────────────────
+  useLayoutEffect(() => {
+    if (!cardRegistryRef.current || hostWidth === 0) return;
+    const layout = computeMasonryLayout({...}); // your existing pure fn
+    transitionCoordRef.current.run(() => {
+      layout.items.forEach(({ item, x, y, width, height }) => {
+        const id = getEntryId(item); // selectionKey or similar
+        cardRegistryRef.current.commit(id, x, y, width, height);
+      });
+    }, layout.stageHeight);
+  }, [gridColumnCount, hostWidth]);
+  // ↑ NOT triggered by entries change — that would cause spurious FLIPs.
+  //   Entries change → CardRegistry.ensure() adds new cards with entrance.
+  //   Only column/width change → FLIP.
+
+  ── Card overlay UI ────────────────────────────────────────────────────────
+  The .card-overlay DOM is still managed by React via innerHTML-equivalent.
+  But since cards are persistent imperative DOM, the cleanest pattern is:
+  - React renders card content into a <div ref={overlayRef}> inside the card
+  - The card shell itself is imperative (not React-rendered)
+  - Use ReactDOM.createPortal(overlayContent, cardNode.overlayEl) per card
+  OR:
+  - Keep your existing JSX for the overlay — just move the position-writing
+    out of the React render path into the imperative layout commit.
+
+  ── simplifiedCardSubtreeActive ────────────────────────────────────────────
+  During FLIP, you can set simplifiedCardSubtreeActive=true immediately,
+  then false after FLIP duration (460ms). This is exactly what your existing
+  code does with a 420ms timeout — it aligns perfectly.
+
+  ── Virtualization (windowed rendering) ────────────────────────────────────
+  Your existing renderWindow / shouldIncludeItem pattern continues to work.
+  The key addition: before FLIP, snapshot rects for ALL cards (including
+  those outside the render window). Cards that exit the window can remain
+  in the registry without a DOM node by using a "pooled" pattern — but
+  for initial integration, simply snapshot+FLIP all rendered cards.
+
+  ── SharedStageRenderer ────────────────────────────────────────────────────
+  const useStageShader = (cardRegistryRef, scrollRef) => {
+    useEffect(() => {
+      const renderer = new SharedStageRenderer(stageCanvasEl);
+      stageRendererRef.current = renderer;
+      const raf = requestAnimationFrame(function loop() {
+        renderer.render(scrollRef.current?.scrollTop ?? 0);
+        requestAnimationFrame(loop);
+      });
+      return () => cancelAnimationFrame(raf);
+    }, []);
+  };
+
+  ── Real thumbnails ────────────────────────────────────────────────────────
+  Replace card-img background-color placeholder with:
+    imgEl.src = viewModel.safeThumbUrl
+    imgEl.dataset.thumbFallback = viewModel.fallbackThumb
+    imgEl.onerror = () => { imgEl.src = imgEl.dataset.thumbFallback }
+  This is exactly your existing error handler pattern — transplant directly.
+
+  ── Video preview ──────────────────────────────────────────────────────────
+  When !simplifiedCardSubtreeActive && viewModel.activeVideoPreviewUrl:
+    const vid = document.createElement('video')
+    // set attributes as you do today
+    cardNode.innerEl.appendChild(vid)
+  Tear down when preview ends or card deactivates.
+
+════════════════════════════════════════════════════════════════════════════════
+*/
+</script>
+
+</body>
+</html>
